@@ -1,0 +1,6 @@
+{
+  "name": "Rivia",
+  "description": "Personal AI assistant with Gemini Interactions REST streaming, custom ElevenLabs voice read-aloud, and hands-free Live voice mode.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

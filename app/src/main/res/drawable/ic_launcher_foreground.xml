@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Mint radial glow -->
+    <path android:pathData="M54,24A30,30 0 1,1 54,84A30,30 0 1,1 54,24Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54"
+                android:centerY="54"
+                android:gradientRadius="30"
+                android:type="radial">
+                <item android:offset="0.0" android:color="#995DCAA5" />
+                <item android:offset="0.7" android:color="#335DCAA5" />
+                <item android:offset="1.0" android:color="#005DCAA5" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Thin outer ring -->
+    <path
+        android:pathData="M54,31A23,23 0 1,1 54,77A23,23 0 1,1 54,31Z"
+        android:strokeWidth="1.8"
+        android:strokeColor="#FF5DCAA5"
+        android:fillColor="#00000000" />
+    <!-- White core -->
+    <path
+        android:pathData="M54,43A11,11 0 1,1 54,65A11,11 0 1,1 54,43Z"
+        android:fillColor="#FFE4EBE8" />
+</vector>
