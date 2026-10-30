@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
@@ -31,8 +33,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Upload
@@ -56,19 +56,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.googlefonts.isAvailableOnDevice
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -77,10 +82,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.RequestLogEntity
 import com.example.network.ElevenLabsClient
 import com.example.plugin.PluginRegistry
-import com.example.security.VoicePreferences
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
 import com.example.ui.theme.ChivoMonoFontFamily
+import com.example.ui.theme.GoogleFontProvider
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
@@ -89,7 +94,6 @@ import com.example.ui.theme.RiviaMutedText
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
 import com.example.ui.theme.RiviaText
-import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -102,7 +106,20 @@ fun SettingsScreen(
   onOpenDefaultRunSettings: () -> Unit,
   onBack: () -> Unit,
 ) {
-  BackHandler { onBack() }
+  val context = LocalContext.current
+  val focusManager = LocalFocusManager.current
+
+  BackHandler {
+    focusManager.clearFocus()
+    onBack()
+  }
+
+  // Fix #15: Show "Font provider: OK" or "Font provider: failed" in Settings,
+  // from GoogleFontProvider.isAvailableOnDevice(context)
+  val fontProviderOk =
+    remember(context) {
+      runCatching { GoogleFontProvider.isAvailableOnDevice(context) }.getOrDefault(false)
+    }
 
   var selectedTab by rememberSaveable { mutableIntStateOf(0) }
   val tabs = listOf("Keys & Data", "Voice", "Plug-ins", "Defaults", "Request Log")
@@ -110,6 +127,7 @@ fun SettingsScreen(
   val statusBanner by viewModel.statusBannerMessage.collectAsStateWithLifecycle()
   val isErrorBanner by viewModel.isErrorBanner.collectAsStateWithLifecycle()
   val audioError by viewModel.audioPlayerManager.lastAudioError.collectAsStateWithLifecycle()
+  val audioNotice by viewModel.audioPlayerManager.lastAudioNotice.collectAsStateWithLifecycle()
 
   Column(
     modifier =
@@ -123,22 +141,51 @@ fun SettingsScreen(
       Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        IconButton(
-          onClick = onBack,
-          modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_back_button"),
-        ) {
-          Icon(
-            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-            contentDescription = "Back to chat",
-            tint = RiviaText,
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          IconButton(
+            onClick = {
+              focusManager.clearFocus()
+              onBack()
+            },
+            modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_back_button"),
+          ) {
+            Icon(
+              imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+              contentDescription = "Back to chat",
+              tint = RiviaText,
+            )
+          }
+          Text(
+            text = "Settings",
+            style = MaterialTheme.typography.titleLarge,
+            color = RiviaText,
           )
         }
-        Text(
-          text = "Settings",
-          style = MaterialTheme.typography.titleLarge,
-          color = RiviaText,
-        )
+
+        // Fix #15: Font provider status badge
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier =
+            Modifier.padding(end = 8.dp)
+              .background(RiviaRaisedSurface, RoundedCornerShape(8.dp))
+              .border(1.dp, RiviaBorder, RoundedCornerShape(8.dp))
+              .padding(horizontal = 8.dp, vertical = 4.dp)
+              .testTag("font_provider_status"),
+        ) {
+          StatusShape(
+            status = if (fontProviderOk) StatusType.OK else StatusType.WARNING,
+            size = 7.dp,
+          )
+          Text(
+            text = if (fontProviderOk) "Font provider: OK" else "Font provider: failed",
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = ChivoMonoFontFamily,
+            color = if (fontProviderOk) RiviaMint else RiviaMutedText,
+          )
+        }
       }
     }
 
@@ -153,7 +200,10 @@ fun SettingsScreen(
       tabs.forEachIndexed { idx, title ->
         Tab(
           selected = selectedTab == idx,
-          onClick = { selectedTab = idx },
+          onClick = {
+            focusManager.clearFocus()
+            selectedTab = idx
+          },
           modifier = Modifier.minimumInteractiveComponentSize(),
           text = {
             Text(
@@ -167,9 +217,9 @@ fun SettingsScreen(
     }
 
     // Plain API Error / Status Banner
-    val activeBanner = audioError ?: statusBanner
+    val activeBanner = audioError ?: audioNotice ?: statusBanner
     if (!activeBanner.isNullOrBlank()) {
-      val err = audioError != null || isErrorBanner
+      val err = audioError != null || (audioNotice == null && isErrorBanner)
       Surface(color = RiviaRaisedSurface, modifier = Modifier.fillMaxWidth()) {
         Row(
           modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -200,18 +250,26 @@ fun SettingsScreen(
     }
 
     when (selectedTab) {
-      0 -> KeysAndBackupTab(viewModel = viewModel)
+      0 -> KeysAndBackupTab(viewModel = viewModel, fontProviderOk = fontProviderOk)
       1 -> VoiceSettingsTab(viewModel = viewModel)
       2 -> PluginsTab()
-      3 -> DefaultsLauncherTab(onOpenDefaultRunSettings = onOpenDefaultRunSettings)
+      3 ->
+        DefaultsLauncherTab(
+          onOpenDefaultRunSettings = onOpenDefaultRunSettings,
+          fontProviderOk = fontProviderOk,
+        )
       4 -> RequestLogTab(viewModel = viewModel)
     }
   }
 }
 
 @Composable
-private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
+private fun KeysAndBackupTab(
+  viewModel: RiviaViewModel,
+  fontProviderOk: Boolean,
+) {
   val context = LocalContext.current
+  val focusManager = LocalFocusManager.current
   val scope = rememberCoroutineScope()
   val savedGeminiKey by viewModel.geminiKey.collectAsStateWithLifecycle()
   val savedElevenKey by viewModel.elevenLabsKey.collectAsStateWithLifecycle()
@@ -220,10 +278,36 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
   val isLoadingModels by viewModel.isLoadingModels.collectAsStateWithLifecycle()
   val isLoadingVoices by viewModel.isLoadingVoices.collectAsStateWithLifecycle()
 
-  var geminiDraft by remember(savedGeminiKey) { mutableStateOf(savedGeminiKey) }
-  var elevenDraft by remember(savedElevenKey) { mutableStateOf(savedElevenKey) }
+  // Fix #6: Keep typed text in local state and save only when the field loses focus,
+  // on IME Done, or when leaving the screen. Never round-trip keystrokes through DataStore.
+  var geminiDraft by remember { mutableStateOf(savedGeminiKey) }
+  var elevenDraft by remember { mutableStateOf(savedElevenKey) }
   var showGeminiPlain by remember { mutableStateOf(false) }
   var showElevenPlain by remember { mutableStateOf(false) }
+
+  LaunchedEffect(savedGeminiKey) { geminiDraft = savedGeminiKey }
+  LaunchedEffect(savedElevenKey) { elevenDraft = savedElevenKey }
+
+  fun commitGeminiKeyIfChanged() {
+    if (geminiDraft.trim() != savedGeminiKey) {
+      viewModel.viewModelScopeSaveGeminiKey(geminiDraft)
+    }
+  }
+
+  fun commitElevenKeyIfChanged() {
+    if (elevenDraft.trim() != savedElevenKey) {
+      viewModel.viewModelScopeSaveElevenKey(elevenDraft)
+    }
+  }
+
+  val commitBothRef by rememberUpdatedState {
+    commitGeminiKeyIfChanged()
+    commitElevenKeyIfChanged()
+  }
+
+  DisposableEffect(Unit) {
+    onDispose { commitBothRef() }
+  }
 
   // Export all chats to JSON file launcher
   val exportLauncher =
@@ -283,10 +367,7 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
         )
         OutlinedTextField(
           value = geminiDraft,
-          onValueChange = {
-            geminiDraft = it
-            scope.launch { viewModel.keyRepository.saveGeminiKey(it) }
-          },
+          onValueChange = { geminiDraft = it },
           label = { Text("Gemini API Key") },
           visualTransformation =
             if (showGeminiPlain) VisualTransformation.None
@@ -307,7 +388,18 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
             }
           },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth().testTag("gemini_api_key_input"),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+          keyboardActions =
+            KeyboardActions(
+              onDone = {
+                commitGeminiKeyIfChanged()
+                focusManager.clearFocus()
+              }
+            ),
+          modifier =
+            Modifier.fillMaxWidth()
+              .then(commitOnFocusLostModifier { commitGeminiKeyIfChanged() })
+              .testTag("gemini_api_key_input"),
           colors = riviaTextFieldColors(),
         )
 
@@ -337,7 +429,10 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
           }
 
           Button(
-            onClick = { viewModel.refreshGeminiModels(geminiDraft) },
+            onClick = {
+              focusManager.clearFocus()
+              viewModel.refreshGeminiModels(geminiDraft)
+            },
             enabled = !isLoadingModels,
             colors =
               ButtonDefaults.buttonColors(
@@ -366,10 +461,7 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
         )
         OutlinedTextField(
           value = elevenDraft,
-          onValueChange = {
-            elevenDraft = it
-            scope.launch { viewModel.keyRepository.saveElevenLabsKey(it) }
-          },
+          onValueChange = { elevenDraft = it },
           label = { Text("ElevenLabs API Key") },
           visualTransformation =
             if (showElevenPlain) VisualTransformation.None
@@ -390,7 +482,18 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
             }
           },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth().testTag("elevenlabs_api_key_input"),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+          keyboardActions =
+            KeyboardActions(
+              onDone = {
+                commitElevenKeyIfChanged()
+                focusManager.clearFocus()
+              }
+            ),
+          modifier =
+            Modifier.fillMaxWidth()
+              .then(commitOnFocusLostModifier { commitElevenKeyIfChanged() })
+              .testTag("elevenlabs_api_key_input"),
           colors = riviaTextFieldColors(),
         )
 
@@ -420,7 +523,10 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
           }
 
           Button(
-            onClick = { viewModel.refreshElevenLabsVoicesAndModels(elevenDraft) },
+            onClick = {
+              focusManager.clearFocus()
+              viewModel.refreshElevenLabsVoicesAndModels(elevenDraft)
+            },
             enabled = !isLoadingVoices,
             colors =
               ButtonDefaults.buttonColors(
@@ -491,17 +597,75 @@ private fun KeysAndBackupTab(viewModel: RiviaViewModel) {
         }
       }
     }
+
+    // Fix #15: Font Provider status card
+    item {
+      SettingsCardSection(title = "Typography & Font Provider") {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          StatusShape(
+            status = if (fontProviderOk) StatusType.OK else StatusType.WARNING,
+            size = 10.dp,
+          )
+          Text(
+            text = if (fontProviderOk) "Font provider: OK" else "Font provider: failed",
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = ChivoMonoFontFamily,
+            color = if (fontProviderOk) RiviaMint else RiviaMutedText,
+          )
+        }
+        Text(
+          text =
+            "Chivo (sans) and Chivo Mono (monospace) via Google Fonts provider with system fallback.",
+          style = MaterialTheme.typography.bodySmall,
+          color = RiviaMutedText,
+        )
+      }
+    }
   }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VoiceSettingsTab(viewModel: RiviaViewModel) {
+  val focusManager = LocalFocusManager.current
   val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
   val elevenModels by viewModel.elevenModels.collectAsStateWithLifecycle()
   val isLoadingVoices by viewModel.isLoadingVoices.collectAsStateWithLifecycle()
-  var voiceIdDraft by remember(voicePrefs.voiceId) { mutableStateOf(voicePrefs.voiceId) }
+
+  // Fix #6: Keep typed text in local state and save only when the field loses focus,
+  // on IME Done, or when leaving the screen.
+  var voiceIdDraft by remember { mutableStateOf(voicePrefs.voiceId) }
+  var sttLanguageDraft by remember { mutableStateOf(voicePrefs.sttLanguage) }
+
+  LaunchedEffect(voicePrefs.voiceId) { voiceIdDraft = voicePrefs.voiceId }
+  LaunchedEffect(voicePrefs.sttLanguage) { sttLanguageDraft = voicePrefs.sttLanguage }
+
+  fun commitVoiceIdIfChanged() {
+    val trimmed = voiceIdDraft.trim()
+    if (trimmed != voicePrefs.voiceId) {
+      viewModel.setCustomVoiceId(trimmed)
+    }
+  }
+
+  fun commitSttLanguageIfChanged() {
+    val trimmed = sttLanguageDraft.trim().ifBlank { "en-US" }
+    if (trimmed != voicePrefs.sttLanguage) {
+      viewModel.updateVoicePrefs { it.copy(sttLanguage = trimmed) }
+    }
+  }
+
+  val commitVoiceDraftsRef by rememberUpdatedState {
+    commitVoiceIdIfChanged()
+    commitSttLanguageIfChanged()
+  }
+
+  DisposableEffect(Unit) {
+    onDispose { commitVoiceDraftsRef() }
+  }
 
   // Load voices & models automatically if key is present and lists are empty
   LaunchedEffect(Unit) {
@@ -578,7 +742,10 @@ private fun VoiceSettingsTab(viewModel: RiviaViewModel) {
                       if (isSelected) RiviaMint else RiviaBorder,
                       RoundedCornerShape(10.dp),
                     )
-                    .clickable { viewModel.selectElevenLabsVoice(v) }
+                    .clickable {
+                      voiceIdDraft = v.voiceId
+                      viewModel.selectElevenLabsVoice(v)
+                    }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
               ) {
                 Row(
@@ -619,13 +786,21 @@ private fun VoiceSettingsTab(viewModel: RiviaViewModel) {
 
         OutlinedTextField(
           value = voiceIdDraft,
-          onValueChange = {
-            voiceIdDraft = it
-            viewModel.setCustomVoiceId(it)
-          },
+          onValueChange = { voiceIdDraft = it },
           label = { Text("Or paste Voice ID") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth().testTag("voice_id_input"),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+          keyboardActions =
+            KeyboardActions(
+              onDone = {
+                commitVoiceIdIfChanged()
+                focusManager.clearFocus()
+              }
+            ),
+          modifier =
+            Modifier.fillMaxWidth()
+              .then(commitOnFocusLostModifier { commitVoiceIdIfChanged() })
+              .testTag("voice_id_input"),
           colors = riviaTextFieldColors(),
         )
 
@@ -872,7 +1047,7 @@ private fun VoiceSettingsTab(viewModel: RiviaViewModel) {
           Column(modifier = Modifier.weight(1f)) {
             Text("Send audio tags", color = RiviaText)
             Text(
-              "Keeps [softly], [laughs] for ElevenLabs while hiding them on screen. Off strips them.",
+              "Keeps [softly], [laughs] for eleven_v3, eleven_v4 & eleven_v4_turbo while hiding them on screen.",
               style = MaterialTheme.typography.bodySmall,
               color = RiviaMutedText,
             )
@@ -887,7 +1062,10 @@ private fun VoiceSettingsTab(viewModel: RiviaViewModel) {
         }
 
         Button(
-          onClick = { viewModel.testElevenLabsSpeakLine() },
+          onClick = {
+            commitVoiceIdIfChanged()
+            viewModel.testElevenLabsSpeakLine(voiceIdDraft)
+          },
           colors =
             ButtonDefaults.buttonColors(
               containerColor = RiviaMint,
@@ -913,13 +1091,21 @@ private fun VoiceSettingsTab(viewModel: RiviaViewModel) {
     item {
       SettingsCardSection(title = "Speech-to-Text & Live Mode") {
         OutlinedTextField(
-          value = voicePrefs.sttLanguage,
-          onValueChange = { lang ->
-            viewModel.updateVoicePrefs { it.copy(sttLanguage = lang.trim()) }
-          },
+          value = sttLanguageDraft,
+          onValueChange = { sttLanguageDraft = it },
           label = { Text("Speech-to-text language (default en-US)") },
           singleLine = true,
-          modifier = Modifier.fillMaxWidth(),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+          keyboardActions =
+            KeyboardActions(
+              onDone = {
+                commitSttLanguageIfChanged()
+                focusManager.clearFocus()
+              }
+            ),
+          modifier =
+            Modifier.fillMaxWidth()
+              .then(commitOnFocusLostModifier { commitSttLanguageIfChanged() }),
           colors = riviaTextFieldColors(),
         )
 
@@ -1037,7 +1223,10 @@ private fun PluginsTab() {
 }
 
 @Composable
-private fun DefaultsLauncherTab(onOpenDefaultRunSettings: () -> Unit) {
+private fun DefaultsLauncherTab(
+  onOpenDefaultRunSettings: () -> Unit,
+  fontProviderOk: Boolean,
+) {
   Column(
     modifier = Modifier.fillMaxSize().padding(16.dp),
     verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -1045,7 +1234,7 @@ private fun DefaultsLauncherTab(onOpenDefaultRunSettings: () -> Unit) {
     SettingsCardSection(title = "Default Run Settings for New Chats") {
       Text(
         text =
-          "Configure the default Gemini model, Live model, system instructions, thinking level, tools, safety filters, and service tier applied to every newly created chat.",
+          "Configure the default Gemini model, Live model, Live thinking level, system instructions, thinking level, tools, safety filters, and service tier applied to every newly created chat.",
         style = MaterialTheme.typography.bodyMedium,
         color = RiviaMutedText,
       )
@@ -1068,6 +1257,24 @@ private fun DefaultsLauncherTab(onOpenDefaultRunSettings: () -> Unit) {
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text("Edit Default Run Settings", fontWeight = FontWeight.SemiBold)
+      }
+    }
+
+    SettingsCardSection(title = "System Diagnostics") {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        StatusShape(
+          status = if (fontProviderOk) StatusType.OK else StatusType.WARNING,
+          size = 10.dp,
+        )
+        Text(
+          text = if (fontProviderOk) "Font provider: OK" else "Font provider: failed",
+          style = MaterialTheme.typography.bodyMedium,
+          fontFamily = ChivoMonoFontFamily,
+          color = if (fontProviderOk) RiviaMint else RiviaMutedText,
+        )
       }
     }
   }

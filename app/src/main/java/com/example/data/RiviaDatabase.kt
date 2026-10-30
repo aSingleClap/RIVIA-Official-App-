@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 
 @Database(
   entities =
@@ -15,13 +16,17 @@ import androidx.room.RoomDatabase
       DefaultSettingsEntity::class,
     ],
   version = 1,
-  exportSchema = false,
+  exportSchema = true,
 )
 abstract class RiviaDatabase : RoomDatabase() {
   abstract fun riviaDao(): RiviaDao
 
   companion object {
     @Volatile private var INSTANCE: RiviaDatabase? = null
+
+    // Future schema changes must add explicit Migration(from, to) objects here;
+    // fallbackToDestructiveMigration is never used so chats are never wiped.
+    private val ALL_MIGRATIONS: Array<Migration> = emptyArray()
 
     fun getInstance(context: Context): RiviaDatabase {
       return INSTANCE
@@ -32,7 +37,7 @@ abstract class RiviaDatabase : RoomDatabase() {
                 RiviaDatabase::class.java,
                 "rivia_database.db",
               )
-              .fallbackToDestructiveMigration(true)
+              .addMigrations(*ALL_MIGRATIONS)
               .build()
               .also { INSTANCE = it }
         }

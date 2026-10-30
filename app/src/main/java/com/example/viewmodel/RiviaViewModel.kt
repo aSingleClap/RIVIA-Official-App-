@@ -73,11 +73,29 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       .flatMapLatest { id -> if (id == null) flowOf(null) else dao.observeChatById(id) }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+  // In-memory streaming overlay so active turns update immediately without DB thrashing
+  private val _streamingMessageOverlay = MutableStateFlow<MessageEntity?>(null)
+
   @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
   val activeMessages: StateFlow<List<MessageEntity>> =
-    _activeChatId
-      .flatMapLatest { id ->
-        if (id == null) flowOf(emptyList()) else dao.observeMessagesForChat(id)
+    combine(
+        _activeChatId.flatMapLatest { id ->
+          if (id == null) flowOf(emptyList()) else dao.observeMessagesForChat(id)
+        },
+        _streamingMessageOverlay,
+      ) { dbMessages, overlay ->
+        if (overlay == null) {
+          dbMessages
+        } else {
+          val idx = dbMessages.indexOfFirst { it.id == overlay.id }
+          if (idx >= 0) {
+            dbMessages.toMutableList().apply { this[idx] = overlay }
+          } else if (overlay.chatId == _activeChatId.value) {
+            dbMessages + overlay
+          } else {
+            dbMessages
+          }
+        }
       }
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -311,9 +329,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     updateCurrentChatSettings(cur.copy(autoReadAloud = !cur.autoReadAloud))
   }
 
-  fun saveCurrentSettingsAsDefault() {
+  fun saveCurrentSettingsAsDefault(explicitSettings: RunSettings? = null) {
     viewModelScope.launch {
-      val cur = currentRunSettings.value
+      val cur = explicitSettings ?: currentRunSettings.value
       dao.saveDefaultSettings(DefaultSettingsEntity(id = 1, runSettingsJson = cur.toJsonString()))
       showNotice("Saved as default for new chats.")
     }
@@ -559,8 +577,13 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     _isStreaming.value = true
     val startTimeMs = System.currentTimeMillis()
     var firstTokenTimeMs: Long? = null
+    var lastDbWriteMs = startTimeMs
     val chosenModel =
       if (channel == RiviaChannel.LIVE_VOICE) settings.liveModel else settings.model
+
+    // Fix #11: Live always streams — ignore background setting for Live turns
+    val isBackground =
+      channel != RiviaChannel.LIVE_VOICE && settings.store && settings.background
 
     val assistantMsgId = UUID.randomUUID().toString()
     var assistantMsg =
@@ -575,10 +598,11 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         previousInteractionId = previousInteractionId,
         model = chosenModel,
         serviceTier = settings.serviceTier,
-        status = if (settings.store && settings.background) "polling" else "streaming",
+        status = if (isBackground) "polling" else "streaming",
         createdAt = startTimeMs + 1L,
       )
     dao.insertMessage(assistantMsg)
+    _streamingMessageOverlay.value = assistantMsg
 
     val apiKey = keyRepository.getGeminiKey()
 
@@ -598,34 +622,71 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                 interactionId = event.interactionId,
                 serviceTier = event.serviceTierHeader ?: assistantMsg.serviceTier,
               )
-            dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = assistantMsg
+            dao.updateStreamingProgress(
+              id = assistantMsg.id,
+              content = assistantMsg.content,
+              thoughtSummary = assistantMsg.thoughtSummary,
+              interactionId = assistantMsg.interactionId,
+              serviceTier = assistantMsg.serviceTier,
+              ttftMs = assistantMsg.ttftMs,
+              status = assistantMsg.status,
+            )
+            lastDbWriteMs = System.currentTimeMillis()
           }
           is GeminiStreamEvent.TextDelta -> {
+            val now = System.currentTimeMillis()
             if (firstTokenTimeMs == null) {
-              firstTokenTimeMs = System.currentTimeMillis() - startTimeMs
+              firstTokenTimeMs = now - startTimeMs
             }
             assistantMsg =
               assistantMsg.copy(
                 content = assistantMsg.content + event.text,
                 ttftMs = firstTokenTimeMs ?: 0L,
               )
-            dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = assistantMsg
+            if (now - lastDbWriteMs >= 300L) {
+              dao.updateStreamingProgress(
+                id = assistantMsg.id,
+                content = assistantMsg.content,
+                thoughtSummary = assistantMsg.thoughtSummary,
+                interactionId = assistantMsg.interactionId,
+                serviceTier = assistantMsg.serviceTier,
+                ttftMs = assistantMsg.ttftMs,
+                status = assistantMsg.status,
+              )
+              lastDbWriteMs = now
+            }
             onDeltaCallback?.invoke(event.text)
           }
           is GeminiStreamEvent.ThoughtSummaryDelta -> {
+            val now = System.currentTimeMillis()
             if (firstTokenTimeMs == null) {
-              firstTokenTimeMs = System.currentTimeMillis() - startTimeMs
+              firstTokenTimeMs = now - startTimeMs
             }
             assistantMsg =
               assistantMsg.copy(
                 thoughtSummary = assistantMsg.thoughtSummary + event.thoughtText,
                 ttftMs = firstTokenTimeMs ?: 0L,
               )
-            dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = assistantMsg
+            if (now - lastDbWriteMs >= 300L) {
+              dao.updateStreamingProgress(
+                id = assistantMsg.id,
+                content = assistantMsg.content,
+                thoughtSummary = assistantMsg.thoughtSummary,
+                interactionId = assistantMsg.interactionId,
+                serviceTier = assistantMsg.serviceTier,
+                ttftMs = assistantMsg.ttftMs,
+                status = assistantMsg.status,
+              )
+              lastDbWriteMs = now
+            }
           }
           is GeminiStreamEvent.ReplaceReplyText -> {
+            val now = System.currentTimeMillis()
             if (firstTokenTimeMs == null) {
-              firstTokenTimeMs = System.currentTimeMillis() - startTimeMs
+              firstTokenTimeMs = now - startTimeMs
             }
             assistantMsg =
               assistantMsg.copy(
@@ -634,11 +695,34 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   event.fullThought.ifBlank { assistantMsg.thoughtSummary },
                 ttftMs = firstTokenTimeMs ?: 0L,
               )
-            dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = assistantMsg
+            dao.updateStreamingProgress(
+              id = assistantMsg.id,
+              content = assistantMsg.content,
+              thoughtSummary = assistantMsg.thoughtSummary,
+              interactionId = assistantMsg.interactionId,
+              serviceTier = assistantMsg.serviceTier,
+              ttftMs = assistantMsg.ttftMs,
+              status = assistantMsg.status,
+            )
+            lastDbWriteMs = now
           }
           is GeminiStreamEvent.StatusUpdate -> {
             assistantMsg = assistantMsg.copy(status = "polling (${event.status})")
-            dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = assistantMsg
+            val now = System.currentTimeMillis()
+            if (now - lastDbWriteMs >= 300L) {
+              dao.updateStreamingProgress(
+                id = assistantMsg.id,
+                content = assistantMsg.content,
+                thoughtSummary = assistantMsg.thoughtSummary,
+                interactionId = assistantMsg.interactionId,
+                serviceTier = assistantMsg.serviceTier,
+                ttftMs = assistantMsg.ttftMs,
+                status = assistantMsg.status,
+              )
+              lastDbWriteMs = now
+            }
           }
           is GeminiStreamEvent.StepCompleted -> {
             // Raw steps are saved in Completed
@@ -659,6 +743,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                 rawStepsJson = event.rawSteps.toString(),
               )
             dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = null
 
             val latestChat = dao.getChatById(chat.id)
             if (latestChat != null) {
@@ -710,6 +795,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                 totalTimeMs = totalMs,
               )
             dao.updateMessage(assistantMsg)
+            _streamingMessageOverlay.value = null
 
             dao.logRequestAndPrune(
               RequestLogEntity(
@@ -732,13 +818,53 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     } catch (e: CancellationException) {
       val totalMs = System.currentTimeMillis() - startTimeMs
       assistantMsg =
+        if (assistantMsg.content.isBlank()) {
+          assistantMsg.copy(
+            status = "error",
+            errorMessage = "Request stopped before reply arrived (${totalMs / 1000}s).",
+            totalTimeMs = totalMs,
+          )
+        } else {
+          assistantMsg.copy(
+            status = "completed",
+            totalTimeMs = totalMs,
+          )
+        }
+      runCatching { dao.updateMessage(assistantMsg) }
+      _streamingMessageOverlay.value = null
+      throw e
+    } catch (e: Throwable) {
+      // Fix #3: Turn any uncaught exception into the message's error (and Live error caption)
+      val totalMs = System.currentTimeMillis() - startTimeMs
+      val redactedErr =
+        keyRepository.redact(e.message ?: e.javaClass.simpleName ?: "Connection error")
+      assistantMsg =
         assistantMsg.copy(
-          status = "completed",
+          status = "error",
+          errorMessage = redactedErr,
           totalTimeMs = totalMs,
         )
-      dao.updateMessage(assistantMsg)
-      throw e
+      runCatching { dao.updateMessage(assistantMsg) }
+      _streamingMessageOverlay.value = null
+      runCatching {
+        dao.logRequestAndPrune(
+          RequestLogEntity(
+            timestamp = System.currentTimeMillis(),
+            requestId = requestId,
+            model = chosenModel,
+            status = "error",
+            serviceTier = assistantMsg.serviceTier,
+            inputTokens = assistantMsg.inputTokens,
+            outputTokens = assistantMsg.outputTokens,
+            thoughtTokens = assistantMsg.thoughtTokens,
+            latencyMs = totalMs,
+            error = redactedErr,
+          )
+        )
+      }
+      onErrorCallback?.invoke(redactedErr)
     } finally {
+      _streamingMessageOverlay.value = null
       _isStreaming.value = false
     }
   }
@@ -936,14 +1062,30 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch { keyRepository.updateVoicePreferences(transform) }
   }
 
-  fun testElevenLabsSpeakLine() {
-    val line =
-      "[warmly] Hi Jordan, I'm Rivia. My voice stream and sentence pipeline are ready."
-    audioPlayerManager.speakMarkdownMessage(
-      messageId = "voice_test_line",
-      rawMarkdown = line,
-      isLiveChannel = false,
-    )
+  fun viewModelScopeSaveGeminiKey(rawKey: String) {
+    viewModelScope.launch { keyRepository.saveGeminiKey(rawKey) }
+  }
+
+  fun viewModelScopeSaveElevenKey(rawKey: String) {
+    viewModelScope.launch { keyRepository.saveElevenLabsKey(rawKey) }
+  }
+
+  fun testElevenLabsSpeakLine(customVoiceId: String? = null) {
+    viewModelScope.launch {
+      val trimmed = customVoiceId?.trim()
+      if (!trimmed.isNullOrEmpty() && trimmed != voicePreferences.value.voiceId) {
+        keyRepository.updateVoicePreferences {
+          it.copy(voiceId = trimmed, voiceName = "Custom ($trimmed)")
+        }
+      }
+      val line =
+        "[warmly] Hi Jordan, I'm Rivia. My voice stream and sentence pipeline are ready."
+      audioPlayerManager.speakMarkdownMessage(
+        messageId = "voice_test_line",
+        rawMarkdown = line,
+        isLiveChannel = false,
+      )
+    }
   }
 
   /**

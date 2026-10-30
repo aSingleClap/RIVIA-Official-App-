@@ -10,6 +10,22 @@ object TextAudioTagProcessor {
   // Matches fenced code blocks ```...``` or inline code spans `...`
   private val CODE_SEGMENT_REGEX = Regex("""(```[\s\S]*?```|`[^`\n]+`)""")
 
+  // Fix #10: Split sentences only at . ! or ? followed by whitespace or line break, or on line breaks,
+  // so decimal numbers like 3.5 stay whole.
+  private val SENTENCE_SPLIT_REGEX = Regex("""(?<=[.!?])[ \t\r\n]+|\r?\n+""")
+
+  // Used during Live streaming to find the last completed sentence boundary (. ! or ? followed by space/newline, or newline)
+  val LIVE_STREAM_SENTENCE_END_REGEX = Regex("""[.!?](?=[ \t\r\n])|\r?\n""")
+
+  /**
+   * Fix #9: Only send audio tags to eleven_v3 models, eleven_v4 and eleven_v4_turbo.
+   * Strip them for every other model, including the eleven_flash_v2_5 fallback.
+   */
+  fun modelSupportsAudioTags(modelId: String): Boolean {
+    val clean = modelId.trim().lowercase()
+    return clean.startsWith("eleven_v3") || clean == "eleven_v4" || clean == "eleven_v4_turbo"
+  }
+
   /**
    * Generates a 4-hex-character request ID like "r-8c41".
    */
@@ -39,11 +55,10 @@ object TextAudioTagProcessor {
     if (lastIndex < input.length) {
       sb.append(removeAudioTagsFromPlainSegment(input.substring(lastIndex)))
     }
-    return sb.toString()
+    return sb.toString().trim()
   }
 
-  private fun removeAudioTagsFromPlainSegment(segment: String): String {
-    // Remove [tag] and up to one immediately following space if it was separating tag from word
+  fun removeAudioTagsFromPlainSegment(segment: String): String {
     return segment.replace(Regex("""\[[a-z ]{3,30}\](?![(\[:]) ?"""), "")
   }
 
@@ -54,9 +69,9 @@ object TextAudioTagProcessor {
    * - Reads link text instead of URLs for [label](url)
    * - Says "link" for bare URLs (https?://...)
    * - Drops markdown formatting marks
-   * - Keeps audio tags unless sendAudioTags is false
+   * - Keeps audio tags only when keepAudioTags is true
    */
-  fun toSpeakableText(markdown: String, sendAudioTags: Boolean): String {
+  fun toSpeakableText(markdown: String, keepAudioTags: Boolean): String {
     if (markdown.isBlank()) return ""
 
     var text = markdown
@@ -83,8 +98,8 @@ object TextAudioTagProcessor {
     text = Regex("""https?://\S+""").replace(text, "link")
 
     // 6. Strip or keep audio tags
-    if (!sendAudioTags) {
-      text = AUDIO_TAG_REGEX.replace(text, "")
+    if (!keepAudioTags) {
+      text = Regex("""\[[a-z ]{3,30}\](?![(\[:]) ?""").replace(text, "")
     }
 
     // 7. Strip markdown formatting marks (headings, bold, italic, strikethrough, blockquotes, list bullets)
@@ -92,7 +107,6 @@ object TextAudioTagProcessor {
     text = Regex("""(?m)^[ \t]*>[ \t]*""").replace(text, "")
     text = Regex("""(?m)^[ \t]*[-*•][ \t]+""").replace(text, "")
     text = text.replace("**", "").replace("__", "").replace("~~", "")
-    // Single * or _ around words
     text = Regex("""(?<!\w)\*([^*\n]+)\*(?!\w)""").replace(text, "$1")
     text = Regex("""(?<!\w)_([^_\n]+)_(?!\w)""").replace(text, "$1")
 
@@ -103,19 +117,17 @@ object TextAudioTagProcessor {
 
   /**
    * Splits speakable text into ordered sentences for streaming chunk playback with previous_text.
-   * Ensures a trailing audio tag isn't orphaned at the end of the previous sentence.
+   * Splits only at . ! or ? followed by a space or line break so numbers like 3.5 stay whole.
    */
   fun splitIntoSentences(speakableText: String): List<String> {
     if (speakableText.isBlank()) return emptyList()
     val results = mutableListOf<String>()
-    // Split after sentence-ending punctuation (. ! ?) followed by whitespace/newline, or on newlines
-    val rawParts = speakableText.split(Regex("""(?<=[.!?])\s+|\n+"""))
+    val rawParts = speakableText.split(SENTENCE_SPLIT_REGEX)
     var carryOverTag = ""
     for (part in rawParts) {
       val trimmed = (if (carryOverTag.isNotEmpty()) "$carryOverTag $part" else part).trim()
       carryOverTag = ""
       if (trimmed.isEmpty()) continue
-      // If a part is ONLY an audio tag, carry it over to the next sentence
       if (AUDIO_TAG_REGEX.matches(trimmed)) {
         carryOverTag = trimmed
       } else {

@@ -75,6 +75,8 @@ class GeminiInteractionsClient {
       .connectTimeout(30, TimeUnit.SECONDS)
       .writeTimeout(60, TimeUnit.SECONDS)
       .readTimeout(5, TimeUnit.MINUTES)
+      .pingInterval(15, TimeUnit.SECONDS)
+      .retryOnConnectionFailure(true)
       .build()
 
   @Volatile private var activeCall: Call? = null
@@ -119,7 +121,8 @@ class GeminiInteractionsClient {
           }
         if (rawSaved.length() > 0) {
           for (i in 0 until rawSaved.length()) {
-            steps.put(rawSaved.getJSONObject(i))
+            val rawObj = rawSaved.optJSONObject(i) ?: continue
+            steps.put(sanitizeStepObject(rawObj))
           }
         } else if (msg.content.isNotBlank()) {
           steps.put(
@@ -162,17 +165,18 @@ class GeminiInteractionsClient {
   }
 
   /**
-   * Builds the exact JSON body for POST /v1beta/interactions according to Section 3 & Section 4.
+   * Builds the exact JSON body for POST /v1beta/interactions according to Section 3, Section 4,
+   * and Fixes #4, #7, #11, #13.
    */
   fun buildRequestBodyJson(
     settings: RunSettings,
     channel: RiviaChannel,
     inputSteps: JSONArray,
     previousInteractionId: String?,
-    stream: Boolean = !settings.background,
+    stream: Boolean = true,
   ): JSONObject {
-    val chosenModel =
-      if (channel == RiviaChannel.LIVE_VOICE) settings.liveModel else settings.model
+    val isLive = channel == RiviaChannel.LIVE_VOICE
+    val chosenModel = if (isLive) settings.liveModel else settings.model
     val body = JSONObject()
     body.put("model", chosenModel.removePrefix("models/"))
     body.put("input", inputSteps)
@@ -202,11 +206,24 @@ class GeminiInteractionsClient {
     // generation_config
     val genConfig = JSONObject()
     val allowedThinking = RunSettings.allowedThinkingLevels(chosenModel)
+    // Fix #7: Use liveThinkingLevel for Live requests, thinkingLevel for typed chat
+    val rawChosenThinkingLevel =
+      if (isLive) settings.liveThinkingLevel else settings.thinkingLevel
+    val effectiveThinkingLevel =
+      if (
+        rawChosenThinkingLevel == "minimal" &&
+          !allowedThinking.contains("minimal") &&
+          allowedThinking.contains("low")
+      ) {
+        "low"
+      } else {
+        rawChosenThinkingLevel
+      }
     if (
-      settings.thinkingLevel != "model_default" &&
-        allowedThinking.contains(settings.thinkingLevel)
+      effectiveThinkingLevel != "model_default" &&
+        allowedThinking.contains(effectiveThinkingLevel)
     ) {
-      genConfig.put("thinking_level", settings.thinkingLevel)
+      genConfig.put("thinking_level", effectiveThinkingLevel)
     }
     genConfig.put("thinking_summaries", settings.thoughtSummaries)
 
@@ -231,13 +248,16 @@ class GeminiInteractionsClient {
       }
     }
 
-    // Tools
+    // Tools (Fix #4 & Fix #13)
     val toolsArray = JSONArray()
     if (settings.googleSearchEnabled) {
+      // Fix #4: Google Search is {"type":"google_search"}, plus "search_types":["image_search"] for image search; remove "mode".
       toolsArray.put(
         JSONObject().apply {
           put("type", "google_search")
-          put("mode", settings.googleSearchMode)
+          if (settings.googleSearchMode.equals("image", ignoreCase = true)) {
+            put("search_types", JSONArray().apply { put("image_search") })
+          }
         }
       )
     }
@@ -259,22 +279,17 @@ class GeminiInteractionsClient {
       )
     }
     if (settings.fileSearchEnabled && settings.fileSearchStoreNames.isNotEmpty()) {
+      // Fix #4: File search is {"type":"file_search","file_search_store_names":[...]}
       toolsArray.put(
         JSONObject().apply {
           put("type", "file_search")
-          put("store_names", JSONArray(settings.fileSearchStoreNames))
+          put("file_search_store_names", JSONArray(settings.fileSearchStoreNames))
         }
       )
     }
-    // Merge enabled plug-ins' tools
-    val pluginDecls = PluginRegistry.getEnabledFunctionDeclarations()
-    if (pluginDecls.length() > 0) {
-      toolsArray.put(
-        JSONObject().apply {
-          put("type", "function_declarations")
-          put("function_declarations", pluginDecls)
-        }
-      )
+    // Fix #13: Each plug-in function goes in tools as its own {"type":"function","name":...,"description":...,"parameters":{...}} object
+    for (fnToolObj in PluginRegistry.getEnabledFunctionToolObjects()) {
+      toolsArray.put(fnToolObj)
     }
 
     if (toolsArray.length() > 0) {
@@ -296,12 +311,10 @@ class GeminiInteractionsClient {
             put("schema", schemaObj)
           },
         )
-      } catch (_: Exception) {
-        // Invalid JSON is caught by schema editor
-      }
+      } catch (_: Exception) {}
     }
 
-    // Safety settings
+    // Safety settings (Fix #4: items use "type" for the category: {"type":"hate_speech","threshold":"...","method":"..."})
     val safetyArray = JSONArray()
     val categories =
       listOf(
@@ -311,11 +324,11 @@ class GeminiInteractionsClient {
         "sexually_explicit" to settings.safetySexuallyExplicit,
         "jailbreak" to settings.safetyJailbreak,
       )
-    for ((cat, threshold) in categories) {
+    for ((catType, threshold) in categories) {
       if (threshold != "model_default") {
         safetyArray.put(
           JSONObject().apply {
-            put("category", cat)
+            put("type", catType)
             put("threshold", threshold)
             put("method", settings.safetyMethod)
           }
@@ -326,10 +339,18 @@ class GeminiInteractionsClient {
       body.put("safety_settings", safetyArray)
     }
 
-    body.put("service_tier", settings.serviceTier)
+    // Fix #4: Leave service_tier out of the body for standard; send it only for flex or priority.
+    val tier = settings.serviceTier.lowercase()
+    if (tier == "flex" || tier == "priority") {
+      body.put("service_tier", tier)
+    }
+
     body.put("store", settings.store)
-    val effectiveBackground = settings.store && settings.background
-    body.put("background", effectiveBackground)
+    // Fix #11: Live always streams: ignore the background setting for Live turns.
+    val effectiveBackground = !isLive && settings.store && settings.background
+    if (effectiveBackground) {
+      body.put("background", true)
+    }
 
     if (settings.labels.isNotEmpty()) {
       val labelsObj = JSONObject()
@@ -373,20 +394,21 @@ class GeminiInteractionsClient {
     elevenKey: String,
   ): String {
     val sampleInput = buildSingleTurnInput("<your next message>")
+    val isBackground =
+      channel != RiviaChannel.LIVE_VOICE && settings.store && settings.background
     val bodyObj =
       buildRequestBodyJson(
         settings = settings,
         channel = channel,
         inputSteps = sampleInput,
         previousInteractionId = previousInteractionId,
-        stream = !(settings.store && settings.background),
+        stream = !isBackground,
       )
     val wrapper =
       JSONObject().apply {
         put(
           "endpoint",
-          "POST $BASE_URL/interactions" +
-            if (settings.store && settings.background) "" else "?alt=sse",
+          "POST $BASE_URL/interactions" + if (isBackground) "" else "?alt=sse",
         )
         put(
           "headers",
@@ -403,6 +425,8 @@ class GeminiInteractionsClient {
   /**
    * Streams or polls an interaction turn over REST, applying all retry, reconnect,
    * raw step rebuild, and background polling rules.
+   * Fix #3 & #11: Live always streams (ignores background), and polling fallback / all network steps
+   * are wrapped in try/catch so losing signal never crashes the app.
    */
   suspend fun sendTurn(
     apiKey: String,
@@ -423,7 +447,9 @@ class GeminiInteractionsClient {
         return@withContext
       }
 
-      val useBackground = settings.store && settings.background
+      // Fix #11: Live always streams: ignore the background setting for Live turns.
+      val useBackground =
+        channel != RiviaChannel.LIVE_VOICE && settings.store && settings.background
       var usePreviousInteractionId =
         if (settings.store && !previousInteractionId.isNullOrBlank()) {
           previousInteractionId
@@ -443,273 +469,168 @@ class GeminiInteractionsClient {
 
       val client = clientForTier(settings.serviceTier)
 
-      // 1. Background polling flow when background == true
-      if (useBackground) {
-        val inputSteps =
-          if (usePreviousInteractionId != null) {
-            buildSingleTurnInput(newUserText)
-          } else {
-            buildFullConversationSteps(priorMessages, newUserText)
-          }
-        val bodyJson =
-          buildRequestBodyJson(
-            settings = settings,
-            channel = channel,
-            inputSteps = inputSteps,
-            previousInteractionId = usePreviousInteractionId,
-            stream = false,
-          )
-        val postUrl = "$BASE_URL/interactions"
-        val req =
-          Request.Builder()
-            .url(postUrl)
-            .addHeader("x-goog-api-key", apiKey)
-            .addHeader("Content-Type", "application/json")
-            .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-
-        val call = client.newCall(req)
-        activeCall = call
-        try {
-          call.execute().use { resp ->
-            val respBody = resp.body?.string().orEmpty()
-            val tierHdr = resp.header("x-gemini-service-tier")
-            if (!tierHdr.isNullOrBlank()) serviceTierHeader = tierHdr
-            if (!resp.isSuccessful) {
-              onEvent(
-                GeminiStreamEvent.Error(
-                  extractApiErrorMessage(resp.code, respBody),
-                  resp.code,
-                )
-              )
-              return@withContext
-            }
-            val json = JSONObject(respBody)
-            val createdId = extractInteractionId(json)
-            if (createdId.isNullOrBlank()) {
-              onEvent(GeminiStreamEvent.Error("Background interaction returned no id: $respBody"))
-              return@withContext
-            }
-            interactionId = createdId
-            onEvent(GeminiStreamEvent.InteractionCreated(createdId, serviceTierHeader))
-          }
-          // Poll GET /v1beta/interactions/{id} until completed, failed, cancelled or incomplete
-          pollInteractionUntilDone(
-            client = client,
-            apiKey = apiKey,
-            interactionId = interactionId!!,
-            defaultServiceTier = serviceTierHeader,
-            onEvent = onEvent,
-          )
-        } catch (e: CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          if (call.isCanceled()) return@withContext
-          onEvent(GeminiStreamEvent.Error(e.message ?: "Network error during background polling"))
-        } finally {
-          activeCall = null
-        }
-        return@withContext
-      }
-
-      // 2. Streaming SSE flow (POST /v1beta/interactions?alt=sse)
-      // Retry POST with exponential backoff on 429, 500, 503 and timeouts ONLY before interaction.created arrives!
-      var postAttempt = 0
-      val maxPostRetries = 3
-      var postSucceededOrCreated = false
-
-      while (!postSucceededOrCreated && postAttempt <= maxPostRetries) {
-        currentCoroutineContext().ensureActive()
-        val inputSteps =
-          if (usePreviousInteractionId != null) {
-            buildSingleTurnInput(newUserText)
-          } else {
-            buildFullConversationSteps(priorMessages, newUserText)
-          }
-        val bodyJson =
-          buildRequestBodyJson(
-            settings = settings,
-            channel = channel,
-            inputSteps = inputSteps,
-            previousInteractionId = usePreviousInteractionId,
-            stream = true,
-          )
-
-        val request =
-          Request.Builder()
-            .url("$BASE_URL/interactions?alt=sse")
-            .addHeader("x-goog-api-key", apiKey)
-            .addHeader("Accept", "text/event-stream")
-            .addHeader("Content-Type", "application/json")
-            .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
-
-        val call = client.newCall(request)
-        activeCall = call
-
-        try {
-          call.execute().use { response ->
-            val tierHdr = response.header("x-gemini-service-tier")
-            if (!tierHdr.isNullOrBlank()) {
-              serviceTierHeader = tierHdr
-            }
-
-            if (!response.isSuccessful) {
-              val errorBody = response.body?.string().orEmpty()
-              val code = response.code
-
-              // If the server no longer has the earlier interaction (404 or 400 mentioning previous_interaction_id),
-              // rebuild the whole conversation from saved raw steps and immediately retry POST!
-              if (
-                usePreviousInteractionId != null &&
-                  (code == 404 ||
-                    (code == 400 &&
-                      errorBody.contains("previous_interaction", ignoreCase = true)))
-              ) {
-                usePreviousInteractionId = null
-                return@use
-              }
-
-              // Retry on 429, 500, 503 before interaction.created
-              if (
-                (code == 429 || code == 500 || code == 503) && postAttempt < maxPostRetries
-              ) {
-                postAttempt++
-                val backoffMs = (1000L * (1 shl postAttempt)).coerceAtMost(10_000L)
-                delay(backoffMs)
-                return@use
-              }
-
-              onEvent(
-                GeminiStreamEvent.Error(extractApiErrorMessage(code, errorBody), code)
-              )
-              return@withContext
-            }
-
-            // Stream SSE lines
-            val reader =
-              BufferedReader(
-                InputStreamReader(response.body!!.byteStream(), Charsets.UTF_8)
-              )
-            processSseStream(
-              reader = reader,
-              serviceTierHeader = serviceTierHeader,
-              onInteractionCreated = { id ->
-                interactionId = id
-                postSucceededOrCreated = true
-                onEvent(GeminiStreamEvent.InteractionCreated(id, serviceTierHeader))
-              },
-              onEventId = { evId -> lastEventId = evId },
-              onStepStart = { stepObj -> currentStepObj = stepObj },
-              onTextDelta = { text ->
-                appendDeltaToStep(currentStepObj, "text", text, null)
-                onEvent(GeminiStreamEvent.TextDelta(text))
-              },
-              onThoughtSummaryDelta = { thought ->
-                appendDeltaToStep(currentStepObj, "thought_summary", thought, null)
-                onEvent(GeminiStreamEvent.ThoughtSummaryDelta(thought))
-              },
-              onThoughtSignature = { sig ->
-                appendDeltaToStep(currentStepObj, "thought_signature", null, sig)
-              },
-              onStepStop = { stopObj ->
-                val finalized = finalizeStep(currentStepObj, stopObj)
-                rawSteps.put(finalized)
-                currentStepObj = null
-                onEvent(GeminiStreamEvent.StepCompleted(finalized))
-              },
-              onStatusUpdate = { status ->
-                onEvent(GeminiStreamEvent.StatusUpdate(status))
-              },
-              onCompleted = { id, inTok, outTok, thTok, outputsArr ->
-                if (!id.isNullOrBlank()) interactionId = id
-                inputTokens = inTok
-                outputTokens = outTok
-                thoughtTokens = thTok
-                if (rawSteps.length() == 0 && outputsArr != null && outputsArr.length() > 0) {
-                  for (i in 0 until outputsArr.length()) {
-                    rawSteps.put(outputsArr.getJSONObject(i))
-                  }
-                }
-                streamCompleted = true
-              },
-              onStreamError = { errMsg ->
-                onEvent(GeminiStreamEvent.Error(errMsg))
-              },
-            )
-            postSucceededOrCreated = true
-          }
-        } catch (e: CancellationException) {
-          throw e
-        } catch (e: Exception) {
-          if (call.isCanceled()) return@withContext
-          if (interactionId == null) {
-            // Failed BEFORE interaction.created arrived -> eligible for POST retry on timeout/IOException
-            if (
-              (e is SocketTimeoutException || e is IOException) &&
-                postAttempt < maxPostRetries
-            ) {
-              postAttempt++
-              val backoffMs = (1000L * (1 shl postAttempt)).coerceAtMost(10_000L)
-              delay(backoffMs)
-              continue
+      try {
+        // 1. Background polling flow when background == true (and not Live)
+        if (useBackground) {
+          val inputSteps =
+            if (usePreviousInteractionId != null) {
+              buildSingleTurnInput(newUserText)
             } else {
-              onEvent(
-                GeminiStreamEvent.Error(
-                  e.message ?: "Connection failed before interaction started"
-                )
-              )
-              return@withContext
+              buildFullConversationSteps(priorMessages, newUserText)
             }
-          } else {
-            // Failed AFTER interaction.created arrived -> NEVER re-POST! Break out to reconnect/poll.
-            postSucceededOrCreated = true
-          }
-        }
-      }
-
-      // 3. If interaction.created arrived, but stream dropped before completion:
-      // - If lastEventId is present, reconnect with GET /v1beta/interactions/{id}?alt=sse&stream=true&last_event_id=<lastEventId>
-      // - If lastEventId is null/blank (or reconnect fails), poll GET /v1beta/interactions/{id} until finished and replace partial reply with its outputs!
-      if (!streamCompleted && interactionId != null) {
-        val id = interactionId!!
-        var reconnectAttempt = 0
-        val maxReconnects = 3
-
-        while (!streamCompleted && !lastEventId.isNullOrBlank() && reconnectAttempt < maxReconnects) {
-          currentCoroutineContext().ensureActive()
-          reconnectAttempt++
-          delay((1000L * reconnectAttempt).coerceAtMost(5000L))
-
-          val reconnectUrl =
-            "$BASE_URL/interactions/$id?alt=sse&stream=true&last_event_id=$lastEventId"
+          val bodyJson =
+            buildRequestBodyJson(
+              settings = settings,
+              channel = channel,
+              inputSteps = inputSteps,
+              previousInteractionId = usePreviousInteractionId,
+              stream = false,
+            )
+          val postUrl = "$BASE_URL/interactions"
           val req =
             Request.Builder()
-              .url(reconnectUrl)
+              .url(postUrl)
               .addHeader("x-goog-api-key", apiKey)
-              .addHeader("Accept", "text/event-stream")
-              .get()
+              .addHeader("Content-Type", "application/json")
+              .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
               .build()
+
           val call = client.newCall(req)
           activeCall = call
           try {
             call.execute().use { resp ->
+              val respBody = resp.body?.string().orEmpty()
+              val tierHdr = resp.header("x-gemini-service-tier")
+              if (!tierHdr.isNullOrBlank()) serviceTierHeader = tierHdr
               if (!resp.isSuccessful) {
-                // Fall back to GET polling if stream reconnect returns non-200
-                lastEventId = null
-                return@use
+                onEvent(
+                  GeminiStreamEvent.Error(
+                    extractApiErrorMessage(resp.code, respBody),
+                    resp.code,
+                  )
+                )
+                return@withContext
               }
+              val json = JSONObject(respBody)
+              val createdId = extractInteractionId(json)
+              if (createdId.isNullOrBlank()) {
+                onEvent(
+                  GeminiStreamEvent.Error("Background interaction returned no id: $respBody")
+                )
+                return@withContext
+              }
+              interactionId = createdId
+              onEvent(GeminiStreamEvent.InteractionCreated(createdId, serviceTierHeader))
+            }
+            pollInteractionUntilDone(
+              client = client,
+              apiKey = apiKey,
+              interactionId = interactionId!!,
+              defaultServiceTier = serviceTierHeader,
+              onEvent = onEvent,
+            )
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Throwable) {
+            if (call.isCanceled()) return@withContext
+            onEvent(
+              GeminiStreamEvent.Error(
+                e.message ?: "Network error during background polling"
+              )
+            )
+          } finally {
+            activeCall = null
+          }
+          return@withContext
+        }
+
+        // 2. Streaming SSE flow (POST /v1beta/interactions?alt=sse)
+        var postAttempt = 0
+        val maxPostRetries = 3
+        var postSucceededOrCreated = false
+
+        while (!postSucceededOrCreated && postAttempt <= maxPostRetries) {
+          currentCoroutineContext().ensureActive()
+          val inputSteps =
+            if (usePreviousInteractionId != null) {
+              buildSingleTurnInput(newUserText)
+            } else {
+              buildFullConversationSteps(priorMessages, newUserText)
+            }
+          val bodyJson =
+            buildRequestBodyJson(
+              settings = settings,
+              channel = channel,
+              inputSteps = inputSteps,
+              previousInteractionId = usePreviousInteractionId,
+              stream = true,
+            )
+
+          val request =
+            Request.Builder()
+              .url("$BASE_URL/interactions?alt=sse")
+              .addHeader("x-goog-api-key", apiKey)
+              .addHeader("Accept", "text/event-stream")
+              .addHeader("Content-Type", "application/json")
+              .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+              .build()
+
+          val call = client.newCall(request)
+          activeCall = call
+
+          try {
+            call.execute().use { response ->
+              val tierHdr = response.header("x-gemini-service-tier")
+              if (!tierHdr.isNullOrBlank()) {
+                serviceTierHeader = tierHdr
+              }
+
+              if (!response.isSuccessful) {
+                val errorBody = response.body?.string().orEmpty()
+                val code = response.code
+
+                if (
+                  usePreviousInteractionId != null &&
+                    (code == 404 ||
+                      (code == 400 &&
+                        errorBody.contains("previous_interaction", ignoreCase = true)))
+                ) {
+                  usePreviousInteractionId = null
+                  return@use
+                }
+
+                if (
+                  (code == 429 || code == 500 || code == 503) && postAttempt < maxPostRetries
+                ) {
+                  postAttempt++
+                  val backoffMs = (1000L * (1 shl postAttempt)).coerceAtMost(10_000L)
+                  delay(backoffMs)
+                  return@use
+                }
+
+                onEvent(
+                  GeminiStreamEvent.Error(extractApiErrorMessage(code, errorBody), code)
+                )
+                return@withContext
+              }
+
+              var anyTextDeltaEmitted = false
+              var streamErrorEmitted = false
               val reader =
                 BufferedReader(
-                  InputStreamReader(resp.body!!.byteStream(), Charsets.UTF_8)
+                  InputStreamReader(response.body!!.byteStream(), Charsets.UTF_8)
                 )
               processSseStream(
                 reader = reader,
-                serviceTierHeader = serviceTierHeader,
-                onInteractionCreated = {},
+                onInteractionCreated = { id ->
+                  interactionId = id
+                  postSucceededOrCreated = true
+                  onEvent(GeminiStreamEvent.InteractionCreated(id, serviceTierHeader))
+                },
                 onEventId = { evId -> lastEventId = evId },
                 onStepStart = { stepObj -> currentStepObj = stepObj },
                 onTextDelta = { text ->
+                  anyTextDeltaEmitted = true
                   appendDeltaToStep(currentStepObj, "text", text, null)
                   onEvent(GeminiStreamEvent.TextDelta(text))
                 },
@@ -729,51 +650,192 @@ class GeminiInteractionsClient {
                 onStatusUpdate = { status ->
                   onEvent(GeminiStreamEvent.StatusUpdate(status))
                 },
-                onCompleted = { _, inTok, outTok, thTok, _ ->
+                onCompleted = { id, inTok, outTok, thTok, outputsArr ->
+                  if (!id.isNullOrBlank()) interactionId = id
                   inputTokens = inTok
                   outputTokens = outTok
                   thoughtTokens = thTok
+                  if (outputsArr != null && outputsArr.length() > 0) {
+                    if (rawSteps.length() == 0) {
+                      for (i in 0 until outputsArr.length()) {
+                        outputsArr.optJSONObject(i)?.let { rawSteps.put(sanitizeStepObject(it)) }
+                      }
+                    }
+                    if (!anyTextDeltaEmitted) {
+                      val extracted = extractTextAndThoughtFromOutputs(outputsArr)
+                      if (extracted.first.isNotEmpty() || extracted.second.isNotEmpty()) {
+                        onEvent(
+                          GeminiStreamEvent.ReplaceReplyText(extracted.first, extracted.second)
+                        )
+                      }
+                    }
+                  }
                   streamCompleted = true
                 },
                 onStreamError = { errMsg ->
+                  streamErrorEmitted = true
                   onEvent(GeminiStreamEvent.Error(errMsg))
                 },
               )
+              if (streamErrorEmitted) {
+                return@withContext
+              }
+              postSucceededOrCreated = true
             }
           } catch (e: CancellationException) {
             throw e
-          } catch (_: Exception) {
+          } catch (e: Throwable) {
             if (call.isCanceled()) return@withContext
+            if (interactionId == null) {
+              if (
+                (e is SocketTimeoutException || e is IOException) &&
+                  postAttempt < maxPostRetries
+              ) {
+                postAttempt++
+                val backoffMs = (1000L * (1 shl postAttempt)).coerceAtMost(10_000L)
+                delay(backoffMs)
+                continue
+              } else {
+                onEvent(
+                  GeminiStreamEvent.Error(
+                    e.message ?: "Connection failed before interaction started"
+                  )
+                )
+                return@withContext
+              }
+            } else {
+              postSucceededOrCreated = true
+            }
           }
         }
 
-        // Fallback: If no event_id had arrived when the stream dropped (or reconnects didn't finish),
-        // poll GET /v1beta/interactions/{id} until it finishes and replace the partial reply with its outputs.
-        if (!streamCompleted) {
-          pollInteractionUntilDone(
-            client = client,
-            apiKey = apiKey,
-            interactionId = id,
-            defaultServiceTier = serviceTierHeader,
-            onEvent = onEvent,
-          )
-          activeCall = null
-          return@withContext
-        }
-      }
+        // 3. If interaction.created arrived, but stream dropped before completion:
+        if (!streamCompleted && interactionId != null) {
+          val id = interactionId!!
+          var reconnectAttempt = 0
+          val maxReconnects = 3
 
-      activeCall = null
-      if (streamCompleted) {
-        onEvent(
-          GeminiStreamEvent.Completed(
-            interactionId = interactionId,
-            serviceTier = serviceTierHeader,
-            inputTokens = inputTokens,
-            outputTokens = outputTokens,
-            thoughtTokens = thoughtTokens,
-            rawSteps = rawSteps,
+          while (
+            !streamCompleted && !lastEventId.isNullOrBlank() && reconnectAttempt < maxReconnects
+          ) {
+            currentCoroutineContext().ensureActive()
+            reconnectAttempt++
+            delay((1000L * reconnectAttempt).coerceAtMost(5000L))
+
+            val reconnectUrl =
+              "$BASE_URL/interactions/$id?alt=sse&stream=true&last_event_id=$lastEventId"
+            val req =
+              Request.Builder()
+                .url(reconnectUrl)
+                .addHeader("x-goog-api-key", apiKey)
+                .addHeader("Accept", "text/event-stream")
+                .get()
+                .build()
+            val call = client.newCall(req)
+            activeCall = call
+            try {
+              call.execute().use { resp ->
+                if (!resp.isSuccessful) {
+                  lastEventId = null
+                  return@use
+                }
+                val reader =
+                  BufferedReader(
+                    InputStreamReader(resp.body!!.byteStream(), Charsets.UTF_8)
+                  )
+                processSseStream(
+                  reader = reader,
+                  onInteractionCreated = {},
+                  onEventId = { evId -> lastEventId = evId },
+                  onStepStart = { stepObj -> currentStepObj = stepObj },
+                  onTextDelta = { text ->
+                    appendDeltaToStep(currentStepObj, "text", text, null)
+                    onEvent(GeminiStreamEvent.TextDelta(text))
+                  },
+                  onThoughtSummaryDelta = { thought ->
+                    appendDeltaToStep(currentStepObj, "thought_summary", thought, null)
+                    onEvent(GeminiStreamEvent.ThoughtSummaryDelta(thought))
+                  },
+                  onThoughtSignature = { sig ->
+                    appendDeltaToStep(currentStepObj, "thought_signature", null, sig)
+                  },
+                  onStepStop = { stopObj ->
+                    val finalized = finalizeStep(currentStepObj, stopObj)
+                    rawSteps.put(finalized)
+                    currentStepObj = null
+                    onEvent(GeminiStreamEvent.StepCompleted(finalized))
+                  },
+                  onStatusUpdate = { status ->
+                    onEvent(GeminiStreamEvent.StatusUpdate(status))
+                  },
+                  onCompleted = { _, inTok, outTok, thTok, _ ->
+                    inputTokens = inTok
+                    outputTokens = outTok
+                    thoughtTokens = thTok
+                    streamCompleted = true
+                  },
+                  onStreamError = { errMsg ->
+                    onEvent(GeminiStreamEvent.Error(errMsg))
+                  },
+                )
+              }
+            } catch (e: CancellationException) {
+              throw e
+            } catch (_: Throwable) {
+              if (call.isCanceled()) return@withContext
+            }
+          }
+
+          // Fix #3: Wrap the polling fallback after a dropped stream in try/catch so losing signal never crashes the app.
+          if (!streamCompleted) {
+            try {
+              pollInteractionUntilDone(
+                client = client,
+                apiKey = apiKey,
+                interactionId = id,
+                defaultServiceTier = serviceTierHeader,
+                onEvent = onEvent,
+              )
+            } catch (e: CancellationException) {
+              throw e
+            } catch (e: Throwable) {
+              if (activeCall?.isCanceled() == true) return@withContext
+              onEvent(
+                GeminiStreamEvent.Error(
+                  e.message ?: "Stream dropped and polling recovery failed"
+                )
+              )
+            } finally {
+              activeCall = null
+            }
+            return@withContext
+          }
+        }
+
+        activeCall = null
+        if (streamCompleted) {
+          onEvent(
+            GeminiStreamEvent.Completed(
+              interactionId = interactionId,
+              serviceTier = serviceTierHeader,
+              inputTokens = inputTokens,
+              outputTokens = outputTokens,
+              thoughtTokens = thoughtTokens,
+              rawSteps = rawSteps,
+            )
           )
-        )
+        } else if (interactionId == null) {
+          onEvent(
+            GeminiStreamEvent.Error(
+              "Stream closed before Gemini returned a response."
+            )
+          )
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Throwable) {
+        activeCall = null
+        onEvent(GeminiStreamEvent.Error(e.message ?: "Unexpected network failure"))
       }
     }
 
@@ -790,6 +852,7 @@ class GeminiInteractionsClient {
   ) {
     var serviceTier = defaultServiceTier
     var pollCount = 0
+    var transientErrors = 0
     while (true) {
       currentCoroutineContext().ensureActive()
       val req =
@@ -801,49 +864,81 @@ class GeminiInteractionsClient {
 
       val call = client.newCall(req)
       activeCall = call
-      call.execute().use { resp ->
-        val tierHdr = resp.header("x-gemini-service-tier")
-        if (!tierHdr.isNullOrBlank()) serviceTier = tierHdr
-        val bodyStr = resp.body?.string().orEmpty()
-        if (!resp.isSuccessful) {
-          onEvent(GeminiStreamEvent.Error(extractApiErrorMessage(resp.code, bodyStr), resp.code))
-          return
-        }
-        val json = JSONObject(bodyStr)
-        val status = json.optString("status", "in_progress").lowercase()
-        onEvent(GeminiStreamEvent.StatusUpdate(status))
-
-        when (status) {
-          "completed",
-          "incomplete" -> {
-            val outputs = json.optJSONArray("outputs") ?: JSONArray()
-            val extracted = extractTextAndThoughtFromOutputs(outputs)
-            onEvent(GeminiStreamEvent.ReplaceReplyText(extracted.first, extracted.second))
-            val usage = json.optJSONObject("usage")
-            val inTok = usage?.optInt("total_input_tokens", 0) ?: 0
-            val outTok = usage?.optInt("total_output_tokens", 0) ?: 0
-            val thTok = usage?.optInt("total_thought_tokens", 0) ?: 0
-            onEvent(
-              GeminiStreamEvent.Completed(
-                interactionId = interactionId,
-                serviceTier = serviceTier,
-                inputTokens = inTok,
-                outputTokens = outTok,
-                thoughtTokens = thTok,
-                rawSteps = outputs,
+      try {
+        call.execute().use { resp ->
+          val tierHdr = resp.header("x-gemini-service-tier")
+          if (!tierHdr.isNullOrBlank()) serviceTier = tierHdr
+          val bodyStr = resp.body?.string().orEmpty()
+          if (!resp.isSuccessful) {
+            if (
+              (resp.code == 429 || resp.code == 500 || resp.code == 503) &&
+                transientErrors < 3
+            ) {
+              transientErrors++
+            } else {
+              onEvent(
+                GeminiStreamEvent.Error(
+                  extractApiErrorMessage(resp.code, bodyStr),
+                  resp.code,
+                )
               )
+              return
+            }
+          } else {
+            transientErrors = 0
+            val json = JSONObject(bodyStr)
+            val status = json.optString("status", "in_progress").lowercase()
+            onEvent(GeminiStreamEvent.StatusUpdate(status))
+
+            when (status) {
+              "completed",
+              "incomplete" -> {
+                val outputs = json.optJSONArray("outputs") ?: JSONArray()
+                val extracted = extractTextAndThoughtFromOutputs(outputs)
+                onEvent(
+                  GeminiStreamEvent.ReplaceReplyText(extracted.first, extracted.second)
+                )
+                val usage = json.optJSONObject("usage")
+                val inTok = usage?.optInt("total_input_tokens", 0) ?: 0
+                val outTok = usage?.optInt("total_output_tokens", 0) ?: 0
+                val thTok = usage?.optInt("total_thought_tokens", 0) ?: 0
+                onEvent(
+                  GeminiStreamEvent.Completed(
+                    interactionId = interactionId,
+                    serviceTier = serviceTier,
+                    inputTokens = inTok,
+                    outputTokens = outTok,
+                    thoughtTokens = thTok,
+                    rawSteps = outputs,
+                  )
+                )
+                return
+              }
+              "failed",
+              "cancelled" -> {
+                val errObj = json.optJSONObject("error")
+                val errMsg =
+                  errObj?.optString("message")?.takeIf { it.isNotBlank() }
+                    ?: "Interaction $status"
+                onEvent(GeminiStreamEvent.Error(errMsg))
+                return
+              }
+            }
+          }
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Throwable) {
+        if (call.isCanceled()) return
+        if (transientErrors < 3) {
+          transientErrors++
+        } else {
+          onEvent(
+            GeminiStreamEvent.Error(
+              e.message ?: "Connection lost while polling interaction"
             )
-            return
-          }
-          "failed",
-          "cancelled" -> {
-            val errObj = json.optJSONObject("error")
-            val errMsg =
-              errObj?.optString("message")?.takeIf { it.isNotBlank() }
-                ?: "Interaction $status"
-            onEvent(GeminiStreamEvent.Error(errMsg))
-            return
-          }
+          )
+          return
         }
       }
       pollCount++
@@ -882,7 +977,6 @@ class GeminiInteractionsClient {
 
   private suspend fun processSseStream(
     reader: BufferedReader,
-    serviceTierHeader: String,
     onInteractionCreated: suspend (String) -> Unit,
     onEventId: (String) -> Unit,
     onStepStart: (JSONObject) -> Unit,
@@ -911,7 +1005,6 @@ class GeminiInteractionsClient {
           return
         }
 
-      // 1. Read event_id from each event's JSON
       val jsonEventId =
         json.optString("event_id").takeIf { it.isNotBlank() }
           ?: json.optJSONObject("event")?.optString("event_id")?.takeIf { it.isNotBlank() }
@@ -921,28 +1014,43 @@ class GeminiInteractionsClient {
 
       val resolvedType =
         eventName?.takeIf { it.isNotBlank() && it != "message" }
-          ?: json.optString("type").takeIf { it.isNotBlank() }
+          ?: json.optString("event_type").takeIf { it.isNotBlank() }
+          ?: json.optJSONObject("event")?.optString("event_type")?.takeIf { it.isNotBlank() }
           ?: json.optString("event").takeIf { it.isNotBlank() }
+          ?: json.optString("type").takeIf {
+            it.contains(".") || it == "error" || it == "done"
+          }
           ?: ""
 
       when (resolvedType) {
-        "interaction.created" -> {
+        "interaction.created",
+        "interaction.start" -> {
           val id = extractInteractionId(json)
           if (!id.isNullOrBlank()) {
             onInteractionCreated(id)
           }
         }
-        "step.start" -> {
-          val step = json.optJSONObject("step") ?: JSONObject().apply { put("type", "model_output") }
+        "step.start",
+        "content.start" -> {
+          val step =
+            json.optJSONObject("step")
+              ?: JSONObject().apply {
+                val stepType =
+                  json.optString("type").takeIf {
+                    it.isNotBlank() && !it.contains(".")
+                  } ?: "model_output"
+                put("type", stepType)
+              }
           if (!step.has("content")) {
             step.put("content", JSONArray())
           }
           onStepStart(step)
         }
-        "step.delta" -> {
+        "step.delta",
+        "content.delta" -> {
           val delta = json.optJSONObject("delta") ?: json
           val deltaType =
-            delta.optString("type").takeIf { it.isNotBlank() }
+            delta.optString("type").takeIf { it.isNotBlank() && !it.contains(".") }
               ?: delta.optJSONObject("content")?.optString("type").orEmpty()
 
           when (deltaType) {
@@ -954,10 +1062,12 @@ class GeminiInteractionsClient {
                 onTextDelta(txt)
               }
             }
-            "thought_summary" -> {
+            "thought_summary",
+            "thought" -> {
               val thoughtTxt =
-                delta.optJSONObject("content")?.optString("text")?.takeIf { it.isNotEmpty() }
-                  ?: delta.optString("text").orEmpty()
+                delta.optJSONObject("content")?.optString("text")?.takeIf {
+                  it.isNotEmpty()
+                } ?: delta.optString("text").orEmpty()
               if (thoughtTxt.isNotEmpty()) {
                 onThoughtSummaryDelta(thoughtTxt)
               }
@@ -972,7 +1082,12 @@ class GeminiInteractionsClient {
               }
             }
             else -> {
-              // Check if thought_signature is attached alongside another field
+              val txt =
+                delta.optString("text").takeIf { it.isNotEmpty() }
+                  ?: delta.optJSONObject("content")?.optString("text").orEmpty()
+              if (txt.isNotEmpty()) {
+                onTextDelta(txt)
+              }
               val sig =
                 delta.optString("thought_signature").takeIf { it.isNotEmpty() }
                   ?: delta.optJSONObject("content")?.optString("thought_signature").orEmpty()
@@ -982,11 +1097,13 @@ class GeminiInteractionsClient {
             }
           }
         }
-        "step.stop" -> {
+        "step.stop",
+        "content.stop" -> {
           val stopStep = json.optJSONObject("step") ?: json
           onStepStop(stopStep)
         }
-        "interaction.status_update" -> {
+        "interaction.status_update",
+        "status_update" -> {
           val status =
             json.optString("status").takeIf { it.isNotBlank() }
               ?: json.optJSONObject("interaction")?.optString("status").orEmpty()
@@ -994,21 +1111,23 @@ class GeminiInteractionsClient {
             onStatusUpdate(status)
           }
         }
-        "interaction.completed" -> {
+        "interaction.completed",
+        "interaction.complete" -> {
           val interactionObj = json.optJSONObject("interaction") ?: json
           val id = extractInteractionId(interactionObj) ?: extractInteractionId(json)
           val usage = interactionObj.optJSONObject("usage") ?: json.optJSONObject("usage")
           val inTok = usage?.optInt("total_input_tokens", 0) ?: 0
           val outTok = usage?.optInt("total_output_tokens", 0) ?: 0
           val thTok = usage?.optInt("total_thought_tokens", 0) ?: 0
-          val outputs = interactionObj.optJSONArray("outputs") ?: json.optJSONArray("outputs")
+          val outputs =
+            interactionObj.optJSONArray("outputs") ?: json.optJSONArray("outputs")
           onCompleted(id, inTok, outTok, thTok, outputs)
         }
-        "error" -> {
+        "error",
+        "interaction.failed" -> {
           val errObj = json.optJSONObject("error") ?: json
           val msg =
-            errObj.optString("message").takeIf { it.isNotBlank() }
-              ?: json.toString()
+            errObj.optString("message").takeIf { it.isNotBlank() } ?: json.toString()
           onStreamError(msg)
         }
         else -> {
@@ -1113,17 +1232,25 @@ class GeminiInteractionsClient {
     }
   }
 
+  private fun sanitizeStepObject(step: JSONObject): JSONObject {
+    val clean = JSONObject(step.toString())
+    clean.remove("event_type")
+    clean.remove("event_id")
+    clean.remove("index")
+    return clean
+  }
+
   private fun finalizeStep(currentStep: JSONObject?, stopStep: JSONObject): JSONObject {
-    if (currentStep == null) return stopStep
-    // Preserve any extra fields from stopStep (such as thought_signature or id)
+    if (currentStep == null) return sanitizeStepObject(stopStep)
     val keys = stopStep.keys()
     while (keys.hasNext()) {
       val k = keys.next()
+      if (k == "event_type" || k == "event_id" || k == "index") continue
       if (!currentStep.has(k)) {
         currentStep.put(k, stopStep.get(k))
       }
     }
-    return currentStep
+    return sanitizeStepObject(currentStep)
   }
 
   private fun extractInteractionId(json: JSONObject): String? {
@@ -1156,13 +1283,6 @@ class GeminiInteractionsClient {
     }
   }
 
-  /**
-   * Section 3: Model list:
-   * GET https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000
-   * Keep models whose supportedGenerationMethods include generateContent,
-   * and hide ids containing tts, image, banana, embedding, live, transcribe, lyria, omni or robotics.
-   * Show displayName, id, inputTokenLimit and outputTokenLimit.
-   */
   suspend fun fetchModels(apiKey: String): Result<List<CachedModelEntity>> =
     withContext(Dispatchers.IO) {
       if (apiKey.isBlank()) {

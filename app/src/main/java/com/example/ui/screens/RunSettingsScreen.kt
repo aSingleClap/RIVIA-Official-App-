@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -37,8 +38,6 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,22 +53,26 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.CachedModelEntity
-import com.example.model.ModePreset
 import com.example.model.RunSettings
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
@@ -94,8 +97,6 @@ fun RunSettingsScreen(
   isEditingDefaultsOnly: Boolean = false,
   onBack: () -> Unit,
 ) {
-  BackHandler { onBack() }
-
   val currentSettings by
     (if (isEditingDefaultsOnly) viewModel.defaultRunSettings else viewModel.currentRunSettings)
       .collectAsStateWithLifecycle()
@@ -104,6 +105,77 @@ fun RunSettingsScreen(
   val modePresets by viewModel.modePresets.collectAsStateWithLifecycle()
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
+  val focusManager = LocalFocusManager.current
+
+  // Fix #6: Keep typed text in local state and save only when the field loses focus,
+  // on IME Done, or when leaving the screen. Never round-trip keystrokes through Room/DataStore.
+  var modelDraft by remember { mutableStateOf(currentSettings.model) }
+  var liveModelDraft by remember { mutableStateOf(currentSettings.liveModel) }
+  var systemInstructionDraft by remember { mutableStateOf(currentSettings.systemInstruction) }
+  var styleTypedDraft by remember { mutableStateOf(currentSettings.styleForTypedChat) }
+  var styleLiveDraft by remember { mutableStateOf(currentSettings.styleForLiveMode) }
+  var maxTokensDraft by remember {
+    mutableStateOf(currentSettings.maxOutputTokens?.toString() ?: "")
+  }
+  var seedDraft by remember { mutableStateOf(currentSettings.seed?.toString() ?: "") }
+  var topKDraft by remember { mutableStateOf(currentSettings.topK?.toString() ?: "") }
+  var mapsLatDraft by remember { mutableStateOf(currentSettings.googleMapsLatitude) }
+  var mapsLngDraft by remember { mutableStateOf(currentSettings.googleMapsLongitude) }
+  var schemaDraft by remember { mutableStateOf(currentSettings.structuredOutputSchema) }
+  var extraJsonDraft by remember { mutableStateOf(currentSettings.extraJson) }
+
+  // Sync local drafts when currentSettings updates from Room/Reset/Presets
+  LaunchedEffect(currentSettings) {
+    modelDraft = currentSettings.model
+    liveModelDraft = currentSettings.liveModel
+    systemInstructionDraft = currentSettings.systemInstruction
+    styleTypedDraft = currentSettings.styleForTypedChat
+    styleLiveDraft = currentSettings.styleForLiveMode
+    maxTokensDraft = currentSettings.maxOutputTokens?.toString() ?: ""
+    seedDraft = currentSettings.seed?.toString() ?: ""
+    topKDraft = currentSettings.topK?.toString() ?: ""
+    mapsLatDraft = currentSettings.googleMapsLatitude
+    mapsLngDraft = currentSettings.googleMapsLongitude
+    schemaDraft = currentSettings.structuredOutputSchema
+    extraJsonDraft = currentSettings.extraJson
+  }
+
+  val activeModelInfo =
+    remember(modelDraft, cachedModels) {
+      cachedModels.firstOrNull {
+        it.id.equals(modelDraft.trim().removePrefix("models/"), ignoreCase = true)
+      }
+    }
+
+  val maxOutputLimit = activeModelInfo?.outputTokenLimit?.takeIf { it > 0 } ?: 65536
+  val maxTempLimit = activeModelInfo?.maxTemperature ?: 2.0f
+
+  fun buildMergedSettings(base: RunSettings = currentSettings): RunSettings {
+    val parsedMaxTokens =
+      maxTokensDraft.filter { it.isDigit() }.toIntOrNull()?.coerceAtMost(maxOutputLimit)
+    val parsedSeed = seedDraft.filter { it.isDigit() || it == '-' }.toIntOrNull()
+    val parsedTopK = topKDraft.filter { it.isDigit() }.toIntOrNull()
+    val trimmedModel = modelDraft.trim().ifBlank { base.model }
+    val trimmedLiveModel = liveModelDraft.trim().ifBlank { base.liveModel }
+    val modeName =
+      if (trimmedModel != base.model) "Custom" else base.activeModeName
+
+    return base.copy(
+      model = trimmedModel,
+      liveModel = trimmedLiveModel,
+      activeModeName = modeName,
+      systemInstruction = systemInstructionDraft,
+      styleForTypedChat = styleTypedDraft,
+      styleForLiveMode = styleLiveDraft,
+      maxOutputTokens = parsedMaxTokens,
+      seed = parsedSeed,
+      topK = parsedTopK,
+      googleMapsLatitude = mapsLatDraft,
+      googleMapsLongitude = mapsLngDraft,
+      structuredOutputSchema = schemaDraft,
+      extraJson = extraJsonDraft,
+    )
+  }
 
   fun updateSettings(newSettings: RunSettings) {
     if (isEditingDefaultsOnly) {
@@ -113,15 +185,23 @@ fun RunSettingsScreen(
     }
   }
 
-  val activeModelInfo =
-    remember(currentSettings.model, cachedModels) {
-      cachedModels.firstOrNull {
-        it.id.equals(currentSettings.model.removePrefix("models/"), ignoreCase = true)
-      }
+  fun commitDraftsIfChanged() {
+    val merged = buildMergedSettings(currentSettings)
+    if (merged != currentSettings) {
+      updateSettings(merged)
     }
+  }
 
-  val maxOutputLimit = activeModelInfo?.outputTokenLimit?.takeIf { it > 0 } ?: 65536
-  val maxTempLimit = activeModelInfo?.maxTemperature ?: 2.0f
+  val currentCommitRef by rememberUpdatedState(::commitDraftsIfChanged)
+
+  DisposableEffect(Unit) {
+    onDispose { currentCommitRef() }
+  }
+
+  BackHandler {
+    commitDraftsIfChanged()
+    onBack()
+  }
 
   var showModelPickerForLive by remember { mutableStateOf<Boolean?>(null) }
   var previewJsonText by remember { mutableStateOf<String?>(null) }
@@ -146,7 +226,10 @@ fun RunSettingsScreen(
       ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
           IconButton(
-            onClick = onBack,
+            onClick = {
+              commitDraftsIfChanged()
+              onBack()
+            },
             modifier = Modifier.minimumInteractiveComponentSize(),
           ) {
             Icon(
@@ -165,7 +248,11 @@ fun RunSettingsScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
           if (!isEditingDefaultsOnly) {
             TextButton(
-              onClick = { viewModel.saveCurrentSettingsAsDefault() },
+              onClick = {
+                val merged = buildMergedSettings()
+                updateSettings(merged)
+                viewModel.saveCurrentSettingsAsDefault(merged)
+              },
               modifier = Modifier.minimumInteractiveComponentSize().testTag("save_as_default_button"),
             ) {
               Icon(
@@ -180,6 +267,7 @@ fun RunSettingsScreen(
           }
           TextButton(
             onClick = {
+              focusManager.clearFocus()
               if (isEditingDefaultsOnly) {
                 viewModel.updateDefaultSettings(RunSettings())
               } else {
@@ -228,8 +316,9 @@ fun RunSettingsScreen(
                 modifier =
                   Modifier.border(1.dp, RiviaBorder, RoundedCornerShape(10.dp))
                     .clickable {
+                      modelDraft = preset.model
                       updateSettings(
-                        currentSettings.copy(
+                        buildMergedSettings().copy(
                           model = preset.model,
                           thinkingLevel = preset.thinkingLevel,
                           activeModeName = preset.name,
@@ -295,10 +384,8 @@ fun RunSettingsScreen(
           }
 
           OutlinedTextField(
-            value = currentSettings.model,
-            onValueChange = {
-              updateSettings(currentSettings.copy(model = it, activeModeName = "Custom"))
-            },
+            value = modelDraft,
+            onValueChange = { modelDraft = it },
             label = { Text("Typed Chat Model ID") },
             trailingIcon = {
               TextButton(onClick = { showModelPickerForLive = false }) {
@@ -306,7 +393,17 @@ fun RunSettingsScreen(
               }
             },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions =
+              KeyboardActions(
+                onDone = {
+                  commitDraftsIfChanged()
+                  focusManager.clearFocus()
+                }
+              ),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
 
@@ -321,8 +418,8 @@ fun RunSettingsScreen(
           }
 
           OutlinedTextField(
-            value = currentSettings.liveModel,
-            onValueChange = { updateSettings(currentSettings.copy(liveModel = it)) },
+            value = liveModelDraft,
+            onValueChange = { liveModelDraft = it },
             label = { Text("Live Mode Model ID") },
             trailingIcon = {
               TextButton(onClick = { showModelPickerForLive = true }) {
@@ -330,7 +427,17 @@ fun RunSettingsScreen(
               }
             },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions =
+              KeyboardActions(
+                onDone = {
+                  commitDraftsIfChanged()
+                  focusManager.clearFocus()
+                }
+              ),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
         }
@@ -340,44 +447,54 @@ fun RunSettingsScreen(
       item {
         SettingsCardSection(title = "System Instructions & Styles") {
           OutlinedTextField(
-            value = currentSettings.systemInstruction,
-            onValueChange = { updateSettings(currentSettings.copy(systemInstruction = it)) },
+            value = systemInstructionDraft,
+            onValueChange = { systemInstructionDraft = it },
             label = { Text("System instructions") },
             minLines = 2,
             maxLines = 6,
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
           OutlinedTextField(
-            value = currentSettings.styleForTypedChat,
-            onValueChange = { updateSettings(currentSettings.copy(styleForTypedChat = it)) },
+            value = styleTypedDraft,
+            onValueChange = { styleTypedDraft = it },
             label = { Text("Style for typed chat (appended)") },
             minLines = 2,
             maxLines = 5,
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
           OutlinedTextField(
-            value = currentSettings.styleForLiveMode,
-            onValueChange = { updateSettings(currentSettings.copy(styleForLiveMode = it)) },
+            value = styleLiveDraft,
+            onValueChange = { styleLiveDraft = it },
             label = { Text("Style for Live mode (appended)") },
             minLines = 2,
             maxLines = 6,
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
         }
       }
 
-      // 4. Thinking Level & Thought Summaries
+      // 4. Thinking Level, Live Thinking Level & Thought Summaries (Fix #7)
       item {
         val allowedThinking =
-          remember(currentSettings.model) {
-            RunSettings.allowedThinkingLevels(currentSettings.model)
+          remember(modelDraft) {
+            RunSettings.allowedThinkingLevels(modelDraft)
+          }
+        val allowedLiveThinking =
+          remember(liveModelDraft) {
+            RunSettings.allowedThinkingLevels(liveModelDraft)
           }
         SettingsCardSection(title = "Thinking") {
           Text(
-            text = "Thinking level (filtered for ${currentSettings.model})",
+            text = "Thinking level (filtered for $modelDraft)",
             style = MaterialTheme.typography.bodySmall,
             color = RiviaMutedText,
           )
@@ -393,7 +510,35 @@ fun RunSettingsScreen(
                 selected = selected,
                 onClick = {
                   updateSettings(
-                    currentSettings.copy(thinkingLevel = level, activeModeName = "Custom")
+                    buildMergedSettings().copy(
+                      thinkingLevel = level,
+                      activeModeName = "Custom",
+                    )
+                  )
+                },
+              )
+            }
+          }
+
+          Spacer(modifier = Modifier.height(4.dp))
+          Text(
+            text = "Live thinking level (filtered for $liveModelDraft · default minimal)",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaMutedText,
+          )
+          FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            allowedLiveThinking.forEach { level ->
+              val label = if (level == "model_default") "Model default" else level
+              val selected = currentSettings.liveThinkingLevel == level
+              OptionChip(
+                label = label,
+                selected = selected,
+                onClick = {
+                  updateSettings(
+                    buildMergedSettings().copy(liveThinkingLevel = level)
                   )
                 },
               )
@@ -411,7 +556,9 @@ fun RunSettingsScreen(
               OptionChip(
                 label = mode,
                 selected = currentSettings.thoughtSummaries == mode,
-                onClick = { updateSettings(currentSettings.copy(thoughtSummaries = mode)) },
+                onClick = {
+                  updateSettings(buildMergedSettings().copy(thoughtSummaries = mode))
+                },
               )
             }
           }
@@ -421,24 +568,35 @@ fun RunSettingsScreen(
       // 5. Max Output Tokens, Stop Sequences, Seed, Temperature / Top-P / Top-K
       item {
         val samplingSupported =
-          remember(currentSettings.model) {
-            RunSettings.isSamplingSupported(currentSettings.model)
+          remember(modelDraft) {
+            RunSettings.isSamplingSupported(modelDraft)
           }
 
         SettingsCardSection(title = "Output & Sampling") {
           OutlinedTextField(
-            value = currentSettings.maxOutputTokens?.toString() ?: "",
+            value = maxTokensDraft,
             onValueChange = { txt ->
-              val parsed = txt.filter { it.isDigit() }.toIntOrNull()
-              val clamped = parsed?.coerceAtMost(maxOutputLimit)
-              updateSettings(currentSettings.copy(maxOutputTokens = clamped))
+              maxTokensDraft = txt.filter { it.isDigit() }
             },
             label = {
               Text("Max output tokens (includes thinking · max $maxOutputLimit)")
             },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions =
+              KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Done,
+              ),
+            keyboardActions =
+              KeyboardActions(
+                onDone = {
+                  commitDraftsIfChanged()
+                  focusManager.clearFocus()
+                }
+              ),
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
 
@@ -458,7 +616,7 @@ fun RunSettingsScreen(
                   label = seq,
                   onRemove = {
                     updateSettings(
-                      currentSettings.copy(
+                      buildMergedSettings().copy(
                         stopSequences = currentSettings.stopSequences - seq
                       )
                     )
@@ -476,6 +634,22 @@ fun RunSettingsScreen(
               onValueChange = { newStopSequence = it },
               label = { Text("Add stop sequence") },
               singleLine = true,
+              keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+              keyboardActions =
+                KeyboardActions(
+                  onDone = {
+                    if (newStopSequence.isNotEmpty()) {
+                      updateSettings(
+                        buildMergedSettings().copy(
+                          stopSequences =
+                            (currentSettings.stopSequences + newStopSequence).distinct()
+                        )
+                      )
+                      newStopSequence = ""
+                    }
+                    focusManager.clearFocus()
+                  }
+                ),
               modifier = Modifier.weight(1f),
               colors = riviaTextFieldColors(),
             )
@@ -483,7 +657,7 @@ fun RunSettingsScreen(
               onClick = {
                 if (newStopSequence.isNotEmpty()) {
                   updateSettings(
-                    currentSettings.copy(
+                    buildMergedSettings().copy(
                       stopSequences =
                         (currentSettings.stopSequences + newStopSequence).distinct()
                     )
@@ -503,15 +677,27 @@ fun RunSettingsScreen(
 
           // Seed
           OutlinedTextField(
-            value = currentSettings.seed?.toString() ?: "",
+            value = seedDraft,
             onValueChange = { txt ->
-              val parsed = txt.filter { it.isDigit() || it == '-' }.toIntOrNull()
-              updateSettings(currentSettings.copy(seed = parsed))
+              seedDraft = txt.filter { it.isDigit() || it == '-' }
             },
             label = { Text("Seed (optional integer)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            keyboardOptions =
+              KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Done,
+              ),
+            keyboardActions =
+              KeyboardActions(
+                onDone = {
+                  commitDraftsIfChanged()
+                  focusManager.clearFocus()
+                }
+              ),
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
 
@@ -551,7 +737,7 @@ fun RunSettingsScreen(
             )
             Slider(
               value = tempVal.coerceIn(0f, maxTempLimit),
-              onValueChange = { updateSettings(currentSettings.copy(temperature = it)) },
+              onValueChange = { updateSettings(buildMergedSettings().copy(temperature = it)) },
               valueRange = 0f..maxTempLimit,
               colors =
                 SliderDefaults.colors(
@@ -569,7 +755,7 @@ fun RunSettingsScreen(
             )
             Slider(
               value = topPVal.coerceIn(0f, 1f),
-              onValueChange = { updateSettings(currentSettings.copy(topP = it)) },
+              onValueChange = { updateSettings(buildMergedSettings().copy(topP = it)) },
               valueRange = 0f..1f,
               colors =
                 SliderDefaults.colors(
@@ -579,15 +765,27 @@ fun RunSettingsScreen(
             )
 
             OutlinedTextField(
-              value = currentSettings.topK?.toString() ?: "",
+              value = topKDraft,
               onValueChange = { txt ->
-                val parsed = txt.filter { it.isDigit() }.toIntOrNull()
-                updateSettings(currentSettings.copy(topK = parsed))
+                topKDraft = txt.filter { it.isDigit() }
               },
               label = { Text("Top-K") },
-              keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+              keyboardOptions =
+                KeyboardOptions(
+                  keyboardType = KeyboardType.Number,
+                  imeAction = ImeAction.Done,
+                ),
+              keyboardActions =
+                KeyboardActions(
+                  onDone = {
+                    commitDraftsIfChanged()
+                    focusManager.clearFocus()
+                  }
+                ),
               singleLine = true,
-              modifier = Modifier.fillMaxWidth(),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
               colors = riviaTextFieldColors(),
             )
           }
@@ -607,7 +805,7 @@ fun RunSettingsScreen(
             Switch(
               checked = currentSettings.googleSearchEnabled,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(googleSearchEnabled = it))
+                updateSettings(buildMergedSettings().copy(googleSearchEnabled = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -619,7 +817,7 @@ fun RunSettingsScreen(
                   label = "Search: $mode",
                   selected = currentSettings.googleSearchMode == mode,
                   onClick = {
-                    updateSettings(currentSettings.copy(googleSearchMode = mode))
+                    updateSettings(buildMergedSettings().copy(googleSearchMode = mode))
                   },
                 )
               }
@@ -636,7 +834,7 @@ fun RunSettingsScreen(
             Switch(
               checked = currentSettings.urlContextEnabled,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(urlContextEnabled = it))
+                updateSettings(buildMergedSettings().copy(urlContextEnabled = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -652,7 +850,7 @@ fun RunSettingsScreen(
             Switch(
               checked = currentSettings.codeExecutionEnabled,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(codeExecutionEnabled = it))
+                updateSettings(buildMergedSettings().copy(codeExecutionEnabled = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -668,7 +866,7 @@ fun RunSettingsScreen(
             Switch(
               checked = currentSettings.googleMapsEnabled,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(googleMapsEnabled = it))
+                updateSettings(buildMergedSettings().copy(googleMapsEnabled = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -676,23 +874,39 @@ fun RunSettingsScreen(
           if (currentSettings.googleMapsEnabled) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               OutlinedTextField(
-                value = currentSettings.googleMapsLatitude,
-                onValueChange = {
-                  updateSettings(currentSettings.copy(googleMapsLatitude = it))
-                },
+                value = mapsLatDraft,
+                onValueChange = { mapsLatDraft = it },
                 label = { Text("Latitude") },
                 singleLine = true,
-                modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                  KeyboardActions(
+                    onDone = {
+                      commitDraftsIfChanged()
+                      focusManager.clearFocus()
+                    }
+                  ),
+                modifier =
+                  Modifier.weight(1f)
+                    .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
                 colors = riviaTextFieldColors(),
               )
               OutlinedTextField(
-                value = currentSettings.googleMapsLongitude,
-                onValueChange = {
-                  updateSettings(currentSettings.copy(googleMapsLongitude = it))
-                },
+                value = mapsLngDraft,
+                onValueChange = { mapsLngDraft = it },
                 label = { Text("Longitude") },
                 singleLine = true,
-                modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                  KeyboardActions(
+                    onDone = {
+                      commitDraftsIfChanged()
+                      focusManager.clearFocus()
+                    }
+                  ),
+                modifier =
+                  Modifier.weight(1f)
+                    .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
                 colors = riviaTextFieldColors(),
               )
             }
@@ -708,7 +922,7 @@ fun RunSettingsScreen(
             Switch(
               checked = currentSettings.fileSearchEnabled,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(fileSearchEnabled = it))
+                updateSettings(buildMergedSettings().copy(fileSearchEnabled = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -724,7 +938,7 @@ fun RunSettingsScreen(
                     label = storeName,
                     onRemove = {
                       updateSettings(
-                        currentSettings.copy(
+                        buildMergedSettings().copy(
                           fileSearchStoreNames =
                             currentSettings.fileSearchStoreNames - storeName
                         )
@@ -743,6 +957,23 @@ fun RunSettingsScreen(
                 onValueChange = { newFileStoreName = it },
                 label = { Text("Store name") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                  KeyboardActions(
+                    onDone = {
+                      if (newFileStoreName.isNotBlank()) {
+                        updateSettings(
+                          buildMergedSettings().copy(
+                            fileSearchStoreNames =
+                              (currentSettings.fileSearchStoreNames + newFileStoreName.trim())
+                                .distinct()
+                          )
+                        )
+                        newFileStoreName = ""
+                      }
+                      focusManager.clearFocus()
+                    }
+                  ),
                 modifier = Modifier.weight(1f),
                 colors = riviaTextFieldColors(),
               )
@@ -750,7 +981,7 @@ fun RunSettingsScreen(
                 onClick = {
                   if (newFileStoreName.isNotBlank()) {
                     updateSettings(
-                      currentSettings.copy(
+                      buildMergedSettings().copy(
                         fileSearchStoreNames =
                           (currentSettings.fileSearchStoreNames + newFileStoreName.trim())
                             .distinct()
@@ -784,7 +1015,7 @@ fun RunSettingsScreen(
               OptionChip(
                 label = tc,
                 selected = currentSettings.toolChoice == tc,
-                onClick = { updateSettings(currentSettings.copy(toolChoice = tc)) },
+                onClick = { updateSettings(buildMergedSettings().copy(toolChoice = tc)) },
               )
             }
           }
@@ -795,14 +1026,14 @@ fun RunSettingsScreen(
       item {
         val validation =
           remember(
-            currentSettings.structuredOutputSchema,
+            schemaDraft,
             currentSettings.hasAnyToolEnabled(),
-            currentSettings.model,
+            modelDraft,
           ) {
             RunSettings.validateSchema(
-              schemaJson = currentSettings.structuredOutputSchema,
+              schemaJson = schemaDraft,
               hasToolsEnabled = currentSettings.hasAnyToolEnabled(),
-              modelId = currentSettings.model,
+              modelId = modelDraft,
             )
           }
 
@@ -819,7 +1050,7 @@ fun RunSettingsScreen(
             Switch(
               checked = currentSettings.structuredOutputEnabled,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(structuredOutputEnabled = it))
+                updateSettings(buildMergedSettings().copy(structuredOutputEnabled = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -827,14 +1058,14 @@ fun RunSettingsScreen(
 
           if (currentSettings.structuredOutputEnabled) {
             OutlinedTextField(
-              value = currentSettings.structuredOutputSchema,
-              onValueChange = {
-                updateSettings(currentSettings.copy(structuredOutputSchema = it))
-              },
+              value = schemaDraft,
+              onValueChange = { schemaDraft = it },
               label = { Text("JSON Schema") },
               minLines = 3,
               maxLines = 8,
-              modifier = Modifier.fillMaxWidth(),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
               colors = riviaTextFieldColors(),
             )
             Text(
@@ -891,7 +1122,7 @@ fun RunSettingsScreen(
               OptionChip(
                 label = method,
                 selected = currentSettings.safetyMethod == method,
-                onClick = { updateSettings(currentSettings.copy(safetyMethod = method)) },
+                onClick = { updateSettings(buildMergedSettings().copy(safetyMethod = method)) },
               )
             }
           }
@@ -900,31 +1131,31 @@ fun RunSettingsScreen(
             title = "hate_speech",
             selected = currentSettings.safetyHateSpeech,
             options = thresholds,
-            onSelect = { updateSettings(currentSettings.copy(safetyHateSpeech = it)) },
+            onSelect = { updateSettings(buildMergedSettings().copy(safetyHateSpeech = it)) },
           )
           SafetyCategorySelector(
             title = "dangerous_content",
             selected = currentSettings.safetyDangerousContent,
             options = thresholds,
-            onSelect = { updateSettings(currentSettings.copy(safetyDangerousContent = it)) },
+            onSelect = { updateSettings(buildMergedSettings().copy(safetyDangerousContent = it)) },
           )
           SafetyCategorySelector(
             title = "harassment",
             selected = currentSettings.safetyHarassment,
             options = thresholds,
-            onSelect = { updateSettings(currentSettings.copy(safetyHarassment = it)) },
+            onSelect = { updateSettings(buildMergedSettings().copy(safetyHarassment = it)) },
           )
           SafetyCategorySelector(
             title = "sexually_explicit",
             selected = currentSettings.safetySexuallyExplicit,
             options = thresholds,
-            onSelect = { updateSettings(currentSettings.copy(safetySexuallyExplicit = it)) },
+            onSelect = { updateSettings(buildMergedSettings().copy(safetySexuallyExplicit = it)) },
           )
           SafetyCategorySelector(
             title = "jailbreak",
             selected = currentSettings.safetyJailbreak,
             options = thresholds,
-            onSelect = { updateSettings(currentSettings.copy(safetyJailbreak = it)) },
+            onSelect = { updateSettings(buildMergedSettings().copy(safetyJailbreak = it)) },
           )
         }
       }
@@ -943,7 +1174,7 @@ fun RunSettingsScreen(
               OptionChip(
                 label = tier,
                 selected = currentSettings.serviceTier == tier,
-                onClick = { updateSettings(currentSettings.copy(serviceTier = tier)) },
+                onClick = { updateSettings(buildMergedSettings().copy(serviceTier = tier)) },
               )
             }
           }
@@ -966,7 +1197,7 @@ fun RunSettingsScreen(
               checked = currentSettings.store,
               onCheckedChange = {
                 updateSettings(
-                  currentSettings.copy(
+                  buildMergedSettings().copy(
                     store = it,
                     background = if (!it) false else currentSettings.background,
                   )
@@ -983,7 +1214,7 @@ fun RunSettingsScreen(
           ) {
             Column(modifier = Modifier.weight(1f)) {
               Text(
-                "Background execution (background)",
+                "Background execution (background · typed chat only)",
                 color = if (currentSettings.store) RiviaText else RiviaMutedText,
               )
               Text(
@@ -996,7 +1227,7 @@ fun RunSettingsScreen(
               checked = currentSettings.store && currentSettings.background,
               enabled = currentSettings.store,
               onCheckedChange = {
-                updateSettings(currentSettings.copy(background = it))
+                updateSettings(buildMergedSettings().copy(background = it))
               },
               colors = riviaSwitchColors(),
             )
@@ -1022,7 +1253,7 @@ fun RunSettingsScreen(
                   label = "$k: $v",
                   onRemove = {
                     updateSettings(
-                      currentSettings.copy(labels = currentSettings.labels - k)
+                      buildMergedSettings().copy(labels = currentSettings.labels - k)
                     )
                   },
                 )
@@ -1054,7 +1285,7 @@ fun RunSettingsScreen(
                 if (newLabelKey.isNotBlank()) {
                   val nextMap = currentSettings.labels.toMutableMap()
                   nextMap[newLabelKey.trim()] = newLabelValue.trim()
-                  updateSettings(currentSettings.copy(labels = nextMap))
+                  updateSettings(buildMergedSettings().copy(labels = nextMap))
                   newLabelKey = ""
                   newLabelValue = ""
                 }
@@ -1072,20 +1303,26 @@ fun RunSettingsScreen(
           HorizontalDivider(color = RiviaBorder)
 
           OutlinedTextField(
-            value = currentSettings.extraJson,
-            onValueChange = { updateSettings(currentSettings.copy(extraJson = it)) },
+            value = extraJsonDraft,
+            onValueChange = { extraJsonDraft = it },
             label = { Text("Extra JSON (merged into request body)") },
             placeholder = { Text("{\"custom_field\": true}", color = RiviaMutedText) },
             minLines = 2,
             maxLines = 6,
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitDraftsIfChanged() }),
             colors = riviaTextFieldColors(),
           )
 
           Button(
             onClick = {
+              val merged = buildMergedSettings()
+              if (merged != currentSettings) {
+                updateSettings(merged)
+              }
               scope.launch {
-                previewJsonText = viewModel.buildRedactedRequestPreview(currentSettings)
+                previewJsonText = viewModel.buildRedactedRequestPreview(merged)
               }
             },
             colors =
@@ -1152,10 +1389,12 @@ fun RunSettingsScreen(
                     .border(1.dp, RiviaBorder, RoundedCornerShape(8.dp))
                     .clickable {
                       if (isForLive) {
-                        updateSettings(currentSettings.copy(liveModel = m.id))
+                        liveModelDraft = m.id
+                        updateSettings(buildMergedSettings().copy(liveModel = m.id))
                       } else {
+                        modelDraft = m.id
                         updateSettings(
-                          currentSettings.copy(model = m.id, activeModeName = "Custom")
+                          buildMergedSettings().copy(model = m.id, activeModeName = "Custom")
                         )
                       }
                       showModelPickerForLive = null
@@ -1238,6 +1477,19 @@ fun RunSettingsScreen(
         }
       },
     )
+  }
+}
+
+@Composable
+fun commitOnFocusLostModifier(onCommit: () -> Unit): Modifier {
+  var hadFocus by remember { mutableStateOf(false) }
+  return Modifier.onFocusChanged { focusState ->
+    if (focusState.isFocused) {
+      hadFocus = true
+    } else if (hadFocus) {
+      hadFocus = false
+      onCommit()
+    }
   }
 }
 

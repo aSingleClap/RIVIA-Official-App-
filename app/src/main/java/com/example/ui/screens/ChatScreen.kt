@@ -151,6 +151,7 @@ fun ChatScreen(
   val isSpeaking by viewModel.audioPlayerManager.isSpeaking.collectAsStateWithLifecycle()
   val speakingMsgId by viewModel.audioPlayerManager.speakingMessageId.collectAsStateWithLifecycle()
   val audioError by viewModel.audioPlayerManager.lastAudioError.collectAsStateWithLifecycle()
+  val audioNotice by viewModel.audioPlayerManager.lastAudioNotice.collectAsStateWithLifecycle()
   val statusBanner by viewModel.statusBannerMessage.collectAsStateWithLifecycle()
   val isErrorBanner by viewModel.isErrorBanner.collectAsStateWithLifecycle()
 
@@ -218,8 +219,8 @@ fun ChatScreen(
             onOpenGlobalSettings = onOpenGlobalSettings,
             onOpenLiveMode = onOpenLiveMode,
             missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
-            statusBanner = audioError ?: statusBanner,
-            isErrorBanner = audioError != null || isErrorBanner,
+            statusBanner = audioError ?: audioNotice ?: statusBanner,
+            isErrorBanner = audioError != null || (audioNotice == null && isErrorBanner),
             onDismissBanner = viewModel::clearStatusBanner,
             messages = messages,
             isStreaming = isStreaming,
@@ -229,6 +230,7 @@ fun ChatScreen(
             preferOnDeviceStt = voicePrefs.preferOnDeviceRecognition,
             onSendMessage = viewModel::sendUserMessage,
             onStopStreaming = viewModel::stopStreaming,
+            onDictationError = viewModel::showError,
             onListenMessage = { msg ->
               viewModel.audioPlayerManager.speakMarkdownMessage(
                 messageId = msg.id,
@@ -289,8 +291,8 @@ fun ChatScreen(
           onOpenGlobalSettings = onOpenGlobalSettings,
           onOpenLiveMode = onOpenLiveMode,
           missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
-          statusBanner = audioError ?: statusBanner,
-          isErrorBanner = audioError != null || isErrorBanner,
+          statusBanner = audioError ?: audioNotice ?: statusBanner,
+          isErrorBanner = audioError != null || (audioNotice == null && isErrorBanner),
           onDismissBanner = viewModel::clearStatusBanner,
           messages = messages,
           isStreaming = isStreaming,
@@ -300,6 +302,7 @@ fun ChatScreen(
           preferOnDeviceStt = voicePrefs.preferOnDeviceRecognition,
           onSendMessage = viewModel::sendUserMessage,
           onStopStreaming = viewModel::stopStreaming,
+          onDictationError = viewModel::showError,
           onListenMessage = { msg ->
             viewModel.audioPlayerManager.speakMarkdownMessage(
               messageId = msg.id,
@@ -746,6 +749,7 @@ private fun ChatConversationPane(
   preferOnDeviceStt: Boolean,
   onSendMessage: (String) -> Unit,
   onStopStreaming: () -> Unit,
+  onDictationError: (String) -> Unit,
   onListenMessage: (MessageEntity) -> Unit,
   onRegenerateLast: () -> Unit,
   onShowDetails: (MessageEntity) -> Unit,
@@ -755,10 +759,34 @@ private fun ChatConversationPane(
   var composerText by rememberSaveable { mutableStateOf("") }
   val listState = rememberLazyListState()
 
-  // Auto-scroll when messages arrive
-  LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length) {
+  // Fix #12: Auto-scroll only when already at the bottom
+  val isAtBottom by remember {
+    androidx.compose.runtime.derivedStateOf {
+      val layoutInfo = listState.layoutInfo
+      val totalItems = layoutInfo.totalItemsCount
+      if (totalItems == 0) {
+        true
+      } else {
+        val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+        lastVisible != null && lastVisible.index >= totalItems - 2
+      }
+    }
+  }
+  var prevMessageCount by remember { androidx.compose.runtime.mutableIntStateOf(messages.size) }
+
+  LaunchedEffect(
+    messages.size,
+    messages.lastOrNull()?.content?.length,
+    messages.lastOrNull()?.thoughtSummary?.length,
+  ) {
     if (messages.isNotEmpty()) {
-      listState.animateScrollToItem(messages.lastIndex)
+      val addedNewMessage = messages.size > prevMessageCount
+      prevMessageCount = messages.size
+      if (isAtBottom || (addedNewMessage && messages.last().role == "user")) {
+        listState.scrollToItem(messages.lastIndex)
+      }
+    } else {
+      prevMessageCount = 0
     }
   }
 
@@ -1074,6 +1102,7 @@ private fun ChatConversationPane(
       },
       onStop = onStopStreaming,
       onOpenLive = onOpenLiveMode,
+      onDictationError = onDictationError,
     )
   }
 }
@@ -1491,6 +1520,7 @@ private fun ChatComposerBar(
   onSend: () -> Unit,
   onStop: () -> Unit,
   onOpenLive: () -> Unit,
+  onDictationError: (String) -> Unit,
 ) {
   val context = LocalContext.current
   var isDictating by remember { mutableStateOf(false) }
@@ -1504,78 +1534,109 @@ private fun ChatComposerBar(
     }
   }
 
+  fun speechErrorDescription(code: Int): String =
+    when (code) {
+      SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+      SpeechRecognizer.ERROR_CLIENT -> "Client speech error"
+      SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient microphone permissions"
+      SpeechRecognizer.ERROR_NETWORK -> "Network error"
+      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+      SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
+      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
+      SpeechRecognizer.ERROR_SERVER -> "Speech server error"
+      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard"
+      else -> "Speech error"
+    }
+
   fun startDictation() {
-    if (!SpeechRecognizer.isRecognitionAvailable(context)) return
-    speechRecognizer?.destroy()
-    val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-    speechRecognizer = recognizer
-    baseTextBeforeDictation = if (text.isBlank()) "" else "$text "
-    isDictating = true
+    if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+      onDictationError(
+        "Speech recognition service is not available on this device."
+      )
+      return
+    }
+    try {
+      speechRecognizer?.destroy()
+      val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+      speechRecognizer = recognizer
+      baseTextBeforeDictation = if (text.isBlank()) "" else "$text "
+      isDictating = true
 
-    recognizer.setRecognitionListener(
-      object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
+      recognizer.setRecognitionListener(
+        object : RecognitionListener {
+          override fun onReadyForSpeech(params: Bundle?) {}
 
-        override fun onBeginningOfSpeech() {}
+          override fun onBeginningOfSpeech() {}
 
-        override fun onRmsChanged(rmsdB: Float) {}
+          override fun onRmsChanged(rmsdB: Float) {}
 
-        override fun onBufferReceived(buffer: ByteArray?) {}
+          override fun onBufferReceived(buffer: ByteArray?) {}
 
-        override fun onEndOfSpeech() {
-          isDictating = false
+          override fun onEndOfSpeech() {
+            isDictating = false
+          }
+
+          override fun onError(error: Int) {
+            isDictating = false
+            onDictationError(
+              "Dictation failed: ${speechErrorDescription(error)} (code $error)"
+            )
+          }
+
+          override fun onPartialResults(partialResults: Bundle?) {
+            val partial =
+              partialResults
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                .orEmpty()
+            if (partial.isNotBlank()) {
+              onTextChange(baseTextBeforeDictation + partial)
+            }
+          }
+
+          override fun onResults(results: Bundle?) {
+            val finalSpoken =
+              results
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                .orEmpty()
+            if (finalSpoken.isNotBlank()) {
+              onTextChange(baseTextBeforeDictation + finalSpoken)
+            }
+            isDictating = false
+          }
+
+          override fun onEvent(eventType: Int, params: Bundle?) {}
         }
+      )
 
-        override fun onError(error: Int) {
-          isDictating = false
-        }
-
-        override fun onPartialResults(partialResults: Bundle?) {
-          val partial =
-            partialResults
-              ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-              ?.firstOrNull()
-              .orEmpty()
-          if (partial.isNotBlank()) {
-            onTextChange(baseTextBeforeDictation + partial)
+      val intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+          putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+          )
+          putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE, sttLanguage)
+          if (preferOnDeviceStt) {
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
           }
         }
-
-        override fun onResults(results: Bundle?) {
-          val finalSpoken =
-            results
-              ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-              ?.firstOrNull()
-              .orEmpty()
-          if (finalSpoken.isNotBlank()) {
-            onTextChange(baseTextBeforeDictation + finalSpoken)
-          }
-          isDictating = false
-        }
-
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-      }
-    )
-
-    val intent =
-      Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(
-          RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-          RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-        )
-        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, sttLanguage)
-        if (preferOnDeviceStt) {
-          putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        }
-      }
-    recognizer.startListening(intent)
+      recognizer.startListening(intent)
+    } catch (e: Exception) {
+      isDictating = false
+      onDictationError(
+        "Could not start speech recognition: ${e.message ?: e.javaClass.simpleName}"
+      )
+    }
   }
 
   val micPermissionLauncher =
     rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
       if (granted) {
         startDictation()
+      } else {
+        onDictationError("Microphone permission (RECORD_AUDIO) was denied for dictation.")
       }
     }
 

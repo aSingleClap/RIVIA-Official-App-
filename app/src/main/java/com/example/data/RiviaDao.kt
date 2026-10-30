@@ -35,10 +35,21 @@ interface RiviaDao {
   @Query("DELETE FROM chats")
   suspend fun deleteAllChats()
 
-  // Messages
-  @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY createdAt ASC")
+  // Messages — Fix #12: Don't load rawStepsJson in the chat's message list query
+  @Query(
+    """
+    SELECT id, chatId, role, content, thoughtSummary, requestId, interactionId,
+           previousInteractionId, model, serviceTier, inputTokens, outputTokens,
+           thoughtTokens, ttftMs, totalTimeMs, status, errorMessage, voiceLabel,
+           '[]' AS rawStepsJson, createdAt
+    FROM messages
+    WHERE chatId = :chatId
+    ORDER BY createdAt ASC
+    """
+  )
   fun observeMessagesForChat(chatId: String): Flow<List<MessageEntity>>
 
+  // Full messages query including rawStepsJson for history reconstruction and JSON export
   @Query("SELECT * FROM messages WHERE chatId = :chatId ORDER BY createdAt ASC")
   suspend fun getMessagesForChat(chatId: String): List<MessageEntity>
 
@@ -53,6 +64,28 @@ interface RiviaDao {
 
   @Update
   suspend fun updateMessage(message: MessageEntity)
+
+  @Query(
+    """
+    UPDATE messages
+    SET content = :content,
+        thoughtSummary = :thoughtSummary,
+        interactionId = :interactionId,
+        serviceTier = :serviceTier,
+        ttftMs = :ttftMs,
+        status = :status
+    WHERE id = :id
+    """
+  )
+  suspend fun updateStreamingProgress(
+    id: String,
+    content: String,
+    thoughtSummary: String,
+    interactionId: String?,
+    serviceTier: String,
+    ttftMs: Long,
+    status: String,
+  )
 
   @Query("DELETE FROM messages WHERE chatId = :chatId AND createdAt >= :fromTimestamp")
   suspend fun deleteMessagesFromTimestamp(chatId: String, fromTimestamp: Long)

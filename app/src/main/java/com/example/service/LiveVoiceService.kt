@@ -8,7 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.MainActivity
@@ -28,16 +27,24 @@ class LiveVoiceService : Service() {
     const val ACTION_END = "observer.rivia.app.action.END_LIVE"
 
     fun start(context: Context) {
-      val intent =
-        Intent(context, LiveVoiceService::class.java).apply {
-          action = ACTION_START
-        }
-      context.startForegroundService(intent)
+      try {
+        val intent =
+          Intent(context, LiveVoiceService::class.java).apply {
+            action = ACTION_START
+          }
+        context.startForegroundService(intent)
+      } catch (_: Throwable) {
+        // If OS blocks background FGS start, still start the in-process LiveSessionManager
+        LiveSessionManager.onServiceStarted()
+      }
     }
 
     fun stop(context: Context) {
-      val intent = Intent(context, LiveVoiceService::class.java)
-      context.stopService(intent)
+      try {
+        val intent = Intent(context, LiveVoiceService::class.java)
+        context.stopService(intent)
+      } catch (_: Throwable) {}
+      LiveSessionManager.onServiceStopped()
     }
   }
 
@@ -51,32 +58,43 @@ class LiveVoiceService : Service() {
       ACTION_TOGGLE_MUTE -> {
         LiveSessionManager.toggleMute()
         val isMuted = LiveSessionManager.uiState.value.isMuted
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(isMuted))
+        runCatching {
+          val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+          nm.notify(NOTIFICATION_ID, buildNotification(isMuted))
+        }
       }
       ACTION_END -> {
         LiveSessionManager.onServiceStopped()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
       }
       else -> {
         val notification = buildNotification(isMuted = false)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        var startedForeground = false
+        try {
           startForeground(
             NOTIFICATION_ID,
             notification,
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
               ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
           )
-        } else {
-          startForeground(
-            NOTIFICATION_ID,
-            notification,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+          startedForeground = true
+        } catch (_: Throwable) {
+          try {
+            startForeground(
+              NOTIFICATION_ID,
+              notification,
               ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
-          )
+            )
+            startedForeground = true
+          } catch (_: Throwable) {
+            runCatching { stopSelf() }
+          }
         }
         LiveSessionManager.onServiceStarted()
+        if (!startedForeground) {
+          return START_NOT_STICKY
+        }
       }
     }
     return START_NOT_STICKY
@@ -90,17 +108,19 @@ class LiveVoiceService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   private fun createNotificationChannel() {
-    val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    val channel =
-      NotificationChannel(
-        CHANNEL_ID,
-        "Rivia Live Voice",
-        NotificationManager.IMPORTANCE_LOW,
-      ).apply {
-        description = "Ongoing hands-free voice session with Rivia"
-        setShowBadge(false)
-      }
-    nm.createNotificationChannel(channel)
+    runCatching {
+      val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      val channel =
+        NotificationChannel(
+          CHANNEL_ID,
+          "Rivia Live Voice",
+          NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+          description = "Ongoing hands-free voice session with Rivia"
+          setShowBadge(false)
+        }
+      nm.createNotificationChannel(channel)
+    }
   }
 
   private fun buildNotification(isMuted: Boolean): Notification {
@@ -144,7 +164,7 @@ class LiveVoiceService : Service() {
     val statusText = if (isMuted) "Microphone muted" else "Listening & speaking hands-free"
 
     return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setSmallIcon(R.mipmap.ic_launcher)
+      .setSmallIcon(R.drawable.ic_notification_orb)
       .setContentTitle("Rivia Live")
       .setContentText(statusText)
       .setOngoing(true)

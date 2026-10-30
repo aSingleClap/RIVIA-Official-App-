@@ -29,7 +29,9 @@ interface RiviaPlugin {
   val description: String
 
   /**
-   * Returns an array of function declarations (JSON objects) to offer the Gemini model.
+   * Returns a list of function declaration objects to offer the Gemini model.
+   * Fix #13: Each function goes in tools as its own
+   * {"type":"function","name":...,"description":...,"parameters":{...}} object.
    */
   fun getFunctionDeclarations(): List<JSONObject>
 
@@ -45,7 +47,8 @@ interface RiviaPlugin {
 }
 
 /**
- * Section 7: PluginRegistry that adds enabled plug-ins' tools to each request
+ * Section 7 & Fix #13: PluginRegistry that adds enabled plug-ins' tools directly to each request
+ * as {"type":"function","name":...,"description":...,"parameters":{...}} objects (no wrapper)
  * and runs their function calls.
  */
 object PluginRegistry {
@@ -69,16 +72,31 @@ object PluginRegistry {
 
   fun getAllPlugins(): List<RiviaPlugin> = plugins.values.toList()
 
-  fun getEnabledFunctionDeclarations(): JSONArray {
-    val arr = JSONArray()
+  /**
+   * Fix #13: Returns each enabled plug-in function as its own
+   * {"type":"function","name":...,"description":...,"parameters":{...}} object.
+   */
+  fun getEnabledFunctionToolObjects(): List<JSONObject> {
+    val list = mutableListOf<JSONObject>()
     val enabled = _enabledPluginIds.value
     for (id in enabled) {
       val plugin = plugins[id] ?: continue
       for (decl in plugin.getFunctionDeclarations()) {
-        arr.put(decl)
+        val toolObj =
+          JSONObject().apply {
+            put("type", "function")
+            put("name", decl.optString("name"))
+            if (decl.has("description")) {
+              put("description", decl.optString("description"))
+            }
+            if (decl.has("parameters")) {
+              put("parameters", decl.get("parameters"))
+            }
+          }
+        list.add(toolObj)
       }
     }
-    return arr
+    return list
   }
 
   suspend fun dispatchToolCall(functionName: String, arguments: JSONObject): JSONObject {

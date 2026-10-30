@@ -1,10 +1,12 @@
 package com.example.network
 
 import com.example.security.VoicePreferences
+import com.example.util.TextAudioTagProcessor
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -37,8 +39,10 @@ data class ElevenLabsVoiceSettingsDto(
 )
 
 data class SynthesizedChunkResult(
-  val audioFile: File,
-  val fallbackErrorNotice: String? = null,
+  val audioFile: File?,
+  val fallbackNotice: String? = null,
+  val usedModelId: String = "",
+  val skippedEmpty: Boolean = false,
 )
 
 class ElevenLabsClient {
@@ -63,12 +67,9 @@ class ElevenLabsClient {
       .connectTimeout(25, TimeUnit.SECONDS)
       .writeTimeout(30, TimeUnit.SECONDS)
       .readTimeout(60, TimeUnit.SECONDS)
+      .retryOnConnectionFailure(true)
       .build()
 
-  /**
-   * Section 5: Voice picker from GET https://api.elevenlabs.io/v2/voices?voice_type=personal
-   * (header xi-api-key), showing name, category and a preview.
-   */
   suspend fun fetchPersonalVoices(apiKey: String): Result<List<ElevenLabsVoice>> =
     withContext(Dispatchers.IO) {
       if (apiKey.isBlank()) {
@@ -109,15 +110,13 @@ class ElevenLabsClient {
           }
           Result.success(list)
         }
-      } catch (e: Exception) {
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Throwable) {
         Result.failure(e)
       }
     }
 
-  /**
-   * Section 5: Model pickers filled from GET https://api.elevenlabs.io/v1/models,
-   * keeping models whose can_do_text_to_speech is true.
-   */
   suspend fun fetchTtsModels(apiKey: String): Result<List<ElevenLabsModel>> =
     withContext(Dispatchers.IO) {
       if (apiKey.isBlank()) {
@@ -157,14 +156,13 @@ class ElevenLabsClient {
           }
           Result.success(list)
         }
-      } catch (e: Exception) {
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Throwable) {
         Result.failure(e)
       }
     }
 
-  /**
-   * Section 5: Voice settings starting from GET https://api.elevenlabs.io/v1/voices/{voice_id}/settings
-   */
   suspend fun fetchVoiceSettings(
     apiKey: String,
     voiceId: String,
@@ -203,15 +201,19 @@ class ElevenLabsClient {
             )
           )
         }
-      } catch (e: Exception) {
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Throwable) {
         Result.failure(e)
       }
     }
 
   /**
-   * Section 5: POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?output_format=...
-   * with {text, model_id, voice_settings, previous_text, apply_text_normalization}.
-   * If a model is rejected, returns the error notice and falls back to eleven_flash_v2_5.
+   * Section 5 & Fix #8 & #9:
+   * - Only sends audio tags to eleven_v3 models, eleven_v4 and eleven_v4_turbo.
+   *   Strips them for every other model, including the eleven_flash_v2_5 fallback.
+   * - If a model is rejected, returns a fallbackNotice (not an error) and falls back to eleven_flash_v2_5.
+   * - If a chunk has no speakable letters/digits after stripping audio tags, returns skippedEmpty = true.
    */
   suspend fun streamSentenceToFile(
     apiKey: String,
@@ -230,7 +232,22 @@ class ElevenLabsClient {
       val voiceId = voicePrefs.voiceId.trim()
       if (voiceId.isBlank()) {
         return@withContext Result.failure(
-          IllegalArgumentException("ElevenLabs Voice ID is not selected. Choose or paste a Voice ID in Settings > Voice.")
+          IllegalArgumentException(
+            "ElevenLabs Voice ID is not selected. Choose or paste a Voice ID in Settings > Voice."
+          )
+        )
+      }
+
+      // Check if chunk has any speakable letters or digits when tags are stripped
+      val plainWithoutTags = TextAudioTagProcessor.removeAudioTagsFromPlainSegment(text).trim()
+      if (!plainWithoutTags.any { it.isLetterOrDigit() }) {
+        return@withContext Result.success(
+          SynthesizedChunkResult(
+            audioFile = null,
+            fallbackNotice = null,
+            usedModelId = modelId,
+            skippedEmpty = true,
+          )
         )
       }
 
@@ -246,11 +263,18 @@ class ElevenLabsClient {
         )
 
       if (firstTry.isSuccess || modelId == FALLBACK_MODEL_ID) {
-        return@withContext firstTry.map { SynthesizedChunkResult(it, null) }
+        return@withContext firstTry.map {
+          SynthesizedChunkResult(
+            audioFile = it,
+            fallbackNotice = null,
+            usedModelId = modelId,
+            skippedEmpty = false,
+          )
+        }
       }
 
       val initialError = firstTry.exceptionOrNull()?.message ?: "Model $modelId rejected"
-      // Fall back to eleven_flash_v2_5 and surface the original rejection error
+      // Fall back to eleven_flash_v2_5 (which strips audio tags automatically inside executeTtsStreamRequest)
       val fallbackTry =
         executeTtsStreamRequest(
           apiKey = apiKey,
@@ -265,7 +289,9 @@ class ElevenLabsClient {
       fallbackTry.map { file ->
         SynthesizedChunkResult(
           audioFile = file,
-          fallbackErrorNotice = "$initialError (Fell back to $FALLBACK_MODEL_ID)",
+          fallbackNotice = "$initialError — fell back to $FALLBACK_MODEL_ID",
+          usedModelId = FALLBACK_MODEL_ID,
+          skippedEmpty = false,
         )
       }
     }
@@ -279,6 +305,25 @@ class ElevenLabsClient {
     previousText: String?,
     cacheDir: File,
   ): Result<File> {
+    // Fix #9: Only send audio tags to eleven_v3 models, eleven_v4 and eleven_v4_turbo.
+    // Strip them for every other model, including the eleven_flash_v2_5 fallback.
+    val allowTagsForModel =
+      voicePrefs.sendAudioTags && TextAudioTagProcessor.modelSupportsAudioTags(modelId)
+    val effectiveText =
+      (if (allowTagsForModel) text
+        else TextAudioTagProcessor.removeAudioTagsFromPlainSegment(text))
+        .trim()
+    val effectivePrevText =
+      if (previousText.isNullOrBlank()) null
+      else
+        (if (allowTagsForModel) previousText
+          else TextAudioTagProcessor.removeAudioTagsFromPlainSegment(previousText))
+          .trim()
+
+    if (effectiveText.isBlank()) {
+      return Result.failure(IOException("Sentence text is empty after tag filtering"))
+    }
+
     val isV4OrV4Turbo = modelId == "eleven_v4" || modelId == "eleven_v4_turbo"
     val voiceSettingsJson =
       JSONObject().apply {
@@ -296,11 +341,11 @@ class ElevenLabsClient {
 
     val payload =
       JSONObject().apply {
-        put("text", text)
+        put("text", effectiveText)
         put("model_id", modelId)
         put("voice_settings", voiceSettingsJson)
-        if (!previousText.isNullOrBlank()) {
-          put("previous_text", previousText)
+        if (!effectivePrevText.isNullOrBlank()) {
+          put("previous_text", effectivePrevText)
         }
         put("apply_text_normalization", voicePrefs.textNormalization)
       }
@@ -325,13 +370,18 @@ class ElevenLabsClient {
           return Result.failure(IOException(extractElevenLabsError(resp.code, errBody)))
         }
         val body = resp.body ?: return Result.failure(IOException("Empty audio stream response"))
+        cacheDir.mkdirs()
         val outFile = File.createTempFile("rivia_tts_", ".mp3", cacheDir)
         FileOutputStream(outFile).use { fos ->
           body.byteStream().copyTo(fos)
         }
+        if (outFile.length() == 0L) {
+          outFile.delete()
+          return Result.failure(IOException("ElevenLabs returned an empty audio stream"))
+        }
         Result.success(outFile)
       }
-    } catch (e: Exception) {
+    } catch (e: Throwable) {
       Result.failure(e)
     }
   }

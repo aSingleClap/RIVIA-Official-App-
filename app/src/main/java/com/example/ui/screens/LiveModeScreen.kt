@@ -390,6 +390,29 @@ fun LiveModeScreen(
             }
           }
 
+          if (!liveState.noticeCaption.isNullOrBlank()) {
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = RiviaRaisedSurface,
+              modifier =
+                Modifier.fillMaxWidth()
+                  .border(1.dp, RiviaWarningAmber.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                  .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+              ) {
+                StatusShape(status = StatusType.WARNING, size = 10.dp)
+                Text(
+                  text = liveState.noticeCaption!!,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = RiviaWarningAmber,
+                )
+              }
+            }
+          }
+
           if (!liveState.errorCaption.isNullOrBlank()) {
             Surface(
               shape = RoundedCornerShape(12.dp),

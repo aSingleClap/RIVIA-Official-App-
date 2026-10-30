@@ -59,6 +59,7 @@ data class RunSettings(
   val styleForTypedChat: String = DEFAULT_TYPED_CHAT_STYLE,
   val styleForLiveMode: String = DEFAULT_LIVE_MODE_STYLE,
   val thinkingLevel: String = "medium", // model_default, minimal, low, medium, high
+  val liveThinkingLevel: String = "minimal", // Fix #7: Live thinking level, default minimal
   val thoughtSummaries: String = "auto", // auto or none
   val maxOutputTokens: Int? = null,
   val stopSequences: List<String> = emptyList(),
@@ -105,6 +106,7 @@ data class RunSettings(
     obj.put("styleForTypedChat", styleForTypedChat)
     obj.put("styleForLiveMode", styleForLiveMode)
     obj.put("thinkingLevel", thinkingLevel)
+    obj.put("liveThinkingLevel", liveThinkingLevel)
     obj.put("thoughtSummaries", thoughtSummaries)
     if (maxOutputTokens != null) obj.put("maxOutputTokens", maxOutputTokens)
     obj.put("stopSequences", JSONArray(stopSequences))
@@ -197,9 +199,6 @@ data class RunSettings(
       return clean.startsWith("gemini-3")
     }
 
-    /**
-     * Validates the JSON schema for Structured Output and returns any errors and warnings.
-     */
     fun validateSchema(
       schemaJson: String,
       hasToolsEnabled: Boolean,
@@ -207,7 +206,11 @@ data class RunSettings(
     ): SchemaValidationResult {
       val warnings = mutableListOf<String>()
       if (schemaJson.isBlank()) {
-        return SchemaValidationResult(isValid = false, error = "Schema JSON cannot be empty", warnings = warnings)
+        return SchemaValidationResult(
+          isValid = false,
+          error = "Schema JSON cannot be empty",
+          warnings = warnings,
+        )
       }
       try {
         JSONObject(schemaJson)
@@ -218,14 +221,17 @@ data class RunSettings(
           warnings = warnings,
         )
       }
-      val ignoredKeys = listOf("minLength", "maxLength", "uniqueItems").filter {
-        Regex(""""$it"\s*:""").containsMatchIn(schemaJson)
-      }
+      val ignoredKeys =
+        listOf("minLength", "maxLength", "uniqueItems").filter {
+          Regex(""""$it"\s*:""").containsMatchIn(schemaJson)
+        }
       if (ignoredKeys.isNotEmpty()) {
         warnings.add("Note: ${ignoredKeys.joinToString(", ")} are ignored by the Gemini API.")
       }
       if (hasToolsEnabled && !isGemini3Model(modelId)) {
-        warnings.add("Warning: A response schema combined with tools works only on Gemini 3 models.")
+        warnings.add(
+          "Warning: A response schema combined with tools works only on Gemini 3 models."
+        )
       } else if (hasToolsEnabled) {
         warnings.add("Note: Combining a schema with tools is supported only on Gemini 3 models.")
       }
@@ -260,11 +266,13 @@ data class RunSettings(
           styleForTypedChat = obj.optString("styleForTypedChat", DEFAULT_TYPED_CHAT_STYLE),
           styleForLiveMode = obj.optString("styleForLiveMode", DEFAULT_LIVE_MODE_STYLE),
           thinkingLevel = obj.optString("thinkingLevel", "medium"),
+          liveThinkingLevel = obj.optString("liveThinkingLevel", "minimal"),
           thoughtSummaries = obj.optString("thoughtSummaries", "auto"),
           maxOutputTokens = if (obj.has("maxOutputTokens")) obj.optInt("maxOutputTokens") else null,
           stopSequences = stopSeqList,
           seed = if (obj.has("seed")) obj.optInt("seed") else null,
-          temperature = if (obj.has("temperature")) obj.optDouble("temperature").toFloat() else null,
+          temperature =
+            if (obj.has("temperature")) obj.optDouble("temperature").toFloat() else null,
           topP = if (obj.has("topP")) obj.optDouble("topP").toFloat() else null,
           topK = if (obj.has("topK")) obj.optInt("topK") else null,
           googleSearchEnabled = obj.optBoolean("googleSearchEnabled", false),
@@ -278,7 +286,8 @@ data class RunSettings(
           fileSearchStoreNames = storeNames,
           toolChoice = obj.optString("toolChoice", "auto"),
           structuredOutputEnabled = obj.optBoolean("structuredOutputEnabled", false),
-          structuredOutputSchema = obj.optString("structuredOutputSchema", DEFAULT_SCHEMA_TEMPLATE),
+          structuredOutputSchema =
+            obj.optString("structuredOutputSchema", DEFAULT_SCHEMA_TEMPLATE),
           safetyHateSpeech = obj.optString("safetyHateSpeech", "model_default"),
           safetyDangerousContent = obj.optString("safetyDangerousContent", "model_default"),
           safetyHarassment = obj.optString("safetyHarassment", "model_default"),
