@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
-import org.json.JSONArray
 import org.json.JSONObject
 
 data class PluginEvent(
@@ -48,33 +47,89 @@ interface RiviaPlugin {
 
 /**
  * Section 7 & Fix #13: PluginRegistry that adds enabled plug-ins' tools directly to each request
- * as {"type":"function","name":...,"description":...,"parameters":{...}} objects (no wrapper)
+ * as {"type":"function","name":...,"description":...,"parameters":{...}} object (no wrapper)
  * and runs their function calls.
+ *
+ * Pass 1 H2 Guard: Refuses to register any tool with kind in ['send', 'delete', 'contact']
+ * while H2 is inactive or has no H2 handler in the app, and exposes the refusals in Settings > Plug-ins.
  */
 object PluginRegistry {
+  private val WRITE_TOOL_KINDS = setOf("send", "delete", "contact")
+
   private val plugins = mutableMapOf<String, RiviaPlugin>()
   private val _enabledPluginIds = MutableStateFlow<Set<String>>(emptySet())
   val enabledPluginIds: StateFlow<Set<String>> = _enabledPluginIds.asStateFlow()
 
-  fun registerPlugin(plugin: RiviaPlugin) {
+  @Volatile private var isH2ActiveWithHandler: Boolean = false
+
+  private val _refusedWriteTools = MutableStateFlow<List<String>>(emptyList())
+  val refusedWriteTools: StateFlow<List<String>> = _refusedWriteTools.asStateFlow()
+
+  fun updateH2State(activeWithCodeHandler: Boolean) {
+    isH2ActiveWithHandler = activeWithCodeHandler
+    recomputeRefusals()
+  }
+
+  /**
+   * Registers a plug-in and checks its tools against the H2 write-tool guard.
+   * Returns false if any write tool was refused while H2 is inactive/unhandled.
+   */
+  fun registerPlugin(plugin: RiviaPlugin): Boolean {
     plugins[plugin.id] = plugin
+    val hadRefusal = recomputeRefusalsForPlugin(plugin)
+    recomputeRefusals()
+    return !hadRefusal
   }
 
   fun unregisterPlugin(pluginId: String) {
     plugins.remove(pluginId)
     _enabledPluginIds.value = _enabledPluginIds.value - pluginId
+    recomputeRefusals()
   }
 
   fun setPluginEnabled(pluginId: String, enabled: Boolean) {
     _enabledPluginIds.value =
       if (enabled) _enabledPluginIds.value + pluginId else _enabledPluginIds.value - pluginId
+    recomputeRefusals()
   }
 
   fun getAllPlugins(): List<RiviaPlugin> = plugins.values.toList()
 
+  private fun isWriteToolBlocked(decl: JSONObject): Boolean {
+    val kind = decl.optString("kind", "").trim().lowercase()
+    return kind in WRITE_TOOL_KINDS && !isH2ActiveWithHandler
+  }
+
+  private fun recomputeRefusalsForPlugin(plugin: RiviaPlugin): Boolean {
+    var blocked = false
+    for (decl in plugin.getFunctionDeclarations()) {
+      if (isWriteToolBlocked(decl)) {
+        blocked = true
+      }
+    }
+    return blocked
+  }
+
+  private fun recomputeRefusals() {
+    val messages = mutableListOf<String>()
+    for (plugin in plugins.values) {
+      for (decl in plugin.getFunctionDeclarations()) {
+        if (isWriteToolBlocked(decl)) {
+          val toolName = decl.optString("name", "unnamed")
+          val kind = decl.optString("kind", "").trim().lowercase()
+          messages.add(
+            "Refused write tool \"$toolName\" (kind=\"$kind\") from ${plugin.name}: H2 (Writes need a Watch tap) is inactive."
+          )
+        }
+      }
+    }
+    _refusedWriteTools.value = messages
+  }
+
   /**
-   * Fix #13: Returns each enabled plug-in function as its own
-   * {"type":"function","name":...,"description":...,"parameters":{...}} object.
+   * Fix #13 & Pass 1 H2 Guard: Returns each enabled plug-in function as its own
+   * {"type":"function","name":...,"description":...,"parameters":{...}} object,
+   * excluding any write tool refused by H2.
    */
   fun getEnabledFunctionToolObjects(): List<JSONObject> {
     val list = mutableListOf<JSONObject>()
@@ -82,6 +137,7 @@ object PluginRegistry {
     for (id in enabled) {
       val plugin = plugins[id] ?: continue
       for (decl in plugin.getFunctionDeclarations()) {
+        if (isWriteToolBlocked(decl)) continue
         val toolObj =
           JSONObject().apply {
             put("type", "function")
@@ -103,9 +159,17 @@ object PluginRegistry {
     val enabled = _enabledPluginIds.value
     for (id in enabled) {
       val plugin = plugins[id] ?: continue
-      val matches =
-        plugin.getFunctionDeclarations().any { it.optString("name") == functionName }
-      if (matches) {
+      val matchingDecl =
+        plugin.getFunctionDeclarations().firstOrNull { it.optString("name") == functionName }
+      if (matchingDecl != null) {
+        if (isWriteToolBlocked(matchingDecl)) {
+          return JSONObject().apply {
+            put(
+              "error",
+              "Refused write tool '$functionName': H2 (Writes need a Watch tap) is inactive.",
+            )
+          }
+        }
         return plugin.executeToolCall(functionName, arguments)
       }
     }

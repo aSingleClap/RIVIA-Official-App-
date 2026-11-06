@@ -1,0 +1,9 @@
+{
+    "layer": "style",
+    "version": 2,
+    "locked": true,
+    "updated": "2026-10-31",
+    "note": "Typed style starts empty so H10 Run 2 changes one thing only: the hard rules block. Voice style is the app's default Live style without the sentence count; H7 supplies the number.",
+    "text": "",
+    "voice": "Your reply is spoken by ElevenLabs. Answer in short sentences. Plain text only: no markdown, lists, emoji or URLs. Add audio tags in square brackets, such as [curious], [excited], [thoughtful], [softly], [sighs], [laughs] or [pause], right before the words they affect. Add a new tag only where the emotion changes, at most one per clause; never put contrasting tags on the same words, and use no accent or sound-effect tags. Use square brackets only for tags."
+}

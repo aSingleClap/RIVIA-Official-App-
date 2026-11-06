@@ -1,0 +1,31 @@
+{
+    "layer": "engine",
+    "version": 2,
+    "locked": true,
+    "updated": "2026-10-31",
+    "note": "Seeded from the app's presets on Oct 31 2026. Rivia chats take model settings only from here; every other API option lives in Lab chats. null max_output_tokens and model_default safety are left out of the request.",
+    "default_profile": "balanced",
+    "profiles": {
+        "fast": {
+            "model": "gemini-3.5-flash-lite",
+            "thinking_level": "low"
+        },
+        "balanced": {
+            "model": "gemini-3.8-flash",
+            "thinking_level": "low"
+        },
+        "deep": {
+            "model": "gemini-4-argon",
+            "thinking_level": "low"
+        },
+        "live": {
+            "model": "gemini-3.5-flash-lite",
+            "thinking_level": "minimal"
+        }
+    },
+    "thought_summaries": "auto",
+    "max_output_tokens": null,
+    "service_tier": "standard",
+    "store": true,
+    "safety": "model_default"
+}

@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -273,12 +274,11 @@ fun LiveModeScreen(
         Surface(
           shape = RoundedCornerShape(14.dp),
           color = RiviaRaisedSurface,
-          modifier =
-            Modifier.widthIn(max = 420.dp)
-              .border(1.dp, RiviaErrorRed, RoundedCornerShape(14.dp))
-              .padding(18.dp),
+          border = BorderStroke(1.dp, RiviaErrorRed),
+          modifier = Modifier.widthIn(max = 420.dp),
         ) {
           Column(
+            modifier = Modifier.padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
@@ -344,12 +344,13 @@ fun LiveModeScreen(
             Surface(
               shape = RoundedCornerShape(12.dp),
               color = RiviaRaisedSurface,
-              modifier =
-                Modifier.fillMaxWidth()
-                  .border(1.dp, RiviaBorder, RoundedCornerShape(12.dp))
-                  .padding(horizontal = 14.dp, vertical = 10.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier = Modifier.fillMaxWidth(),
             ) {
-              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
                 Text(
                   text = "YOU",
                   style = MaterialTheme.typography.labelSmall,
@@ -369,12 +370,13 @@ fun LiveModeScreen(
             Surface(
               shape = RoundedCornerShape(12.dp),
               color = RiviaSurface,
-              modifier =
-                Modifier.fillMaxWidth()
-                  .border(1.dp, RiviaMint.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
-                  .padding(horizontal = 14.dp, vertical = 10.dp),
+              border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.45f)),
+              modifier = Modifier.fillMaxWidth(),
             ) {
-              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+              Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
                 Text(
                   text = "RIVIA",
                   style = MaterialTheme.typography.labelSmall,
@@ -394,12 +396,11 @@ fun LiveModeScreen(
             Surface(
               shape = RoundedCornerShape(12.dp),
               color = RiviaRaisedSurface,
-              modifier =
-                Modifier.fillMaxWidth()
-                  .border(1.dp, RiviaWarningAmber.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                  .padding(horizontal = 14.dp, vertical = 10.dp),
+              border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.6f)),
+              modifier = Modifier.fillMaxWidth(),
             ) {
               Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
               ) {
@@ -417,12 +418,11 @@ fun LiveModeScreen(
             Surface(
               shape = RoundedCornerShape(12.dp),
               color = RiviaRaisedSurface,
-              modifier =
-                Modifier.fillMaxWidth()
-                  .border(1.dp, RiviaErrorRed, RoundedCornerShape(12.dp))
-                  .padding(horizontal = 14.dp, vertical = 10.dp),
+              border = BorderStroke(1.dp, RiviaErrorRed),
+              modifier = Modifier.fillMaxWidth(),
             ) {
               Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
               ) {

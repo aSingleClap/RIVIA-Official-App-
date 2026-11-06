@@ -267,6 +267,7 @@ class AudioPlayerManager(
     rawMarkdown: String,
     isLiveChannel: Boolean = false,
     onFinished: (() -> Unit)? = null,
+    onError: ((String) -> Unit)? = null,
   ) {
     scope.launch(Dispatchers.Main.immediate) {
       try {
@@ -288,15 +289,19 @@ class AudioPlayerManager(
               val apiKey = keyRepository.getElevenLabsKey()
               val voicePrefs = keyRepository.voicePreferencesFlow.first()
               if (apiKey.isBlank()) {
-                _lastAudioError.value = "ElevenLabs API key is not set. Add it in Settings."
+                val msg = "ElevenLabs API key is not set. Add it in Settings."
+                _lastAudioError.value = msg
                 _speakingMessageId.value = null
+                onError?.invoke(msg)
                 onFinished?.invoke()
                 return@launch
               }
               if (voicePrefs.voiceId.isBlank()) {
-                _lastAudioError.value =
+                val msg =
                   "No ElevenLabs Voice selected. Choose your custom voice in Settings > Voice."
+                _lastAudioError.value = msg
                 _speakingMessageId.value = null
+                onError?.invoke(msg)
                 onFinished?.invoke()
                 return@launch
               }
@@ -352,7 +357,9 @@ class AudioPlayerManager(
                     }
                   },
                   onFailure = { err ->
-                    _lastAudioError.value = err.message ?: "ElevenLabs synthesis failed"
+                    val msg = err.message ?: "ElevenLabs synthesis failed"
+                    _lastAudioError.value = msg
+                    onError?.invoke(msg)
                     allChunksEnqueued = true
                     if (!firstChunkStarted) {
                       onAllPlaybackCompletedOnMain()
@@ -377,7 +384,9 @@ class AudioPlayerManager(
             } catch (e: CancellationException) {
               throw e
             } catch (e: Throwable) {
-              _lastAudioError.value = e.message ?: "Voice synthesis error"
+              val msg = e.message ?: "Voice synthesis error"
+              _lastAudioError.value = msg
+              onError?.invoke(msg)
               allChunksEnqueued = true
               if (!firstChunkStarted) {
                 onAllPlaybackCompletedOnMain()
@@ -385,9 +394,11 @@ class AudioPlayerManager(
             }
           }
       } catch (e: Throwable) {
-        _lastAudioError.value = e.message ?: "Voice playback error"
+        val msg = e.message ?: "Voice playback error"
+        _lastAudioError.value = msg
         _isSpeaking.value = false
         _speakingMessageId.value = null
+        onError?.invoke(msg)
       }
     }
   }
@@ -400,6 +411,7 @@ class AudioPlayerManager(
     onTurnPlaybackFinished: () -> Unit,
     onNotice: (String) -> Unit,
     onError: (String) -> Unit,
+    onFirstAudioStarted: (() -> Unit)? = null,
   ) {
     scope.launch(Dispatchers.Main.immediate) {
       try {
@@ -474,8 +486,12 @@ class AudioPlayerManager(
                     }
                     if (!chunk.skippedEmpty && chunk.audioFile != null) {
                       tempFiles.add(chunk.audioFile)
+                      val wasStarted = firstChunkStarted
                       firstChunkStarted =
                         enqueueAudioFileOnMain(chunk.audioFile, firstChunkStarted)
+                      if (!wasStarted && firstChunkStarted) {
+                        onFirstAudioStarted?.invoke()
+                      }
                       livePreviousText = speakable
                     }
                   },
@@ -537,6 +553,39 @@ class AudioPlayerManager(
       } catch (e: Throwable) {
         _lastAudioError.value = "Preview playback error: ${e.message}"
         _isSpeaking.value = false
+      }
+    }
+  }
+
+  /**
+   * Plays a saved local WAV clip from Settings > Lab on the Main thread (or stops if already playing).
+   */
+  fun playLocalWavFile(filePath: String) {
+    scope.launch(Dispatchers.Main.immediate) {
+      try {
+        val tagId = "wav:$filePath"
+        if (_speakingMessageId.value == tagId && _isSpeaking.value) {
+          stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+          return@launch
+        }
+        val wavFile = File(filePath)
+        if (!wavFile.exists() || wavFile.length() == 0L) {
+          _lastAudioError.value = "Saved WAV clip no longer exists on disk."
+          return@launch
+        }
+        stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+        requestTransientFocus()
+        allChunksEnqueued = true
+        _speakingMessageId.value = tagId
+        _isSpeaking.value = true
+        val player = getOrCreatePlayerOnMain()
+        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(wavFile)))
+        player.prepare()
+        player.play()
+      } catch (e: Throwable) {
+        _lastAudioError.value = "WAV playback error: ${e.message}"
+        _isSpeaking.value = false
+        _speakingMessageId.value = null
       }
     }
   }

@@ -10,12 +10,8 @@ object TextAudioTagProcessor {
   // Matches fenced code blocks ```...``` or inline code spans `...`
   private val CODE_SEGMENT_REGEX = Regex("""(```[\s\S]*?```|`[^`\n]+`)""")
 
-  // Fix #10: Split sentences only at . ! or ? followed by whitespace or line break, or on line breaks,
-  // so decimal numbers like 3.5 stay whole.
-  private val SENTENCE_SPLIT_REGEX = Regex("""(?<=[.!?])[ \t\r\n]+|\r?\n+""")
-
-  // Used during Live streaming to find the last completed sentence boundary (. ! or ? followed by space/newline, or newline)
-  val LIVE_STREAM_SENTENCE_END_REGEX = Regex("""[.!?](?=[ \t\r\n])|\r?\n""")
+  // Abbreviations that never end a sentence
+  private val NO_SPLIT_ABBREVIATIONS = setOf("dr.", "mr.", "mrs.", "ms.", "st.")
 
   /**
    * Fix #9: Only send audio tags to eleven_v3 models, eleven_v4 and eleven_v4_turbo.
@@ -116,22 +112,37 @@ object TextAudioTagProcessor {
   }
 
   /**
-   * Splits speakable text into ordered sentences for streaming chunk playback with previous_text.
-   * Splits only at . ! or ? followed by a space or line break so numbers like 3.5 stay whole.
+   * Returns true if a fragment consists solely of one or more [audio tags] and whitespace.
+   */
+  fun isOnlyAudioTags(fragment: String): Boolean {
+    val trimmed = fragment.trim()
+    if (trimmed.isEmpty()) return false
+    return AUDIO_TAG_REGEX.replace(trimmed, "").isBlank()
+  }
+
+  /**
+   * Splits speakable text into ordered sentences for ElevenLabs playback and H7 sentence counting:
+   * - "..." and "…" never end a sentence.
+   * - "Dr.", "Mr.", "Mrs.", "Ms." and "St." never end a sentence.
+   * - "a.m." and "p.m." end a sentence only when the next word starts with a capital letter.
+   * - Decimals (3.5) and times (12.20) never split.
+   * - A fragment that is only audio tags ([laughs], [softly]) is never counted as a sentence:
+   *   it joins the next sentence, or the previous sentence when at the end of the reply.
    */
   fun splitIntoSentences(speakableText: String): List<String> {
     if (speakableText.isBlank()) return emptyList()
+    val rawParts = splitRawFragments(speakableText)
     val results = mutableListOf<String>()
-    val rawParts = speakableText.split(SENTENCE_SPLIT_REGEX)
     var carryOverTag = ""
     for (part in rawParts) {
-      val trimmed = (if (carryOverTag.isNotEmpty()) "$carryOverTag $part" else part).trim()
+      val trimmedPart = part.trim()
+      if (trimmedPart.isEmpty()) continue
+      val combined = if (carryOverTag.isNotEmpty()) "$carryOverTag $trimmedPart" else trimmedPart
       carryOverTag = ""
-      if (trimmed.isEmpty()) continue
-      if (AUDIO_TAG_REGEX.matches(trimmed)) {
-        carryOverTag = trimmed
+      if (isOnlyAudioTags(combined)) {
+        carryOverTag = combined
       } else {
-        results.add(trimmed)
+        results.add(combined)
       }
     }
     if (carryOverTag.isNotEmpty()) {
@@ -142,6 +153,121 @@ object TextAudioTagProcessor {
       }
     }
     return results
+  }
+
+  private fun splitRawFragments(text: String): List<String> {
+    val parts = mutableListOf<String>()
+    var segmentStart = 0
+    var i = 0
+    val len = text.length
+
+    while (i < len) {
+      val ch = text[i]
+      if (ch == '\n' || ch == '\r') {
+        if (i > segmentStart) {
+          val piece = text.substring(segmentStart, i).trim()
+          if (piece.isNotEmpty()) parts.add(piece)
+        }
+        while (i < len && (text[i] == '\n' || text[i] == '\r' || text[i] == ' ' || text[i] == '\t')) {
+          i++
+        }
+        segmentStart = i
+        continue
+      }
+
+      if (ch == '.' || ch == '!' || ch == '?') {
+        if (isSentenceEndAt(text, i)) {
+          val cutEnd = i + 1
+          val piece = text.substring(segmentStart, cutEnd).trim()
+          if (piece.isNotEmpty()) parts.add(piece)
+          var nextIdx = cutEnd
+          while (nextIdx < len && (text[nextIdx] == ' ' || text[nextIdx] == '\t')) {
+            nextIdx++
+          }
+          segmentStart = nextIdx
+          i = nextIdx
+          continue
+        }
+      }
+      i++
+    }
+
+    if (segmentStart < len) {
+      val tail = text.substring(segmentStart, len).trim()
+      if (tail.isNotEmpty()) parts.add(tail)
+    }
+    return parts
+  }
+
+  private fun isSentenceEndAt(text: String, idx: Int): Boolean {
+    val ch = text[idx]
+    val len = text.length
+
+    // Must be at end of text or followed by whitespace
+    if (idx + 1 < len && !text[idx + 1].isWhitespace()) {
+      return false
+    }
+
+    if (ch == '.') {
+      // 1. Ellipsis "..." or ".." never ends a sentence
+      if ((idx > 0 && text[idx - 1] == '.') || (idx + 1 < len && text[idx + 1] == '.')) {
+        return false
+      }
+
+      // Extract the token ending at idx (inclusive)
+      var tokenStart = idx
+      while (tokenStart > 0 && !text[tokenStart - 1].isWhitespace()) {
+        tokenStart--
+      }
+      val rawToken =
+        text
+          .substring(tokenStart, idx + 1)
+          .trimStart('(', '[', '"', '\'', '«', '“', '‘')
+          .lowercase()
+
+      // 2. "Dr.", "Mr.", "Mrs.", "Ms." and "St." never end a sentence
+      if (rawToken in NO_SPLIT_ABBREVIATIONS) {
+        return false
+      }
+
+      // 3. "a.m." and "p.m." end a sentence only when the next word starts with a capital letter
+      if (rawToken == "a.m." || rawToken == "p.m.") {
+        val nextWordFirstChar = findFirstCharOfNextWord(text, idx + 1)
+        return nextWordFirstChar != null && nextWordFirstChar in 'A'..'Z'
+      }
+    }
+
+    return true
+  }
+
+  private fun findFirstCharOfNextWord(text: String, fromIndex: Int): Char? {
+    var i = fromIndex
+    val len = text.length
+    while (i < len) {
+      // Skip whitespace
+      while (i < len && text[i].isWhitespace()) i++
+      if (i >= len) return null
+      // If an audio tag like [softly] appears before the next word, skip past it
+      val sub = text.substring(i)
+      val tagMatch = AUDIO_TAG_REGEX.find(sub)
+      if (tagMatch != null && tagMatch.range.first == 0) {
+        i += tagMatch.range.last + 1
+        continue
+      }
+      // Skip opening quotes/parens if any
+      while (
+        i < len &&
+          (text[i] == '"' ||
+            text[i] == '\'' ||
+            text[i] == '“' ||
+            text[i] == '‘' ||
+            text[i] == '(')
+      ) {
+        i++
+      }
+      return if (i < len) text[i] else null
+    }
+    return null
   }
 
   /**

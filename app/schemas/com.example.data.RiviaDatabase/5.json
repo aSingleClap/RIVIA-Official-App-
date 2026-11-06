@@ -1,0 +1,936 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 5,
+    "identityHash": "0934e404350af47b76ca747eb1e51ef6",
+    "entities": [
+      {
+        "tableName": "chats",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `runSettingsJson` TEXT NOT NULL, `lastInteractionId` TEXT, `isLabChat` INTEGER NOT NULL DEFAULT 0, `riviaProfile` TEXT NOT NULL DEFAULT 'balanced', `pendingH7Notice` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runSettingsJson",
+            "columnName": "runSettingsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastInteractionId",
+            "columnName": "lastInteractionId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isLabChat",
+            "columnName": "isLabChat",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "riviaProfile",
+            "columnName": "riviaProfile",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'balanced'"
+          },
+          {
+            "fieldPath": "pendingH7Notice",
+            "columnName": "pendingH7Notice",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `chatId` TEXT NOT NULL, `role` TEXT NOT NULL, `content` TEXT NOT NULL, `thoughtSummary` TEXT NOT NULL, `requestId` TEXT NOT NULL, `interactionId` TEXT, `previousInteractionId` TEXT, `model` TEXT NOT NULL, `serviceTier` TEXT NOT NULL, `inputTokens` INTEGER NOT NULL, `outputTokens` INTEGER NOT NULL, `thoughtTokens` INTEGER NOT NULL, `ttftMs` INTEGER NOT NULL, `totalTimeMs` INTEGER NOT NULL, `status` TEXT NOT NULL, `errorMessage` TEXT, `voiceLabel` TEXT, `rawStepsJson` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `chatKind` TEXT NOT NULL DEFAULT 'Rivia', `profile` TEXT NOT NULL DEFAULT '', `channel` TEXT NOT NULL DEFAULT 'text', `fingerprint` TEXT NOT NULL DEFAULT '', `ruleEventsSummary` TEXT NOT NULL DEFAULT '', `h7TrimmedFrom` INTEGER, `h7TrimmedTo` INTEGER, PRIMARY KEY(`id`), FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thoughtSummary",
+            "columnName": "thoughtSummary",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "interactionId",
+            "columnName": "interactionId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "previousInteractionId",
+            "columnName": "previousInteractionId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serviceTier",
+            "columnName": "serviceTier",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokens",
+            "columnName": "inputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thoughtTokens",
+            "columnName": "thoughtTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ttftMs",
+            "columnName": "ttftMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalTimeMs",
+            "columnName": "totalTimeMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorMessage",
+            "columnName": "errorMessage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "voiceLabel",
+            "columnName": "voiceLabel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rawStepsJson",
+            "columnName": "rawStepsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatKind",
+            "columnName": "chatKind",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'Rivia'"
+          },
+          {
+            "fieldPath": "profile",
+            "columnName": "profile",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'text'"
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "ruleEventsSummary",
+            "columnName": "ruleEventsSummary",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "h7TrimmedFrom",
+            "columnName": "h7TrimmedFrom",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "h7TrimmedTo",
+            "columnName": "h7TrimmedTo",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_messages_chatId",
+            "unique": false,
+            "columnNames": [
+              "chatId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_chatId` ON `${TABLE_NAME}` (`chatId`)"
+          },
+          {
+            "name": "index_messages_createdAt",
+            "unique": false,
+            "columnNames": [
+              "createdAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_createdAt` ON `${TABLE_NAME}` (`createdAt`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chatId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "cached_models",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `displayName` TEXT NOT NULL, `inputTokenLimit` INTEGER NOT NULL, `outputTokenLimit` INTEGER NOT NULL, `maxTemperature` REAL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokenLimit",
+            "columnName": "inputTokenLimit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokenLimit",
+            "columnName": "outputTokenLimit",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxTemperature",
+            "columnName": "maxTemperature",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "request_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `requestId` TEXT NOT NULL, `model` TEXT NOT NULL, `status` TEXT NOT NULL, `serviceTier` TEXT NOT NULL, `inputTokens` INTEGER NOT NULL, `outputTokens` INTEGER NOT NULL, `thoughtTokens` INTEGER NOT NULL, `latencyMs` INTEGER NOT NULL, `error` TEXT, `chatKind` TEXT NOT NULL DEFAULT 'Lab', `profile` TEXT NOT NULL DEFAULT '', `channel` TEXT NOT NULL DEFAULT '', `fingerprint` TEXT NOT NULL DEFAULT '', `ruleEvents` TEXT NOT NULL DEFAULT '')",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serviceTier",
+            "columnName": "serviceTier",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokens",
+            "columnName": "inputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thoughtTokens",
+            "columnName": "thoughtTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latencyMs",
+            "columnName": "latencyMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "chatKind",
+            "columnName": "chatKind",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'Lab'"
+          },
+          {
+            "fieldPath": "profile",
+            "columnName": "profile",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "ruleEvents",
+            "columnName": "ruleEvents",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "default_settings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `runSettingsJson` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runSettingsJson",
+            "columnName": "runSettingsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "layer_drafts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`layerKey` TEXT NOT NULL, `jsonContent` TEXT NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`layerKey`))",
+        "fields": [
+          {
+            "fieldPath": "layerKey",
+            "columnName": "layerKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "jsonContent",
+            "columnName": "jsonContent",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "layerKey"
+          ]
+        }
+      },
+      {
+        "tableName": "layer_locks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`layerKey` TEXT NOT NULL, `pendingCanonicalSha256` TEXT, `lastSeenBundledSha256` TEXT, `mismatchWarning` TEXT, `exportedJson` TEXT, PRIMARY KEY(`layerKey`))",
+        "fields": [
+          {
+            "fieldPath": "layerKey",
+            "columnName": "layerKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pendingCanonicalSha256",
+            "columnName": "pendingCanonicalSha256",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastSeenBundledSha256",
+            "columnName": "lastSeenBundledSha256",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mismatchWarning",
+            "columnName": "mismatchWarning",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "exportedJson",
+            "columnName": "exportedJson",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "layerKey"
+          ]
+        }
+      },
+      {
+        "tableName": "layer_test_runs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `testId` TEXT NOT NULL, `profile` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `passed` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `layerVersionsJson` TEXT NOT NULL, `detailsJson` TEXT NOT NULL, `notes` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "testId",
+            "columnName": "testId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profile",
+            "columnName": "profile",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "passed",
+            "columnName": "passed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "layerVersionsJson",
+            "columnName": "layerVersionsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detailsJson",
+            "columnName": "detailsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "rule_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `timestamp` INTEGER NOT NULL, `requestId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `ruleId` TEXT NOT NULL, `eventType` TEXT NOT NULL, `detail` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ruleId",
+            "columnName": "ruleId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventType",
+            "columnName": "eventType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "layer_settings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `spokenMaxSentences` INTEGER, `h11WatchWordsJson` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spokenMaxSentences",
+            "columnName": "spokenMaxSentences",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "h11WatchWordsJson",
+            "columnName": "h11WatchWordsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "voice_emotion_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `requestId` TEXT NOT NULL, `mode` TEXT NOT NULL, `recognizerOk` INTEGER NOT NULL, `recognizerErrorCode` INTEGER, `recognizerPackage` TEXT NOT NULL, `clipLengthSec` REAL NOT NULL, `rms` REAL NOT NULL, `peak` REAL NOT NULL, `silentCapture` INTEGER NOT NULL, `arousal` REAL, `dominance` REAL, `valence` REAL, `inferenceMs` INTEGER, `captureStatus` TEXT NOT NULL, `wavFilePath` TEXT, `errorMessage` TEXT, `timestamp` INTEGER NOT NULL, `audioRecordStarted` INTEGER NOT NULL, `pipeBytesWritten` INTEGER NOT NULL, `partialResultsCount` INTEGER NOT NULL, `callbacksFired` TEXT NOT NULL, `usedPartialFallback` INTEGER NOT NULL, `vadSpeechDetected` INTEGER NOT NULL, `vadEndedTurn` INTEGER NOT NULL, `vadMaxProb` REAL NOT NULL, `transcriptPreview` TEXT NOT NULL, `finalText` TEXT NOT NULL, `pipeCloseToFinalMs` INTEGER, `lastPartialText` TEXT NOT NULL, `transcriptSource` TEXT NOT NULL, `audioSource` TEXT NOT NULL, `inputDevice` TEXT NOT NULL, `speechDurationSec` REAL NOT NULL, `wordCount` INTEGER NOT NULL, `speakingRateWps` REAL, `isShortSpeech` INTEGER NOT NULL, `scoredWindowsCount` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recognizerOk",
+            "columnName": "recognizerOk",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recognizerErrorCode",
+            "columnName": "recognizerErrorCode",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "recognizerPackage",
+            "columnName": "recognizerPackage",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clipLengthSec",
+            "columnName": "clipLengthSec",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rms",
+            "columnName": "rms",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peak",
+            "columnName": "peak",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "silentCapture",
+            "columnName": "silentCapture",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "arousal",
+            "columnName": "arousal",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "dominance",
+            "columnName": "dominance",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "valence",
+            "columnName": "valence",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "inferenceMs",
+            "columnName": "inferenceMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "captureStatus",
+            "columnName": "captureStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wavFilePath",
+            "columnName": "wavFilePath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "errorMessage",
+            "columnName": "errorMessage",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "audioRecordStarted",
+            "columnName": "audioRecordStarted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pipeBytesWritten",
+            "columnName": "pipeBytesWritten",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "partialResultsCount",
+            "columnName": "partialResultsCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "callbacksFired",
+            "columnName": "callbacksFired",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "usedPartialFallback",
+            "columnName": "usedPartialFallback",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "vadSpeechDetected",
+            "columnName": "vadSpeechDetected",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "vadEndedTurn",
+            "columnName": "vadEndedTurn",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "vadMaxProb",
+            "columnName": "vadMaxProb",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transcriptPreview",
+            "columnName": "transcriptPreview",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finalText",
+            "columnName": "finalText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pipeCloseToFinalMs",
+            "columnName": "pipeCloseToFinalMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastPartialText",
+            "columnName": "lastPartialText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transcriptSource",
+            "columnName": "transcriptSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "audioSource",
+            "columnName": "audioSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputDevice",
+            "columnName": "inputDevice",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speechDurationSec",
+            "columnName": "speechDurationSec",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "wordCount",
+            "columnName": "wordCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "speakingRateWps",
+            "columnName": "speakingRateWps",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "isShortSpeech",
+            "columnName": "isShortSpeech",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scoredWindowsCount",
+            "columnName": "scoredWindowsCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_voice_emotion_logs_requestId",
+            "unique": false,
+            "columnNames": [
+              "requestId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_voice_emotion_logs_requestId` ON `${TABLE_NAME}` (`requestId`)"
+          },
+          {
+            "name": "index_voice_emotion_logs_timestamp",
+            "unique": false,
+            "columnNames": [
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_voice_emotion_logs_timestamp` ON `${TABLE_NAME}` (`timestamp`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '0934e404350af47b76ca747eb1e51ef6')"
+    ]
+  }
+}

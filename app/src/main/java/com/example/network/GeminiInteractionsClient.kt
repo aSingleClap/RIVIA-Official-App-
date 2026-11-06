@@ -46,6 +46,18 @@ sealed class GeminiStreamEvent {
     val outputTokens: Int,
     val thoughtTokens: Int,
     val rawSteps: JSONArray,
+    val completionStatus: String = "completed",
+    val finishReason: String? = null,
+    val safetyBlockReason: String? = null,
+  ) : GeminiStreamEvent()
+
+  data class RequestDispatched(
+    val requestSentEpochMs: Long,
+    val systemInstructionChars: Int,
+  ) : GeminiStreamEvent()
+
+  data class FirstByteReceived(
+    val firstByteEpochMs: Long,
   ) : GeminiStreamEvent()
 
   data class Error(val message: String, val httpCode: Int? = null) : GeminiStreamEvent()
@@ -423,6 +435,117 @@ class GeminiInteractionsClient {
   }
 
   /**
+   * Builds the exact JSON body for a Rivia chat turn from the active layers (Persona, Style, Engine, Hard rules).
+   * Rivia chats take model settings only from engine.json:
+   * - null max_output_tokens and "model_default" safety are left out of the request.
+   * - standard service_tier is left out of the request; priority is sent.
+   * - no tools, no response_format, no extraJson, no sampling parameters.
+   */
+  fun buildRiviaRequestBodyJson(
+    engine: com.example.model.EngineLayerConfig,
+    profileName: String,
+    assembledSystemInstruction: String,
+    inputSteps: JSONArray,
+    previousInteractionId: String?,
+    stream: Boolean = true,
+  ): JSONObject {
+    val normProfile = com.example.model.LayerConfigManager.normalizeProfileKey(profileName)
+    val prof =
+      engine.profiles[normProfile]
+        ?: engine.profiles[engine.default_profile]
+        ?: com.example.model.EngineProfileConfig("gemini-3.8-flash", "low")
+    val chosenModel = prof.model.removePrefix("models/")
+
+    val body = JSONObject()
+    body.put("model", chosenModel)
+    body.put("input", inputSteps)
+
+    if (assembledSystemInstruction.isNotBlank()) {
+      body.put("system_instruction", assembledSystemInstruction)
+    }
+
+    val genConfig = JSONObject()
+    val allowedThinking = RunSettings.allowedThinkingLevels(chosenModel)
+    val rawThinking = prof.thinking_level
+    val effectiveThinking =
+      if (
+        rawThinking == "minimal" &&
+          !allowedThinking.contains("minimal") &&
+          allowedThinking.contains("low")
+      ) {
+        "low"
+      } else {
+        rawThinking
+      }
+    if (effectiveThinking != "model_default" && allowedThinking.contains(effectiveThinking)) {
+      genConfig.put("thinking_level", effectiveThinking)
+    }
+    genConfig.put("thinking_summaries", engine.thought_summaries)
+
+    if (engine.max_output_tokens != null && engine.max_output_tokens > 0) {
+      genConfig.put("max_output_tokens", engine.max_output_tokens)
+    }
+    body.put("generation_config", genConfig)
+
+    // Safety: "model_default" is left out of the request
+    val safetyEl = engine.safety
+    if (safetyEl is kotlinx.serialization.json.JsonArray && safetyEl.isNotEmpty()) {
+      try {
+        body.put("safety_settings", JSONArray(safetyEl.toString()))
+      } catch (_: Exception) {}
+    }
+
+    // service_tier: standard is left out; priority is included
+    val tier = engine.service_tier.lowercase()
+    if (tier == "priority" || tier == "flex") {
+      body.put("service_tier", tier)
+    }
+
+    body.put("store", engine.store)
+    if (engine.store && !previousInteractionId.isNullOrBlank()) {
+      body.put("previous_interaction_id", previousInteractionId)
+    }
+    body.put("stream", stream)
+    return body
+  }
+
+  /**
+   * Builds a redacted JSON preview for "Preview request" in Rivia Chat info (Text or Voice channel).
+   */
+  fun buildRiviaRedactedPreview(
+    engine: com.example.model.EngineLayerConfig,
+    profileName: String,
+    assembledSystemInstruction: String,
+    previousInteractionId: String?,
+    geminiKey: String,
+    elevenKey: String,
+  ): String {
+    val sampleInput = buildSingleTurnInput("<your next message>")
+    val bodyObj =
+      buildRiviaRequestBodyJson(
+        engine = engine,
+        profileName = profileName,
+        assembledSystemInstruction = assembledSystemInstruction,
+        inputSteps = sampleInput,
+        previousInteractionId = previousInteractionId,
+        stream = true,
+      )
+    val wrapper =
+      JSONObject().apply {
+        put("endpoint", "POST $BASE_URL/interactions?alt=sse")
+        put(
+          "headers",
+          JSONObject().apply {
+            put("x-goog-api-key", "[REDACTED]")
+            put("Content-Type", "application/json")
+          },
+        )
+        put("body", bodyObj)
+      }
+    return SecureKeyRepository.redactText(wrapper.toString(2), geminiKey, elevenKey)
+  }
+
+  /**
    * Streams or polls an interaction turn over REST, applying all retry, reconnect,
    * raw step rebuild, and background polling rules.
    * Fix #3 & #11: Live always streams (ignores background), and polling fallback / all network steps
@@ -435,6 +558,11 @@ class GeminiInteractionsClient {
     priorMessages: List<MessageEntity>,
     newUserText: String,
     previousInteractionId: String?,
+    customBodyBuilder:
+      ((inputSteps: JSONArray, prevInteractionId: String?, stream: Boolean) -> JSONObject)? =
+      null,
+    customStore: Boolean? = null,
+    customServiceTier: String? = null,
     onEvent: suspend (GeminiStreamEvent) -> Unit,
   ) =
     withContext(Dispatchers.IO) {
@@ -447,11 +575,18 @@ class GeminiInteractionsClient {
         return@withContext
       }
 
+      val effectiveStore = customStore ?: settings.store
+      val effectiveTier = customServiceTier ?: settings.serviceTier
+
       // Fix #11: Live always streams: ignore the background setting for Live turns.
+      // Rivia chats also always stream (customBodyBuilder != null -> useBackground = false).
       val useBackground =
-        channel != RiviaChannel.LIVE_VOICE && settings.store && settings.background
+        customBodyBuilder == null &&
+          channel != RiviaChannel.LIVE_VOICE &&
+          effectiveStore &&
+          settings.background
       var usePreviousInteractionId =
-        if (settings.store && !previousInteractionId.isNullOrBlank()) {
+        if (effectiveStore && !previousInteractionId.isNullOrBlank()) {
           previousInteractionId
         } else {
           null
@@ -459,15 +594,18 @@ class GeminiInteractionsClient {
 
       var interactionId: String? = null
       var lastEventId: String? = null
-      var serviceTierHeader: String = settings.serviceTier
+      var serviceTierHeader: String = effectiveTier
       var inputTokens = 0
       var outputTokens = 0
       var thoughtTokens = 0
+      var completionStatus = "completed"
+      var finishReason: String? = null
+      var safetyBlockReason: String? = null
       val rawSteps = JSONArray()
       var currentStepObj: JSONObject? = null
       var streamCompleted = false
 
-      val client = clientForTier(settings.serviceTier)
+      val client = clientForTier(effectiveTier)
 
       try {
         // 1. Background polling flow when background == true (and not Live)
@@ -479,13 +617,14 @@ class GeminiInteractionsClient {
               buildFullConversationSteps(priorMessages, newUserText)
             }
           val bodyJson =
-            buildRequestBodyJson(
-              settings = settings,
-              channel = channel,
-              inputSteps = inputSteps,
-              previousInteractionId = usePreviousInteractionId,
-              stream = false,
-            )
+            customBodyBuilder?.invoke(inputSteps, usePreviousInteractionId, false)
+              ?: buildRequestBodyJson(
+                settings = settings,
+                channel = channel,
+                inputSteps = inputSteps,
+                previousInteractionId = usePreviousInteractionId,
+                stream = false,
+              )
           val postUrl = "$BASE_URL/interactions"
           val req =
             Request.Builder()
@@ -495,10 +634,18 @@ class GeminiInteractionsClient {
               .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
               .build()
 
+          val sysChars = bodyJson.optString("system_instruction", "").length
           val call = client.newCall(req)
           activeCall = call
           try {
+            onEvent(
+              GeminiStreamEvent.RequestDispatched(
+                requestSentEpochMs = System.currentTimeMillis(),
+                systemInstructionChars = sysChars,
+              )
+            )
             call.execute().use { resp ->
+              onEvent(GeminiStreamEvent.FirstByteReceived(System.currentTimeMillis()))
               val respBody = resp.body?.string().orEmpty()
               val tierHdr = resp.header("x-gemini-service-tier")
               if (!tierHdr.isNullOrBlank()) serviceTierHeader = tierHdr
@@ -558,13 +705,14 @@ class GeminiInteractionsClient {
               buildFullConversationSteps(priorMessages, newUserText)
             }
           val bodyJson =
-            buildRequestBodyJson(
-              settings = settings,
-              channel = channel,
-              inputSteps = inputSteps,
-              previousInteractionId = usePreviousInteractionId,
-              stream = true,
-            )
+            customBodyBuilder?.invoke(inputSteps, usePreviousInteractionId, true)
+              ?: buildRequestBodyJson(
+                settings = settings,
+                channel = channel,
+                inputSteps = inputSteps,
+                previousInteractionId = usePreviousInteractionId,
+                stream = true,
+              )
 
           val request =
             Request.Builder()
@@ -575,10 +723,17 @@ class GeminiInteractionsClient {
               .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
               .build()
 
+          val sysChars = bodyJson.optString("system_instruction", "").length
           val call = client.newCall(request)
           activeCall = call
 
           try {
+            onEvent(
+              GeminiStreamEvent.RequestDispatched(
+                requestSentEpochMs = System.currentTimeMillis(),
+                systemInstructionChars = sysChars,
+              )
+            )
             call.execute().use { response ->
               val tierHdr = response.header("x-gemini-service-tier")
               if (!tierHdr.isNullOrBlank()) {
@@ -622,6 +777,9 @@ class GeminiInteractionsClient {
                 )
               processSseStream(
                 reader = reader,
+                onFirstByte = { firstByteEpochMs ->
+                  onEvent(GeminiStreamEvent.FirstByteReceived(firstByteEpochMs))
+                },
                 onInteractionCreated = { id ->
                   interactionId = id
                   postSucceededOrCreated = true
@@ -648,13 +806,19 @@ class GeminiInteractionsClient {
                   onEvent(GeminiStreamEvent.StepCompleted(finalized))
                 },
                 onStatusUpdate = { status ->
+                  if (status.equals("incomplete", ignoreCase = true)) {
+                    completionStatus = "incomplete"
+                  }
                   onEvent(GeminiStreamEvent.StatusUpdate(status))
                 },
-                onCompleted = { id, inTok, outTok, thTok, outputsArr ->
+                onCompleted = { id, inTok, outTok, thTok, outputsArr, cStatus, fReason, sReason ->
                   if (!id.isNullOrBlank()) interactionId = id
                   inputTokens = inTok
                   outputTokens = outTok
                   thoughtTokens = thTok
+                  if (cStatus.isNotBlank()) completionStatus = cStatus
+                  if (!fReason.isNullOrBlank()) finishReason = fReason
+                  if (!sReason.isNullOrBlank()) safetyBlockReason = sReason
                   if (outputsArr != null && outputsArr.length() > 0) {
                     if (rawSteps.length() == 0) {
                       for (i in 0 until outputsArr.length()) {
@@ -766,12 +930,18 @@ class GeminiInteractionsClient {
                     onEvent(GeminiStreamEvent.StepCompleted(finalized))
                   },
                   onStatusUpdate = { status ->
+                    if (status.equals("incomplete", ignoreCase = true)) {
+                      completionStatus = "incomplete"
+                    }
                     onEvent(GeminiStreamEvent.StatusUpdate(status))
                   },
-                  onCompleted = { _, inTok, outTok, thTok, _ ->
+                  onCompleted = { _, inTok, outTok, thTok, _, cStatus, fReason, sReason ->
                     inputTokens = inTok
                     outputTokens = outTok
                     thoughtTokens = thTok
+                    if (cStatus.isNotBlank()) completionStatus = cStatus
+                    if (!fReason.isNullOrBlank()) finishReason = fReason
+                    if (!sReason.isNullOrBlank()) safetyBlockReason = sReason
                     streamCompleted = true
                   },
                   onStreamError = { errMsg ->
@@ -822,6 +992,9 @@ class GeminiInteractionsClient {
               outputTokens = outputTokens,
               thoughtTokens = thoughtTokens,
               rawSteps = rawSteps,
+              completionStatus = completionStatus,
+              finishReason = finishReason,
+              safetyBlockReason = safetyBlockReason,
             )
           )
         } else if (interactionId == null) {
@@ -902,6 +1075,8 @@ class GeminiInteractionsClient {
                 val inTok = usage?.optInt("total_input_tokens", 0) ?: 0
                 val outTok = usage?.optInt("total_output_tokens", 0) ?: 0
                 val thTok = usage?.optInt("total_thought_tokens", 0) ?: 0
+                val fReason = extractFinishReason(json, outputs)
+                val sReason = extractSafetyBlockReason(json, outputs)
                 onEvent(
                   GeminiStreamEvent.Completed(
                     interactionId = interactionId,
@@ -910,6 +1085,9 @@ class GeminiInteractionsClient {
                     outputTokens = outTok,
                     thoughtTokens = thTok,
                     rawSteps = outputs,
+                    completionStatus = status,
+                    finishReason = fReason,
+                    safetyBlockReason = sReason,
                   )
                 )
                 return
@@ -977,6 +1155,7 @@ class GeminiInteractionsClient {
 
   private suspend fun processSseStream(
     reader: BufferedReader,
+    onFirstByte: (suspend (Long) -> Unit)? = null,
     onInteractionCreated: suspend (String) -> Unit,
     onEventId: (String) -> Unit,
     onStepStart: (JSONObject) -> Unit,
@@ -985,11 +1164,12 @@ class GeminiInteractionsClient {
     onThoughtSignature: (String) -> Unit,
     onStepStop: suspend (JSONObject) -> Unit,
     onStatusUpdate: suspend (String) -> Unit,
-    onCompleted: suspend (String?, Int, Int, Int, JSONArray?) -> Unit,
+    onCompleted: suspend (String?, Int, Int, Int, JSONArray?, String, String?, String?) -> Unit,
     onStreamError: suspend (String) -> Unit,
   ) {
     var currentEventName: String? = null
     val dataBuffer = StringBuilder()
+    var firstByteEmitted = false
 
     suspend fun dispatchBufferedEvent(eventName: String?, rawData: String) {
       val trimmedData = rawData.trim()
@@ -1121,7 +1301,16 @@ class GeminiInteractionsClient {
           val thTok = usage?.optInt("total_thought_tokens", 0) ?: 0
           val outputs =
             interactionObj.optJSONArray("outputs") ?: json.optJSONArray("outputs")
-          onCompleted(id, inTok, outTok, thTok, outputs)
+          val cStatus =
+            interactionObj
+              .optString("status")
+              .ifBlank { json.optString("status", "completed") }
+              .lowercase()
+          val fReason = extractFinishReason(interactionObj, outputs) ?: extractFinishReason(json, outputs)
+          val sReason =
+            extractSafetyBlockReason(interactionObj, outputs)
+              ?: extractSafetyBlockReason(json, outputs)
+          onCompleted(id, inTok, outTok, thTok, outputs, cStatus, fReason, sReason)
         }
         "error",
         "interaction.failed" -> {
@@ -1139,6 +1328,10 @@ class GeminiInteractionsClient {
     var line: String?
     while (reader.readLine().also { line = it } != null) {
       currentCoroutineContext().ensureActive()
+      if (!firstByteEmitted) {
+        firstByteEmitted = true
+        onFirstByte?.invoke(System.currentTimeMillis())
+      }
       val l = line!!
       when {
         l.isEmpty() -> {
@@ -1259,6 +1452,67 @@ class GeminiInteractionsClient {
     }
     json.optString("interaction_id").takeIf { it.isNotBlank() }?.let { return it }
     json.optString("id").takeIf { it.isNotBlank() }?.let { return it }
+    return null
+  }
+
+  private fun extractFinishReason(json: JSONObject, outputs: JSONArray?): String? {
+    json.optString("finish_reason").takeIf { it.isNotBlank() }?.let { return it }
+    json.optString("finishReason").takeIf { it.isNotBlank() }?.let { return it }
+    json.optString("incomplete_reason").takeIf { it.isNotBlank() }?.let { return it }
+    json.optString("incompleteReason").takeIf { it.isNotBlank() }?.let { return it }
+    json.optString("status_reason").takeIf { it.isNotBlank() }?.let { return it }
+    json.optJSONObject("incomplete_details")?.optString("reason")?.takeIf { it.isNotBlank() }?.let {
+      return it
+    }
+    if (outputs != null) {
+      for (i in 0 until outputs.length()) {
+        val step = outputs.optJSONObject(i) ?: continue
+        step.optString("finish_reason").takeIf { it.isNotBlank() }?.let { return it }
+        step.optString("finishReason").takeIf { it.isNotBlank() }?.let { return it }
+        step.optString("incomplete_reason").takeIf { it.isNotBlank() }?.let { return it }
+      }
+    }
+    return null
+  }
+
+  private fun extractSafetyBlockReason(json: JSONObject, outputs: JSONArray?): String? {
+    fun findSafetyCategoryInRatings(arr: JSONArray?): String? {
+      if (arr == null) return null
+      var highCategory: String? = null
+      for (i in 0 until arr.length()) {
+        val item = arr.optJSONObject(i) ?: continue
+        val cat =
+          item.optString("category").ifBlank { item.optString("type") }.trim()
+        val blocked = item.optBoolean("blocked", false)
+        if (blocked && cat.isNotEmpty()) return cat
+        val prob = item.optString("probability").uppercase()
+        val sev = item.optString("severity").uppercase()
+        if (
+          cat.isNotEmpty() &&
+            (prob == "HIGH" || prob == "MEDIUM" || sev.contains("HIGH") || sev.contains("MEDIUM"))
+        ) {
+          if (highCategory == null) highCategory = cat
+        }
+      }
+      return highCategory
+    }
+
+    findSafetyCategoryInRatings(json.optJSONArray("safety_ratings"))?.let { return it }
+    findSafetyCategoryInRatings(json.optJSONArray("safetyRatings"))?.let { return it }
+    if (outputs != null) {
+      for (i in 0 until outputs.length()) {
+        val step = outputs.optJSONObject(i) ?: continue
+        findSafetyCategoryInRatings(step.optJSONArray("safety_ratings"))?.let { return it }
+        findSafetyCategoryInRatings(step.optJSONArray("safetyRatings"))?.let { return it }
+      }
+    }
+    json.optString("safety_category").takeIf { it.isNotBlank() }?.let { return it }
+    json.optString("block_reason").takeIf { it.isNotBlank() }?.let { return it }
+    json.optString("blockReason").takeIf { it.isNotBlank() }?.let { return it }
+    val fReason = extractFinishReason(json, outputs)
+    if (fReason != null && fReason.contains("safety", ignoreCase = true)) {
+      return fReason
+    }
     return null
   }
 

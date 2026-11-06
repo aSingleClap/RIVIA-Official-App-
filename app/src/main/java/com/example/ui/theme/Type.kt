@@ -2,71 +2,27 @@ package com.example.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.DeviceFontFamilyName
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.googlefonts.Font as GoogleFontImpl
-import androidx.compose.ui.text.googlefonts.GoogleFont
 import androidx.compose.ui.unit.sp
 import com.example.R
 
-val GoogleFontProvider =
-  GoogleFont.Provider(
-    providerAuthority = "com.google.android.gms.fonts",
-    providerPackage = "com.google.android.gms",
-    certificates = R.array.com_google_android_gms_fonts_certs,
-  )
-
-private val ChivoGoogleFont = GoogleFont("Chivo")
-private val ChivoMonoGoogleFont = GoogleFont("Chivo Mono")
-
-// Chivo for text with system sans-serif fallback
+// Bundled local Chivo font family
 val ChivoFontFamily =
   FontFamily(
-    GoogleFontImpl(
-      googleFont = ChivoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.Normal,
-    ),
-    GoogleFontImpl(
-      googleFont = ChivoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.Medium,
-    ),
-    GoogleFontImpl(
-      googleFont = ChivoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.SemiBold,
-    ),
-    GoogleFontImpl(
-      googleFont = ChivoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.Bold,
-    ),
-    Font(familyName = DeviceFontFamilyName("sans-serif"), weight = FontWeight.Normal),
-    Font(familyName = DeviceFontFamilyName("sans-serif-medium"), weight = FontWeight.Medium),
+    Font(R.font.chivo, FontWeight.Normal),
+    Font(R.font.chivo, FontWeight.Medium),
+    Font(R.font.chivo, FontWeight.SemiBold),
+    Font(R.font.chivo, FontWeight.Bold),
   )
 
-// Chivo Mono for times, IDs and numbers with system monospace fallback
+// Bundled local Chivo Mono font family for times, IDs, and numbers
 val ChivoMonoFontFamily =
   FontFamily(
-    GoogleFontImpl(
-      googleFont = ChivoMonoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.Normal,
-    ),
-    GoogleFontImpl(
-      googleFont = ChivoMonoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.Medium,
-    ),
-    GoogleFontImpl(
-      googleFont = ChivoMonoGoogleFont,
-      fontProvider = GoogleFontProvider,
-      weight = FontWeight.Bold,
-    ),
-    Font(familyName = DeviceFontFamilyName("monospace"), weight = FontWeight.Normal),
+    Font(R.font.chivo_mono, FontWeight.Normal),
+    Font(R.font.chivo_mono, FontWeight.Medium),
+    Font(R.font.chivo_mono, FontWeight.Bold),
   )
 
 val Typography =

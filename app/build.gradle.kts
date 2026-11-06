@@ -1,6 +1,7 @@
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
+  alias(libs.plugins.kotlin.serialization)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
 }
@@ -13,8 +14,8 @@ android {
     applicationId = "observer.rivia.app"
     minSdk = 31
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 25
+    versionName = "25.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -22,6 +23,16 @@ android {
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
   // and updating Android apps in AI Studio.
   signingConfigs {
+    create("rivia") {
+      val riviaKeystorePath = System.getenv("RIVIA_KEYSTORE_PATH")
+      if (!riviaKeystorePath.isNullOrBlank()) {
+        storeFile = file(riviaKeystorePath)
+      }
+      storePassword = System.getenv("RIVIA_KEYSTORE_PASSWORD")
+      keyAlias = System.getenv("RIVIA_KEY_ALIAS")
+      keyPassword = System.getenv("RIVIA_KEYSTORE_PASSWORD")
+      storeType = "PKCS12"
+    }
     create("release") {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
@@ -45,11 +56,17 @@ android {
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("release")
+      if (!System.getenv("RIVIA_KEYSTORE_PATH").isNullOrBlank()) {
+        signingConfig = signingConfigs.getByName("rivia")
+      }
     }
     debug {
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
+      if (!System.getenv("RIVIA_KEYSTORE_PATH").isNullOrBlank()) {
+        signingConfig = signingConfigs.getByName("rivia")
+      }
     }
   }
   compileOptions {
@@ -60,7 +77,18 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        it.systemProperty(
+          "robolectric.dependency.repo.url",
+          "https://maven-central.storage-download.googleapis.com/maven2/",
+        )
+        it.systemProperty("robolectric.dependency.repo.id", "google-maven-central")
+      }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -98,7 +126,9 @@ dependencies {
   implementation(libs.androidx.media3.common)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.kotlinx.serialization.json)
   implementation(libs.okhttp)
+  implementation(libs.onnxruntime.android)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)

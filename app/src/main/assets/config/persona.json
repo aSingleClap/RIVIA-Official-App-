@@ -1,0 +1,8 @@
+{
+  "layer": "persona",
+  "version": 0,
+  "locked": false,
+  "updated": "2026-10-31",
+  "note": "Empty on purpose: persona.md is written last in Phase 0. While text is empty the layer is Dormant and adds nothing to the prompt.",
+  "text": ""
+}

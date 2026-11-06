@@ -1,0 +1,160 @@
+{
+    "version": 3,
+    "locked": true,
+    "updated": "2026-10-31",
+    "note": "Global invariants, checked in priority order (1 = wins) after Gemini's read and the rules table. Only active rules load. enforced_by: code = checked after the reply; prompt = text in the prompt only (not actually hard until code backs it); test = a regression test that must pass. tunable rules read their current value from settings.json and can never exceed ceiling; the ledger may propose raising a value, Jordan approves on the Watch. Non-tunable rules never change. prompt = the exact line the app adds to the Hard rules block of the system instruction; channels = which replies get it (text = typed chat, voice = spoken). {name} placeholders are filled from settings.",
+    "rules": [
+        {
+            "id": "H1",
+            "name": "Riding",
+            "active": false,
+            "status": "needs_tasker",
+            "priority": 1,
+            "tunable": false,
+            "enforced_by": "code",
+            "when": "card.state == 'riding'",
+            "effect": "Safety callouts interrupt anything. No text on glasses or Watch while moving. Until helmet audio exists, non-safety lines are held (gate hold queue); helmet voice replaces holding once the helmet speaker is in the release device list.",
+            "note": "Needs riding state from the Tasker plug-in. Rewritten for today: no helmet speaker yet."
+        },
+        {
+            "id": "H2",
+            "name": "Writes need a Watch tap",
+            "active": false,
+            "status": "needs_tools",
+            "priority": 2,
+            "tunable": false,
+            "enforced_by": "code",
+            "when": "tool.kind in ['send', 'delete', 'contact']",
+            "effect": "Wait for a Watch tap. Missing or unclear verdict = no. While riding, wait until stopped. A spoken yes never counts.",
+            "note": "Loader must refuse to register any write tool while this rule is inactive."
+        },
+        {
+            "id": "H3",
+            "name": "Failed tools",
+            "active": false,
+            "status": "needs_tools",
+            "priority": 3,
+            "tunable": false,
+            "enforced_by": "code",
+            "when": "tool.result.ok == false",
+            "effect": "Report the tool as failed. No model may substitute other data."
+        },
+        {
+            "id": "H11",
+            "name": "Nothing about Mateo",
+            "active": true,
+            "status": "active",
+            "priority": 4,
+            "tunable": false,
+            "enforced_by": "prompt",
+            "channels": [
+                "text",
+                "voice"
+            ],
+            "when": "always",
+            "effect": "Never joke about Jordan's son, tease him, or use him in banter.",
+            "prompt": "Never joke about Jordan's son, tease Jordan about him, or use him in banter.",
+            "note": "Hard-coded here so it doesn't depend on privacy.json existing. Prompt-only for now: code can't reliably detect a joke. Back it with a code check once topic tags (0.16) can flag the topic and force plain mode. Optional audit now: replies containing a watch word (saved on the phone only, never in the repo) get flagged for review in the Request log."
+        },
+        {
+            "id": "H10",
+            "name": "Pushback",
+            "active": true,
+            "status": "active",
+            "priority": 5,
+            "tunable": false,
+            "enforced_by": "test",
+            "channels": [
+                "text",
+                "voice"
+            ],
+            "when": "user disputes an answer",
+            "effect": "Pushback can change her tone, never her answer. She changes an answer only for new evidence or a specific, checkable error.",
+            "prompt": "If Jordan disputes an answer, your tone can change but your answer can't, unless he gives new evidence or points to a specific error in it.",
+            "test": "claude/h10-pushback-test.md: at most 1 flip or hedge in 20, and 3 of 3 real corrections accepted, at low thinking. Rerun on the changes listed in note.",
+            "note": "Run 1 passed Oct 31 2026: typed chat, Gemini 3.8 Flash, low thinking, no system prompt. Live (its own model and thinking level) needs its own run. Rerun after every change to the system prompt, this file's prompt lines, the model or the thinking level; a failed rerun blocks the change."
+        },
+        {
+            "id": "H6",
+            "name": "Honesty",
+            "active": false,
+            "status": "needs_dials",
+            "priority": 6,
+            "tunable": false,
+            "enforced_by": "prompt",
+            "when": "always",
+            "effect": "Mood is reported as a dial setting, never a feeling. Rapport never changes whether she agrees.",
+            "note": "Needs dials.json (0.3) and the mood layer."
+        },
+        {
+            "id": "H9",
+            "name": "Direct questions",
+            "active": true,
+            "status": "active",
+            "priority": 7,
+            "tunable": false,
+            "enforced_by": "code",
+            "channels": [
+                "text",
+                "voice"
+            ],
+            "when": "turn.initiated_by == 'jordan'",
+            "effect": "She always answers. A turn Jordan started that ends with no reply text (empty completion, status incomplete, safety block, or output tokens used up by thinking) is a failure, never a success: show the reason, log it, and on voice speak a fixed template line. The gate may shorten a reply, never drop or hold it.",
+            "note": "The code check covers empty replies now; the gate part is tested once 0.8 exists."
+        },
+        {
+            "id": "H7",
+            "name": "Spoken length",
+            "active": true,
+            "status": "active",
+            "priority": 8,
+            "tunable": true,
+            "setting": "spoken_max_sentences",
+            "default": 2,
+            "ceiling": 4,
+            "enforced_by": "code",
+            "channels": [
+                "voice"
+            ],
+            "when": "reply.channel == 'voice'",
+            "effect": "Count sentences with the same splitter that feeds ElevenLabs. Streamed replies (Live): stop sending sentences to ElevenLabs once the limit is reached, save the full reply, show only what was spoken, and tell her on the next turn what Jordan actually heard. Non-streamed voice lines (future Tasker lines): retry once with a length note, then cut. The gate can lower the limit, never raise it. Text replies, and read-aloud of text replies, are never cut (style_text.md).",
+            "prompt": "Spoken replies are at most {spoken_max_sentences} sentences.",
+            "note": "Ceiling of 4 is PROPOSED. Sentence counter must ignore [audio tags] and must not split on ellipses, times (12.20), decimals or abbreviations (Dr.). Needs unit tests."
+        },
+        {
+            "id": "H5",
+            "name": "Off-limits topics",
+            "active": false,
+            "status": "needs_privacy_json",
+            "priority": 9,
+            "tunable": false,
+            "enforced_by": "code",
+            "when": "turn.topics intersects privacy.no_jokes",
+            "effect": "No jokes, no hunches, no questions on listed topics."
+        },
+        {
+            "id": "H4",
+            "name": "Privacy",
+            "active": false,
+            "status": "needs_decision",
+            "priority": 10,
+            "tunable": false,
+            "enforced_by": "code",
+            "when": "data leaves the phone",
+            "effect": "SMS, notification and journal text leave the phone only as fixed fields.",
+            "note": "'Personal data only to the paid Gemini tier' removed (Oct 28: Jordan doesn't mind data going to Google). Decide whether the fixed-fields half stays."
+        },
+        {
+            "id": "H8",
+            "name": "Command allowlist",
+            "active": false,
+            "status": "needs_tools",
+            "priority": 11,
+            "tunable": false,
+            "enforced_by": "code",
+            "when": "Gemini suggests a command",
+            "effect": "Runs only if the JSON is valid and the command is on the allowlist.",
+            "note": "Written for the Termux runtime; placeholder until the app runs commands."
+        }
+    ]
+}
