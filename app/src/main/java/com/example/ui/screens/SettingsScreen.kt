@@ -57,6 +57,8 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -102,11 +104,19 @@ import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
+import com.example.ui.theme.RiviaIconActive
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaMutedText
+import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface2
+import com.example.ui.theme.RiviaSurface3
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextSecondary
+import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
 import java.io.File
@@ -200,13 +210,13 @@ fun SettingsScreen(
           )
           Surface(
             shape = RoundedCornerShape(50),
-            color = RiviaMint.copy(alpha = 0.14f),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.55f)),
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
             modifier = Modifier.testTag("settings_mode_badge"),
           ) {
             Text(
               text = modeBadgeLabel,
-              color = RiviaMint,
+              color = RiviaTextSecondary,
               fontFamily = ChivoMonoFontFamily,
               fontSize = 10.sp,
               fontWeight = FontWeight.Bold,
@@ -226,9 +236,19 @@ fun SettingsScreen(
     ScrollableTabRow(
       selectedTabIndex = safeSelectedTab,
       containerColor = RiviaBackground,
-      contentColor = RiviaMint,
+      contentColor = RiviaTextPrimary,
       edgePadding = 12.dp,
-      divider = { HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f)) },
+      indicator = { tabPositions ->
+        if (safeSelectedTab < tabPositions.size) {
+          TabRowDefaults.SecondaryIndicator(
+            modifier =
+              Modifier.tabIndicatorOffset(tabPositions[safeSelectedTab])
+                .testTag("settings_selected_tab_indicator"),
+            color = RiviaMint,
+          )
+        }
+      },
+      divider = { HorizontalDivider(color = RiviaBorder) },
     ) {
       tabs.forEachIndexed { idx, title ->
         Tab(
@@ -243,7 +263,7 @@ fun SettingsScreen(
           text = {
             Text(
               text = title,
-              color = if (safeSelectedTab == idx) RiviaMint else RiviaMutedText,
+              color = if (safeSelectedTab == idx) RiviaTextPrimary else RiviaTextSecondary,
               fontWeight = if (safeSelectedTab == idx) FontWeight.SemiBold else FontWeight.Normal,
             )
           },
@@ -408,7 +428,12 @@ private fun RiviaBackupTab(
           OutlinedButton(
             onClick = { exportLauncher.launch("rivia_chats_export.json") },
             shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier =
               Modifier.weight(1f)
                 .minimumInteractiveComponentSize()
@@ -417,17 +442,22 @@ private fun RiviaBackupTab(
             Icon(
               imageVector = Icons.Outlined.Download,
               contentDescription = "Export chats to JSON",
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Export JSON", color = RiviaMint)
+            Text("Export JSON", color = RiviaTextPrimary)
           }
 
           OutlinedButton(
             onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier =
               Modifier.weight(1f)
                 .minimumInteractiveComponentSize()
@@ -436,11 +466,11 @@ private fun RiviaBackupTab(
             Icon(
               imageVector = Icons.Outlined.Upload,
               contentDescription = "Import chats from JSON",
-              tint = RiviaText,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Import JSON", color = RiviaText)
+            Text("Import JSON", color = RiviaTextPrimary)
           }
         }
       }
@@ -613,22 +643,24 @@ private fun KeysAndBackupTab(
             )
           }
 
-          Button(
+          OutlinedButton(
             onClick = {
               focusManager.clearFocus()
               viewModel.refreshGeminiModels(geminiDraft)
             },
             enabled = !isLoadingModels,
             shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
             colors =
-              ButtonDefaults.buttonColors(
-                containerColor = RiviaMint,
-                contentColor = RiviaBackground,
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
               ),
             modifier = Modifier.minimumInteractiveComponentSize().testTag("test_gemini_key_button"),
           ) {
             Text(
               if (isLoadingModels) "Testing..." else "Test (List Models)",
+              color = RiviaTextPrimary,
               fontWeight = FontWeight.SemiBold,
             )
           }
@@ -713,17 +745,18 @@ private fun KeysAndBackupTab(
             )
           }
 
-          Button(
+          OutlinedButton(
             onClick = {
               focusManager.clearFocus()
               viewModel.refreshElevenLabsVoicesAndModels(elevenDraft)
             },
             enabled = !isLoadingVoices,
             shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
             colors =
-              ButtonDefaults.buttonColors(
-                containerColor = RiviaMint,
-                contentColor = RiviaBackground,
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
               ),
             modifier =
               Modifier.minimumInteractiveComponentSize()
@@ -731,6 +764,7 @@ private fun KeysAndBackupTab(
           ) {
             Text(
               if (isLoadingVoices) "Testing..." else "Test (List Voices)",
+              color = RiviaTextPrimary,
               fontWeight = FontWeight.SemiBold,
             )
           }
@@ -757,7 +791,12 @@ private fun KeysAndBackupTab(
           OutlinedButton(
             onClick = { exportLauncher.launch("rivia_chats_export.json") },
             shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier =
               Modifier.weight(1f)
                 .minimumInteractiveComponentSize()
@@ -766,17 +805,22 @@ private fun KeysAndBackupTab(
             Icon(
               imageVector = Icons.Outlined.Download,
               contentDescription = "Export chats to JSON",
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Export JSON", color = RiviaMint)
+            Text("Export JSON", color = RiviaTextPrimary)
           }
 
           OutlinedButton(
             onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) },
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier =
               Modifier.weight(1f)
                 .minimumInteractiveComponentSize()
@@ -785,11 +829,11 @@ private fun KeysAndBackupTab(
             Icon(
               imageVector = Icons.Outlined.Upload,
               contentDescription = "Import chats from JSON",
-              tint = RiviaText,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Import JSON", color = RiviaText)
+            Text("Import JSON", color = RiviaTextPrimary)
           }
         }
       }
@@ -941,20 +985,25 @@ private fun VoiceSettingsTab(
             onClick = { viewModel.refreshElevenLabsVoicesAndModels() },
             enabled = !isLoadingVoices,
             shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             modifier = Modifier.minimumInteractiveComponentSize(),
           ) {
             Icon(
               imageVector = Icons.Outlined.Refresh,
               contentDescription = "Refresh personal voices",
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(16.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
               if (isLoadingVoices) "Loading..." else "Load Voices",
-              color = RiviaMint,
+              color = RiviaTextPrimary,
               fontSize = 12.sp,
             )
           }
@@ -966,8 +1015,8 @@ private fun VoiceSettingsTab(
               val isSelected = v.voiceId == voicePrefs.voiceId
               Surface(
                 shape = RoundedCornerShape(14.dp),
-                color =
-                  if (isSelected) RiviaMint.copy(alpha = 0.14f) else RiviaRaisedSurface,
+                color = if (isSelected) RiviaSurface3 else RiviaSurface2,
+                border = BorderStroke(1.dp, RiviaBorder),
                 modifier =
                   Modifier.fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
@@ -986,12 +1035,12 @@ private fun VoiceSettingsTab(
                   Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
                       text = v.name,
-                      color = if (isSelected) RiviaMint else RiviaText,
-                      fontWeight = FontWeight.SemiBold,
+                      color = RiviaTextPrimary,
+                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                     )
                     Text(
                       text = "${v.category} · ${v.voiceId}",
-                      color = RiviaMutedText,
+                      color = RiviaTextTertiary,
                       fontFamily = ChivoMonoFontFamily,
                       fontSize = 11.sp,
                     )
@@ -1004,7 +1053,7 @@ private fun VoiceSettingsTab(
                       Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = "Preview voice ${v.name}",
-                        tint = RiviaMint,
+                        tint = if (isSelected) RiviaIconActive else RiviaIconDefault,
                       )
                     }
                   }
@@ -1140,8 +1189,9 @@ private fun VoiceSettingsTab(
             valueRange = 0f..1f,
             colors =
               SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
+                thumbColor = RiviaTextPrimary,
+                activeTrackColor = RiviaTextSecondary,
+                inactiveTrackColor = RiviaBorder,
               ),
             modifier = Modifier.testTag("voice_stability_slider"),
           )
@@ -1160,8 +1210,9 @@ private fun VoiceSettingsTab(
             valueRange = 0f..1f,
             colors =
               SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
+                thumbColor = RiviaTextPrimary,
+                activeTrackColor = RiviaTextSecondary,
+                inactiveTrackColor = RiviaBorder,
               ),
             modifier = Modifier.testTag("voice_similarity_slider"),
           )
@@ -1187,7 +1238,7 @@ private fun VoiceSettingsTab(
         }
 
         if (showStyleAndSpeed) {
-          HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
+          HorizontalDivider(color = RiviaBorder)
           Text(
             text = "Style: ${"%.2f".format(voicePrefs.style)}",
             style = MaterialTheme.typography.labelMedium,
@@ -1200,8 +1251,9 @@ private fun VoiceSettingsTab(
             valueRange = 0f..1f,
             colors =
               SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
+                thumbColor = RiviaTextPrimary,
+                activeTrackColor = RiviaTextSecondary,
+                inactiveTrackColor = RiviaBorder,
               ),
           )
 
@@ -1217,8 +1269,9 @@ private fun VoiceSettingsTab(
             valueRange = 0.7f..1.2f,
             colors =
               SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
+                thumbColor = RiviaTextPrimary,
+                activeTrackColor = RiviaTextSecondary,
+                inactiveTrackColor = RiviaBorder,
               ),
           )
         } else {
@@ -1230,12 +1283,12 @@ private fun VoiceSettingsTab(
         }
 
         if (showCloneStrength) {
-          HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
+          HorizontalDivider(color = RiviaBorder)
           Text(
             text = "Clone Strength: ${"%.2f".format(voicePrefs.cloneStrength)}",
             style = MaterialTheme.typography.labelMedium,
             fontFamily = ChivoMonoFontFamily,
-            color = RiviaMint,
+            color = RiviaTextPrimary,
           )
           Slider(
             value = voicePrefs.cloneStrength.coerceIn(0f, 1f),
@@ -1245,8 +1298,9 @@ private fun VoiceSettingsTab(
             valueRange = 0f..1f,
             colors =
               SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
+                thumbColor = RiviaTextPrimary,
+                activeTrackColor = RiviaTextSecondary,
+                inactiveTrackColor = RiviaBorder,
               ),
           )
         }
@@ -1261,7 +1315,7 @@ private fun VoiceSettingsTab(
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = RiviaMint,
-                contentColor = RiviaBackground,
+                contentColor = RiviaOnAccent,
               ),
             modifier =
               Modifier.fillMaxWidth()
@@ -1355,7 +1409,7 @@ private fun VoiceSettingsTab(
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = RiviaMint,
-                contentColor = RiviaBackground,
+                contentColor = RiviaOnAccent,
               ),
             modifier =
               Modifier.fillMaxWidth()
@@ -1492,7 +1546,7 @@ private fun PluginsTab() {
             Icon(
               imageVector = Icons.Outlined.Extension,
               contentDescription = "Tasker plug-in",
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
             )
             Column {
               Text(
@@ -1635,13 +1689,14 @@ private fun DefaultsLauncherTab(
                 color = RiviaText,
               )
             }
-            Button(
+            OutlinedButton(
               onClick = { viewModel.downloadEmotionModel(forceRedownload = false) },
               shape = RoundedCornerShape(14.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
               colors =
-                ButtonDefaults.buttonColors(
-                  containerColor = RiviaMint,
-                  contentColor = RiviaBackground,
+                ButtonDefaults.outlinedButtonColors(
+                  containerColor = RiviaSurface2,
+                  contentColor = RiviaTextPrimary,
                 ),
               modifier =
                 Modifier.fillMaxWidth()
@@ -1651,10 +1706,11 @@ private fun DefaultsLauncherTab(
               Icon(
                 imageVector = Icons.Outlined.Download,
                 contentDescription = "Download emotion model",
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(18.dp),
               )
               Spacer(modifier = Modifier.width(8.dp))
-              Text("Download Model Now", fontWeight = FontWeight.SemiBold)
+              Text("Download Model Now", color = RiviaTextPrimary, fontWeight = FontWeight.SemiBold)
             }
           }
           is EmotionModelState.Downloading -> {
@@ -1677,15 +1733,15 @@ private fun DefaultsLauncherTab(
                   },
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = ChivoMonoFontFamily,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
               )
             }
 
             if (st.progress >= 0f) {
               LinearProgressIndicator(
                 progress = { st.progress.coerceIn(0f, 1f) },
-                color = RiviaMint,
-                trackColor = RiviaRaisedSurface,
+                color = RiviaTextPrimary,
+                trackColor = RiviaBorder,
                 modifier =
                   Modifier.fillMaxWidth()
                     .height(8.dp)
@@ -1694,8 +1750,8 @@ private fun DefaultsLauncherTab(
               )
             } else {
               LinearProgressIndicator(
-                color = RiviaMint,
-                trackColor = RiviaRaisedSurface,
+                color = RiviaTextPrimary,
+                trackColor = RiviaBorder,
                 modifier =
                   Modifier.fillMaxWidth()
                     .height(8.dp)
@@ -1714,12 +1770,12 @@ private fun DefaultsLauncherTab(
                 text = "Extracting .onnx and .yaml into app-private storage...",
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = ChivoMonoFontFamily,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
               )
             }
             LinearProgressIndicator(
-              color = RiviaMint,
-              trackColor = RiviaRaisedSurface,
+              color = RiviaTextPrimary,
+              trackColor = RiviaBorder,
               modifier =
                 Modifier.fillMaxWidth()
                   .height(8.dp)
@@ -1740,7 +1796,7 @@ private fun DefaultsLauncherTab(
                   style = MaterialTheme.typography.bodySmall,
                   fontFamily = ChivoMonoFontFamily,
                   fontWeight = FontWeight.SemiBold,
-                  color = RiviaMint,
+                  color = RiviaTextPrimary,
                 )
                 Text(
                   text = st.yamlSummary,
@@ -1766,7 +1822,12 @@ private fun DefaultsLauncherTab(
             OutlinedButton(
               onClick = { viewModel.downloadEmotionModel(forceRedownload = true) },
               shape = RoundedCornerShape(14.dp),
-              border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+              border = BorderStroke(1.dp, RiviaBorder),
+              colors =
+                ButtonDefaults.outlinedButtonColors(
+                  containerColor = RiviaSurface2,
+                  contentColor = RiviaTextPrimary,
+                ),
               modifier =
                 Modifier.fillMaxWidth()
                   .minimumInteractiveComponentSize()
@@ -1775,11 +1836,11 @@ private fun DefaultsLauncherTab(
               Icon(
                 imageVector = Icons.Outlined.Refresh,
                 contentDescription = "Retry model download",
-                tint = RiviaMint,
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(18.dp),
               )
               Spacer(modifier = Modifier.width(6.dp))
-              Text("Retry Model Download", color = RiviaMint)
+              Text("Retry Model Download", color = RiviaTextPrimary)
             }
           }
         }
@@ -1814,7 +1875,7 @@ private fun DefaultsLauncherTab(
           style = MaterialTheme.typography.bodySmall,
           fontFamily = ChivoMonoFontFamily,
           fontWeight = FontWeight.SemiBold,
-          color = RiviaMint,
+          color = RiviaTextPrimary,
         )
 
         Text(
@@ -1842,7 +1903,12 @@ private fun DefaultsLauncherTab(
         OutlinedButton(
           onClick = { viewModel.resetEmotionBaseline() },
           shape = RoundedCornerShape(12.dp),
-          border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+          border = BorderStroke(1.dp, RiviaBorder),
+          colors =
+            ButtonDefaults.outlinedButtonColors(
+              containerColor = RiviaSurface2,
+              contentColor = RiviaTextPrimary,
+            ),
           modifier =
             Modifier.fillMaxWidth()
               .minimumInteractiveComponentSize()
@@ -1851,13 +1917,13 @@ private fun DefaultsLauncherTab(
           Icon(
             imageVector = Icons.Outlined.Refresh,
             contentDescription = "Reset emotion baseline",
-            tint = RiviaMint,
+            tint = RiviaIconDefault,
             modifier = Modifier.size(16.dp),
           )
           Spacer(modifier = Modifier.width(6.dp))
           Text(
             text = "Reset emotion baseline",
-            color = RiviaMint,
+            color = RiviaTextPrimary,
             fontFamily = ChivoMonoFontFamily,
             fontSize = 12.sp,
           )
@@ -2021,7 +2087,7 @@ private fun DefaultsLauncherTab(
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = ChivoMonoFontFamily,
                 fontWeight = FontWeight.SemiBold,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
               )
             }
           }
@@ -2036,7 +2102,7 @@ private fun DefaultsLauncherTab(
                 text = "Downloading silero_vad.onnx... (${"%.2f".format(Locale.US, mbDown)} MB)",
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = ChivoMonoFontFamily,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
               )
             }
           }
@@ -2055,10 +2121,15 @@ private fun DefaultsLauncherTab(
               OutlinedButton(
                 onClick = { viewModel.downloadSileroVadModel(forceRedownload = true) },
                 shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+                border = BorderStroke(1.dp, RiviaBorder),
+                colors =
+                  ButtonDefaults.outlinedButtonColors(
+                    containerColor = RiviaSurface2,
+                    contentColor = RiviaTextPrimary,
+                  ),
                 modifier = Modifier.minimumInteractiveComponentSize(),
               ) {
-                Text("Download VAD", color = RiviaMint, fontSize = 12.sp)
+                Text("Download VAD", color = RiviaTextPrimary, fontSize = 12.sp)
               }
             }
           }
@@ -2077,10 +2148,15 @@ private fun DefaultsLauncherTab(
               OutlinedButton(
                 onClick = { viewModel.downloadSileroVadModel(forceRedownload = true) },
                 shape = RoundedCornerShape(10.dp),
-                border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+                border = BorderStroke(1.dp, RiviaBorder),
+                colors =
+                  ButtonDefaults.outlinedButtonColors(
+                    containerColor = RiviaSurface2,
+                    contentColor = RiviaTextPrimary,
+                  ),
                 modifier = Modifier.minimumInteractiveComponentSize(),
               ) {
-                Text("Retry VAD", color = RiviaMint, fontSize = 12.sp)
+                Text("Retry VAD", color = RiviaTextPrimary, fontSize = 12.sp)
               }
             }
           }
@@ -2094,7 +2170,7 @@ private fun DefaultsLauncherTab(
             "Speech starts at prob >= ${"%.2f".format(Locale.US, labMicPrefs.vadStartThreshold)} for ${labMicPrefs.vadStartDurationMs} ms · Turn ends after ${labMicPrefs.vadEndSilenceMs} ms below ${"%.2f".format(Locale.US, labMicPrefs.vadEndThreshold)}",
           style = MaterialTheme.typography.labelMedium,
           fontFamily = ChivoMonoFontFamily,
-          color = RiviaMint,
+          color = RiviaTextSecondary,
         )
 
         // 1. Speech start prob threshold (default 0.50)
@@ -2111,7 +2187,12 @@ private fun DefaultsLauncherTab(
             viewModel.updateLabMicTestPrefs { it.copy(vadStartThreshold = rounded) }
           },
           valueRange = 0.10f..0.90f,
-          colors = SliderDefaults.colors(thumbColor = RiviaMint, activeTrackColor = RiviaMint),
+          colors =
+            SliderDefaults.colors(
+              thumbColor = RiviaTextPrimary,
+              activeTrackColor = RiviaTextSecondary,
+              inactiveTrackColor = RiviaBorder,
+            ),
           modifier = Modifier.testTag("vad_start_prob_slider"),
         )
 
@@ -2129,7 +2210,12 @@ private fun DefaultsLauncherTab(
             viewModel.updateLabMicTestPrefs { it.copy(vadStartDurationMs = stepped) }
           },
           valueRange = 64f..1000f,
-          colors = SliderDefaults.colors(thumbColor = RiviaMint, activeTrackColor = RiviaMint),
+          colors =
+            SliderDefaults.colors(
+              thumbColor = RiviaTextPrimary,
+              activeTrackColor = RiviaTextSecondary,
+              inactiveTrackColor = RiviaBorder,
+            ),
           modifier = Modifier.testTag("vad_start_duration_slider"),
         )
 
@@ -2147,7 +2233,12 @@ private fun DefaultsLauncherTab(
             viewModel.updateLabMicTestPrefs { it.copy(vadEndThreshold = rounded) }
           },
           valueRange = 0.05f..0.80f,
-          colors = SliderDefaults.colors(thumbColor = RiviaMint, activeTrackColor = RiviaMint),
+          colors =
+            SliderDefaults.colors(
+              thumbColor = RiviaTextPrimary,
+              activeTrackColor = RiviaTextSecondary,
+              inactiveTrackColor = RiviaBorder,
+            ),
           modifier = Modifier.testTag("vad_end_prob_slider"),
         )
 
@@ -2165,7 +2256,12 @@ private fun DefaultsLauncherTab(
             viewModel.updateLabMicTestPrefs { it.copy(vadEndSilenceMs = stepped) }
           },
           valueRange = 200f..2500f,
-          colors = SliderDefaults.colors(thumbColor = RiviaMint, activeTrackColor = RiviaMint),
+          colors =
+            SliderDefaults.colors(
+              thumbColor = RiviaTextPrimary,
+              activeTrackColor = RiviaTextSecondary,
+              inactiveTrackColor = RiviaBorder,
+            ),
           modifier = Modifier.testTag("vad_end_silence_slider"),
         )
 
@@ -2182,6 +2278,11 @@ private fun DefaultsLauncherTab(
           },
           shape = RoundedCornerShape(12.dp),
           border = BorderStroke(1.dp, RiviaBorder),
+          colors =
+            ButtonDefaults.outlinedButtonColors(
+              containerColor = RiviaSurface2,
+              contentColor = RiviaTextPrimary,
+            ),
           modifier =
             Modifier.fillMaxWidth()
               .minimumInteractiveComponentSize()
@@ -2191,7 +2292,7 @@ private fun DefaultsLauncherTab(
             text = "Reset VAD Numbers (0.50 / 250 ms / 0.35 / 700 ms)",
             fontFamily = ChivoMonoFontFamily,
             fontSize = 11.sp,
-            color = RiviaMutedText,
+            color = RiviaTextPrimary,
           )
         }
       }
@@ -2209,13 +2310,14 @@ private fun DefaultsLauncherTab(
           style = MaterialTheme.typography.bodyMedium,
           color = RiviaMutedText,
         )
-        Button(
+        OutlinedButton(
           onClick = onOpenDefaultRunSettings,
           shape = RoundedCornerShape(14.dp),
+          border = BorderStroke(1.dp, RiviaBorder),
           colors =
-            ButtonDefaults.buttonColors(
-              containerColor = RiviaMint,
-              contentColor = RiviaBackground,
+            ButtonDefaults.outlinedButtonColors(
+              containerColor = RiviaSurface2,
+              contentColor = RiviaTextPrimary,
             ),
           modifier =
             Modifier.fillMaxWidth()
@@ -2225,10 +2327,11 @@ private fun DefaultsLauncherTab(
           Icon(
             imageVector = Icons.Outlined.Tune,
             contentDescription = "Configure Lab defaults",
+            tint = RiviaIconDefault,
             modifier = Modifier.size(18.dp),
           )
           Spacer(modifier = Modifier.width(8.dp))
-          Text("Edit Lab Default Run Settings", fontWeight = FontWeight.SemiBold)
+          Text("Edit Lab Default Run Settings", color = RiviaTextPrimary, fontWeight = FontWeight.SemiBold)
         }
       }
     }
@@ -2253,18 +2356,25 @@ private fun DefaultsLauncherTab(
             },
             enabled = totalEmotionLogsCount > 0,
             shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+                disabledContainerColor = RiviaSurface2,
+                disabledContentColor = RiviaTextTertiary,
+              ),
             modifier =
               Modifier.minimumInteractiveComponentSize().testTag("export_vad_json_button"),
           ) {
             Icon(
               imageVector = Icons.Outlined.Download,
               contentDescription = "Export VAD results as JSON",
-              tint = RiviaMint,
+              tint = if (totalEmotionLogsCount > 0) RiviaIconDefault else RiviaTextTertiary,
               modifier = Modifier.size(16.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Export JSON", color = RiviaMint, fontSize = 12.sp)
+            Text("Export JSON", fontSize = 12.sp)
           }
 
           OutlinedButton(
@@ -2274,18 +2384,25 @@ private fun DefaultsLauncherTab(
             },
             enabled = totalEmotionLogsCount > 0,
             shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+                disabledContainerColor = RiviaSurface2,
+                disabledContentColor = RiviaTextTertiary,
+              ),
             modifier =
               Modifier.minimumInteractiveComponentSize().testTag("export_vad_csv_button"),
           ) {
             Icon(
               imageVector = Icons.Outlined.Download,
               contentDescription = "Export VAD results as CSV",
-              tint = RiviaMint,
+              tint = if (totalEmotionLogsCount > 0) RiviaIconDefault else RiviaTextTertiary,
               modifier = Modifier.size(16.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Export CSV", color = RiviaMint, fontSize = 12.sp)
+            Text("Export CSV", fontSize = 12.sp)
           }
 
           OutlinedButton(
@@ -2305,10 +2422,17 @@ private fun DefaultsLauncherTab(
             enabled = totalEmotionLogsCount > 0,
             shape = RoundedCornerShape(10.dp),
             border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+                disabledContainerColor = RiviaSurface2,
+                disabledContentColor = RiviaTextTertiary,
+              ),
             modifier =
               Modifier.minimumInteractiveComponentSize().testTag("copy_vad_json_button"),
           ) {
-            Text("Copy JSON", color = RiviaText, fontSize = 12.sp)
+            Text("Copy JSON", fontSize = 12.sp)
           }
         }
       }
@@ -2318,7 +2442,8 @@ private fun DefaultsLauncherTab(
       item {
         Surface(
           shape = RoundedCornerShape(14.dp),
-          color = RiviaSurface,
+          color = RiviaSurface2,
+          border = BorderStroke(1.dp, RiviaBorder),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
@@ -2395,7 +2520,8 @@ private fun VoiceEmotionLogCard(
 
   Surface(
     shape = RoundedCornerShape(14.dp),
-    color = RiviaSurface,
+    color = RiviaSurface2,
+    border = BorderStroke(1.dp, RiviaBorder),
     modifier =
       Modifier.fillMaxWidth()
         .clip(RoundedCornerShape(14.dp))
@@ -2425,13 +2551,13 @@ private fun VoiceEmotionLogCard(
               text = log.requestId,
               fontFamily = ChivoMonoFontFamily,
               fontWeight = FontWeight.Bold,
-              color = RiviaMint,
+              color = RiviaTextPrimary,
               fontSize = 13.sp,
             )
           }
           Surface(
             shape = RoundedCornerShape(6.dp),
-            color = RiviaRaisedSurface,
+            color = RiviaSurface3,
           ) {
             Text(
               text = "Mode ${log.mode}",
@@ -2444,14 +2570,14 @@ private fun VoiceEmotionLogCard(
           if (!log.calibrationLabel.isNullOrBlank()) {
             Surface(
               shape = RoundedCornerShape(6.dp),
-              color = RiviaMint.copy(alpha = 0.22f),
-              border = BorderStroke(1.dp, RiviaMint),
+              color = RiviaSurface3,
+              border = BorderStroke(1.dp, RiviaBorder),
             ) {
               Text(
                 text = "CAL: ${log.calibrationLabel}",
                 fontFamily = ChivoMonoFontFamily,
                 fontWeight = FontWeight.Bold,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
               )
@@ -2491,14 +2617,14 @@ private fun VoiceEmotionLogCard(
           } else {
             Surface(
               shape = RoundedCornerShape(6.dp),
-              color = RiviaMint.copy(alpha = 0.16f),
-              border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+              color = RiviaSurface3,
+              border = BorderStroke(1.dp, RiviaBorder),
             ) {
               Text(
                 text = "FINAL ($resolvedTranscriptSource)",
                 fontFamily = ChivoMonoFontFamily,
                 fontWeight = FontWeight.Bold,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
               )
@@ -2524,7 +2650,7 @@ private fun VoiceEmotionLogCard(
         Text(
           text = formattedTime,
           fontFamily = ChivoMonoFontFamily,
-          color = RiviaMutedText,
+          color = RiviaTextTertiary,
           fontSize = 11.sp,
         )
       }
@@ -2555,7 +2681,7 @@ private fun VoiceEmotionLogCard(
         text =
           "Transcript used: $resolvedTranscriptSource · Pipe→Final: $pipeToFinalLabel",
         fontFamily = ChivoMonoFontFamily,
-        color = RiviaMint,
+        color = RiviaTextSecondary,
         fontSize = 11.sp,
       )
       Text(
@@ -2624,7 +2750,7 @@ private fun VoiceEmotionLogCard(
           text = advText,
           fontFamily = ChivoMonoFontFamily,
           fontWeight = FontWeight.SemiBold,
-          color = RiviaMint,
+          color = RiviaTextPrimary,
           fontSize = 12.sp,
           modifier = Modifier.weight(1f),
         )
@@ -2633,20 +2759,25 @@ private fun VoiceEmotionLogCard(
           OutlinedButton(
             onClick = onPlayOrStopWav,
             shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface3,
+                contentColor = RiviaTextPrimary,
+              ),
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             modifier = Modifier.minimumInteractiveComponentSize(),
           ) {
             Icon(
               imageVector = if (isPlayingWav) Icons.Default.Stop else Icons.Default.PlayArrow,
               contentDescription = if (isPlayingWav) "Stop WAV clip" else "Play WAV clip",
-              tint = RiviaMint,
+              tint = if (isPlayingWav) RiviaIconActive else RiviaIconDefault,
               modifier = Modifier.size(16.dp),
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
               text = if (isPlayingWav) "Stop WAV" else "Play WAV",
-              color = RiviaMint,
+              color = RiviaTextPrimary,
               fontFamily = ChivoMonoFontFamily,
               fontSize = 11.sp,
             )
@@ -2690,7 +2821,7 @@ private fun VoiceEmotionLogCard(
         Text(
           text = "Tap turn to set calibration label (excited, calm, irritated, sad, anxious, other)",
           fontFamily = ChivoMonoFontFamily,
-          color = RiviaMutedText.copy(alpha = 0.75f),
+          color = RiviaTextTertiary,
           fontSize = 10.sp,
         )
       }
@@ -2721,7 +2852,7 @@ private fun RequestLogTab(viewModel: RiviaViewModel) {
       Icon(
         imageVector = Icons.Outlined.History,
         contentDescription = "Empty request log",
-        tint = RiviaMutedText,
+        tint = RiviaIconDefault,
         modifier = Modifier.size(40.dp),
       )
       Spacer(modifier = Modifier.height(10.dp))
@@ -2771,7 +2902,8 @@ private fun RequestLogItemCard(
 
   Surface(
     shape = RoundedCornerShape(14.dp),
-    color = RiviaSurface,
+    color = RiviaSurface2,
+    border = BorderStroke(1.dp, RiviaBorder),
     modifier = Modifier.fillMaxWidth(),
   ) {
     Column(
@@ -2792,20 +2924,20 @@ private fun RequestLogItemCard(
             text = log.requestId,
             fontFamily = ChivoMonoFontFamily,
             fontWeight = FontWeight.Bold,
-            color = RiviaMint,
+            color = RiviaTextPrimary,
             fontSize = 13.sp,
           )
           Text(
             text = log.model,
             fontFamily = ChivoMonoFontFamily,
-            color = RiviaText,
+            color = RiviaTextSecondary,
             fontSize = 12.sp,
           )
         }
         Text(
           text = formattedTime,
           fontFamily = ChivoMonoFontFamily,
-          color = RiviaMutedText,
+          color = RiviaTextTertiary,
           fontSize = 11.sp,
         )
       }
@@ -2849,7 +2981,7 @@ private fun RequestLogItemCard(
         Text(
           text = "Rules: ${log.ruleEvents}",
           fontFamily = ChivoMonoFontFamily,
-          color = RiviaMint,
+          color = RiviaTextSecondary,
           fontSize = 11.sp,
         )
       }

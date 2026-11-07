@@ -81,11 +81,18 @@ import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
+import com.example.ui.theme.RiviaIconActive
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaMutedText
+import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface2
+import com.example.ui.theme.RiviaSurface3
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextSecondary
+import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
 
@@ -260,7 +267,7 @@ fun LiveModeScreen(
         text = "${runSettings.liveModel} · ${voicePrefs.liveModelId}",
         style = MaterialTheme.typography.labelSmall,
         fontFamily = ChivoMonoFontFamily,
-        color = RiviaMutedText,
+        color = RiviaTextTertiary,
       )
     }
 
@@ -296,7 +303,7 @@ fun LiveModeScreen(
               colors =
                 ButtonDefaults.buttonColors(
                   containerColor = RiviaMint,
-                  contentColor = RiviaBackground,
+                  contentColor = RiviaOnAccent,
                 ),
             ) {
               Text("Grant Microphone Permission")
@@ -343,7 +350,7 @@ fun LiveModeScreen(
           if (liveState.userCaption.isNotBlank()) {
             Surface(
               shape = RoundedCornerShape(12.dp),
-              color = RiviaRaisedSurface,
+              color = RiviaSurface3,
               border = BorderStroke(1.dp, RiviaBorder),
               modifier = Modifier.fillMaxWidth(),
             ) {
@@ -355,7 +362,7 @@ fun LiveModeScreen(
                   text = "YOU",
                   style = MaterialTheme.typography.labelSmall,
                   fontFamily = ChivoMonoFontFamily,
-                  color = RiviaMutedText,
+                  color = RiviaTextTertiary,
                 )
                 Text(
                   text = liveState.userCaption,
@@ -369,8 +376,8 @@ fun LiveModeScreen(
           if (liveState.riviaCaption.isNotBlank()) {
             Surface(
               shape = RoundedCornerShape(12.dp),
-              color = RiviaSurface,
-              border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.45f)),
+              color = RiviaSurface2,
+              border = BorderStroke(1.dp, RiviaBorder),
               modifier = Modifier.fillMaxWidth(),
             ) {
               Column(
@@ -381,7 +388,7 @@ fun LiveModeScreen(
                   text = "RIVIA",
                   style = MaterialTheme.typography.labelSmall,
                   fontFamily = ChivoMonoFontFamily,
-                  color = RiviaMint,
+                  color = RiviaTextSecondary,
                 )
                 Text(
                   text = liveState.riviaCaption,
@@ -455,7 +462,7 @@ fun LiveModeScreen(
           modifier =
             Modifier.size(60.dp)
               .clip(CircleShape)
-              .background(if (liveState.isMuted) RiviaWarningAmber else RiviaRaisedSurface)
+              .background(if (liveState.isMuted) RiviaWarningAmber else RiviaSurface2)
               .border(1.dp, RiviaBorder, CircleShape)
               .testTag("live_mute_button"),
         ) {
@@ -463,7 +470,7 @@ fun LiveModeScreen(
             imageVector =
               if (liveState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
             contentDescription = if (liveState.isMuted) "Unmute microphone" else "Mute microphone",
-            tint = if (liveState.isMuted) RiviaBackground else RiviaText,
+            tint = if (liveState.isMuted) RiviaOnAccent else RiviaIconDefault,
           )
         }
         Spacer(modifier = Modifier.height(6.dp))
@@ -484,7 +491,7 @@ fun LiveModeScreen(
           modifier =
             Modifier.size(60.dp)
               .clip(CircleShape)
-              .background(if (liveState.isPaused) RiviaMint else RiviaRaisedSurface)
+              .background(if (liveState.isPaused) RiviaSurface3 else RiviaSurface2)
               .border(1.dp, RiviaBorder, CircleShape)
               .testTag("live_pause_button"),
         ) {
@@ -492,7 +499,7 @@ fun LiveModeScreen(
             imageVector =
               if (liveState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
             contentDescription = if (liveState.isPaused) "Resume Live session" else "Pause Live session",
-            tint = if (liveState.isPaused) RiviaBackground else RiviaText,
+            tint = if (liveState.isPaused) RiviaIconActive else RiviaIconDefault,
           )
         }
         Spacer(modifier = Modifier.height(6.dp))
@@ -520,7 +527,7 @@ fun LiveModeScreen(
           Icon(
             imageVector = Icons.Default.CallEnd,
             contentDescription = "End Live voice mode",
-            tint = RiviaBackground,
+            tint = RiviaOnAccent,
           )
         }
         Spacer(modifier = Modifier.height(6.dp))

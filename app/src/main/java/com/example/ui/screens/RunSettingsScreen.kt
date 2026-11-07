@@ -99,11 +99,18 @@ import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaMutedText
+import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextSecondary
+import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
 import kotlinx.coroutines.launch
@@ -295,7 +302,7 @@ fun RunSettingsScreen(
                     Icon(
                       imageVector = Icons.Outlined.Info,
                       contentDescription = null,
-                      tint = RiviaMint,
+                      tint = RiviaTextTertiary,
                       modifier = Modifier.size(18.dp),
                     )
                   },
@@ -312,7 +319,7 @@ fun RunSettingsScreen(
                       Icon(
                         imageVector = Icons.Outlined.Save,
                         contentDescription = null,
-                        tint = RiviaMint,
+                        tint = RiviaIconDefault,
                         modifier = Modifier.size(18.dp),
                       )
                     },
@@ -331,7 +338,7 @@ fun RunSettingsScreen(
                     Icon(
                       imageVector = Icons.Outlined.Restore,
                       contentDescription = null,
-                      tint = RiviaMutedText,
+                      tint = RiviaIconDefault,
                       modifier = Modifier.size(18.dp),
                     )
                   },
@@ -369,11 +376,11 @@ fun RunSettingsScreen(
                   Icon(
                     imageVector = Icons.Outlined.Save,
                     contentDescription = "Save as default for new chats",
-                    tint = RiviaMint,
+                    tint = RiviaIconDefault,
                     modifier = Modifier.size(16.dp),
                   )
                   Spacer(modifier = Modifier.width(4.dp))
-                  Text("Save default", color = RiviaMint, fontSize = 12.sp)
+                  Text("Save default", color = RiviaTextPrimary, fontSize = 12.sp)
                 }
               }
               TextButton(
@@ -392,11 +399,11 @@ fun RunSettingsScreen(
                 Icon(
                   imageVector = Icons.Outlined.Restore,
                   contentDescription = "Reset to defaults",
-                  tint = RiviaMutedText,
+                  tint = RiviaIconDefault,
                   modifier = Modifier.size(16.dp),
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Reset", color = RiviaMutedText, fontSize = 12.sp)
+                Text("Reset", color = RiviaTextSecondary, fontSize = 12.sp)
               }
             }
           }
@@ -452,14 +459,14 @@ fun RunSettingsScreen(
                   ) {
                     Text(
                       text = preset.name,
-                      color = if (isSelected) RiviaBackground else RiviaText,
+                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
                       fontWeight = FontWeight.SemiBold,
                       style = MaterialTheme.typography.labelLarge,
                     )
                     Text(
                       text = preset.thinkingLevel,
                       color =
-                        if (isSelected) RiviaBackground.copy(alpha = 0.8f) else RiviaMutedText,
+                        if (isSelected) RiviaOnAccent else RiviaTextSecondary,
                       fontFamily = ChivoMonoFontFamily,
                       fontSize = 10.sp,
                     )
@@ -500,20 +507,25 @@ fun RunSettingsScreen(
             OutlinedButton(
               onClick = { viewModel.refreshGeminiModels() },
               enabled = !isLoadingModels,
-              border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.5f)),
+              border = BorderStroke(1.dp, RiviaBorder),
+              colors =
+                ButtonDefaults.outlinedButtonColors(
+                  containerColor = RiviaSurface2,
+                  contentColor = RiviaTextPrimary,
+                ),
               contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
               modifier = Modifier.minimumInteractiveComponentSize(),
             ) {
               Icon(
                 imageVector = Icons.Outlined.Refresh,
                 contentDescription = "Refresh model list",
-                tint = RiviaMint,
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(16.dp),
               )
               Spacer(modifier = Modifier.width(6.dp))
               Text(
                 text = if (isLoadingModels) "Refreshing..." else "Refresh models",
-                color = RiviaMint,
+                color = RiviaTextPrimary,
                 fontSize = 12.sp,
               )
             }
@@ -525,7 +537,7 @@ fun RunSettingsScreen(
             label = { Text("Typed Chat Model") },
             trailingIcon = {
               TextButton(onClick = { showModelPickerForLive = false }) {
-                Text("Pick", color = RiviaMint)
+                Text("Pick", color = RiviaTextPrimary)
               }
             },
             singleLine = true,
@@ -550,7 +562,7 @@ fun RunSettingsScreen(
                 "${activeModelInfo.displayName} · In: ${activeModelInfo.inputTokenLimit} · Out: ${activeModelInfo.outputTokenLimit}",
               style = MaterialTheme.typography.labelSmall,
               fontFamily = ChivoMonoFontFamily,
-              color = RiviaMint,
+              color = RiviaTextSecondary,
             )
           }
 
@@ -560,7 +572,7 @@ fun RunSettingsScreen(
             label = { Text("Live Voice Model") },
             trailingIcon = {
               TextButton(onClick = { showModelPickerForLive = true }) {
-                Text("Pick", color = RiviaMint)
+                Text("Pick", color = RiviaTextPrimary)
               }
             },
             singleLine = true,
@@ -960,7 +972,7 @@ fun RunSettingsScreen(
                 Icon(
                   imageVector = Icons.Default.Add,
                   contentDescription = "Add file search store name",
-                  tint = RiviaMint,
+                  tint = RiviaIconDefault,
                 )
               }
             }
@@ -972,7 +984,7 @@ fun RunSettingsScreen(
       item {
         Surface(
           shape = RoundedCornerShape(18.dp),
-          color = RiviaSurface,
+          color = RiviaSurface2,
           modifier =
             Modifier.fillMaxWidth()
               .clip(RoundedCornerShape(18.dp))
@@ -992,20 +1004,20 @@ fun RunSettingsScreen(
               Icon(
                 imageVector = Icons.Outlined.Tune,
                 contentDescription = null,
-                tint = RiviaMint,
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(20.dp),
               )
               Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                   text = "Advanced Parameters",
                   style = MaterialTheme.typography.titleMedium,
-                  color = RiviaText,
+                  color = RiviaTextPrimary,
                 )
                 Text(
                   text =
                     "Sampling, tokens, tool choice, JSON schema, safety, service tier & extra JSON",
                   style = MaterialTheme.typography.bodySmall,
-                  color = RiviaMutedText,
+                  color = RiviaTextSecondary,
                 )
               }
             }
@@ -1015,7 +1027,7 @@ fun RunSettingsScreen(
               contentDescription =
                 if (advancedExpanded) "Collapse advanced parameters"
                 else "Expand advanced parameters",
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
             )
           }
         }
@@ -1129,7 +1141,7 @@ fun RunSettingsScreen(
                   Icon(
                     imageVector = Icons.Default.Add,
                     contentDescription = "Add stop sequence",
-                    tint = RiviaMint,
+                    tint = RiviaIconDefault,
                   )
                 }
               }
@@ -1160,7 +1172,7 @@ fun RunSettingsScreen(
                 colors = riviaTextFieldColors(),
               )
 
-              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
+              HorizontalDivider(color = RiviaBorder)
               Text(
                 text = "Temperature, Top-P & Top-K",
                 style = MaterialTheme.typography.titleSmall,
@@ -1201,8 +1213,9 @@ fun RunSettingsScreen(
                   valueRange = 0f..maxTempLimit,
                   colors =
                     SliderDefaults.colors(
-                      thumbColor = RiviaMint,
-                      activeTrackColor = RiviaMint,
+                      thumbColor = RiviaTextPrimary,
+                      activeTrackColor = RiviaTextSecondary,
+                      inactiveTrackColor = RiviaBorder,
                     ),
                 )
 
@@ -1219,8 +1232,9 @@ fun RunSettingsScreen(
                   valueRange = 0f..1f,
                   colors =
                     SliderDefaults.colors(
-                      thumbColor = RiviaMint,
-                      activeTrackColor = RiviaMint,
+                      thumbColor = RiviaTextPrimary,
+                      activeTrackColor = RiviaTextSecondary,
+                      inactiveTrackColor = RiviaBorder,
                     ),
                 )
 
@@ -1562,18 +1576,18 @@ fun RunSettingsScreen(
                   Icon(
                     imageVector = Icons.Default.Add,
                     contentDescription = "Add label",
-                    tint = RiviaMint,
+                    tint = RiviaIconDefault,
                   )
                 }
               }
 
-              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
+              HorizontalDivider(color = RiviaBorder)
 
               OutlinedTextField(
                 value = extraJsonDraft,
                 onValueChange = { extraJsonDraft = it },
                 label = { Text("Extra JSON (merged into request body)") },
-                placeholder = { Text("{\"custom_field\": true}", color = RiviaMutedText) },
+                placeholder = { Text("{\"custom_field\": true}", color = RiviaTextTertiary) },
                 minLines = 2,
                 maxLines = 6,
                 shape = RoundedCornerShape(14.dp),
@@ -1603,7 +1617,7 @@ fun RunSettingsScreen(
           colors =
             ButtonDefaults.buttonColors(
               containerColor = RiviaMint,
-              contentColor = RiviaBackground,
+              contentColor = RiviaOnAccent,
             ),
           modifier =
             Modifier.fillMaxWidth()
@@ -1639,8 +1653,8 @@ fun RunSettingsScreen(
   showModelPickerForLive?.let { isForLive ->
     AlertDialog(
       onDismissRequest = { showModelPickerForLive = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
       title = {
         Text(if (isForLive) "Select Live Voice Model" else "Select Typed Chat Model")
       },
@@ -1649,14 +1663,14 @@ fun RunSettingsScreen(
           Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
               "No cached models yet. Make sure your Gemini key is set and tap Refresh.",
-              color = RiviaMutedText,
+              color = RiviaTextSecondary,
             )
             Button(
               onClick = { viewModel.refreshGeminiModels() },
               colors =
                 ButtonDefaults.buttonColors(
                   containerColor = RiviaMint,
-                  contentColor = RiviaBackground,
+                  contentColor = RiviaOnAccent,
                 ),
             ) {
               Text("Refresh Models Now")
@@ -1670,7 +1684,7 @@ fun RunSettingsScreen(
             items(cachedModels, key = { it.id }) { m ->
               Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = RiviaSurface,
+                color = RiviaSurface2,
                 modifier =
                   Modifier.fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
@@ -1693,18 +1707,18 @@ fun RunSettingsScreen(
                 ) {
                   Text(
                     text = m.displayName,
-                    color = RiviaText,
+                    color = RiviaTextPrimary,
                     fontWeight = FontWeight.SemiBold,
                   )
                   Text(
                     text = m.id,
-                    color = RiviaMint,
+                    color = RiviaTextSecondary,
                     fontFamily = ChivoMonoFontFamily,
                     fontSize = 12.sp,
                   )
                   Text(
                     text = "In: ${m.inputTokenLimit} · Out: ${m.outputTokenLimit}",
-                    color = RiviaMutedText,
+                    color = RiviaTextTertiary,
                     fontFamily = ChivoMonoFontFamily,
                     fontSize = 11.sp,
                   )
@@ -1716,7 +1730,7 @@ fun RunSettingsScreen(
       },
       confirmButton = {
         TextButton(onClick = { showModelPickerForLive = null }) {
-          Text("Close", color = RiviaMutedText)
+          Text("Close", color = RiviaTextSecondary)
         }
       },
     )
@@ -1726,8 +1740,8 @@ fun RunSettingsScreen(
   previewJsonText?.let { json ->
     AlertDialog(
       onDismissRequest = { previewJsonText = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
       title = { Text("Request Preview (Redacted)") },
       text = {
         Column(
@@ -1743,7 +1757,7 @@ fun RunSettingsScreen(
             text = json,
             fontFamily = ChivoMonoFontFamily,
             fontSize = 12.sp,
-            color = RiviaText,
+            color = RiviaTextPrimary,
           )
         }
       },
@@ -1753,7 +1767,7 @@ fun RunSettingsScreen(
           colors =
             ButtonDefaults.buttonColors(
               containerColor = RiviaMint,
-              contentColor = RiviaBackground,
+              contentColor = RiviaOnAccent,
             ),
         ) {
           Text("Copy JSON")
@@ -1761,7 +1775,7 @@ fun RunSettingsScreen(
       },
       dismissButton = {
         TextButton(onClick = { previewJsonText = null }) {
-          Text("Close", color = RiviaMutedText)
+          Text("Close", color = RiviaTextSecondary)
         }
       },
     )
@@ -1818,7 +1832,7 @@ fun SettingsCardSection(
 ) {
   Surface(
     shape = RoundedCornerShape(18.dp),
-    color = RiviaSurface,
+    color = RiviaSurface2,
     modifier = Modifier.fillMaxWidth(),
   ) {
     Column(
@@ -1833,7 +1847,7 @@ fun SettingsCardSection(
         Text(
           text = title,
           style = MaterialTheme.typography.titleMedium,
-          color = RiviaMint,
+          color = RiviaTextPrimary,
           modifier = Modifier.weight(1f),
         )
         if (onHelpClick != null) {
@@ -1856,14 +1870,15 @@ fun OptionChip(
 ) {
   Surface(
     shape = RoundedCornerShape(10.dp),
-    color = if (selected) RiviaMint else RiviaRaisedSurface,
+    color = if (selected) RiviaMint else RiviaSurface2,
+    border = BorderStroke(1.dp, if (selected) RiviaMint else RiviaBorder),
     modifier =
       Modifier.clip(RoundedCornerShape(10.dp))
         .clickable(onClick = onClick),
   ) {
     Text(
       text = label,
-      color = if (selected) RiviaBackground else RiviaText,
+      color = if (selected) RiviaOnAccent else RiviaTextPrimary,
       fontFamily = ChivoMonoFontFamily,
       fontSize = 12.sp,
       fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
@@ -1879,7 +1894,8 @@ fun RemovableChip(
 ) {
   Surface(
     shape = RoundedCornerShape(16.dp),
-    color = RiviaRaisedSurface,
+    color = RiviaSurface2,
+    border = BorderStroke(1.dp, RiviaBorder),
   ) {
     Row(
       modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
@@ -1887,7 +1903,7 @@ fun RemovableChip(
     ) {
       Text(
         text = label,
-        color = RiviaText,
+        color = RiviaTextPrimary,
         fontFamily = ChivoMonoFontFamily,
         fontSize = 12.sp,
       )
@@ -1898,7 +1914,7 @@ fun RemovableChip(
         Icon(
           imageVector = Icons.Default.Close,
           contentDescription = "Remove $label",
-          tint = RiviaMutedText,
+          tint = RiviaIconDefault,
           modifier = Modifier.size(14.dp),
         )
       }
@@ -1909,9 +1925,14 @@ fun RemovableChip(
 @Composable
 fun riviaSwitchColors() =
   SwitchDefaults.colors(
-    checkedThumbColor = RiviaBackground,
+    checkedThumbColor = RiviaOnAccent,
     checkedTrackColor = RiviaMint,
-    uncheckedThumbColor = RiviaMutedText,
-    uncheckedTrackColor = RiviaRaisedSurface,
+    checkedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+    uncheckedThumbColor = RiviaTextTertiary,
+    uncheckedTrackColor = RiviaBorder,
     uncheckedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+    disabledCheckedThumbColor = RiviaOnAccent,
+    disabledCheckedTrackColor = RiviaMint,
+    disabledUncheckedThumbColor = RiviaTextTertiary,
+    disabledUncheckedTrackColor = RiviaBorder,
   )

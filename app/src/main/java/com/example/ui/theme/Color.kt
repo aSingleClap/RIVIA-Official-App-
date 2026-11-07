@@ -21,21 +21,38 @@ enum class AppUiMode(val displayName: String) {
   }
 }
 
-// Section 1: Exact Look Colors
-val RiviaBackground = Color(0xFF0A0E0D)
-val RiviaSurface = Color(0xFF121917)
-val RiviaRaisedSurface = Color(0xFF18211E)
-val RiviaBorder = Color(0xFF24302C)
-val RiviaText = Color(0xFFE4EBE8)
-val RiviaMutedText = Color(0xFF9AA8A2)
+// 1. NEUTRALS (all modes)
+val RiviaBackground = Color(0xFF000000) // True black
+val RiviaSurface1 = Color(0xFF0E0E0E) // Drawer, sheets, dialogs
+val RiviaSurface2 = Color(0xFF161616) // Cards, inputs, buttons, chips
+val RiviaSurface3 = Color(0xFF1C1C1C) // My message bubbles, selected rows
+val RiviaBorder = Color(0xFF262626) // Borders and dividers
+val RiviaTextPrimary = Color(0xFFEDEDED) // Text primary
+val RiviaTextSecondary = Color(0xFFA3A3A3) // Text secondary
+val RiviaTextTertiary = Color(0xFF8F8F8F) // Timestamps, hints, placeholders, info icons
+val RiviaIconDefault = Color(0xFFA3A3A3) // Icons default
+val RiviaIconActive = Color(0xFFEDEDED) // Icons active
 
-// Fixed per-mode signature colors
-val RiviaModeMint = Color(0xFF5DCAA5)
+// Legacy aliases mapped to the new neutral hierarchy
+val RiviaSurface = RiviaSurface1
+val RiviaRaisedSurface = RiviaSurface2
+val RiviaText = RiviaTextPrimary
+val RiviaMutedText = RiviaTextSecondary
+
+// 2. MODE ACCENTS
+val RiviaModeWhite = Color(0xFFF5F5F5)
+val RiviaModeMint = RiviaModeWhite // Replaces mint #5DCAA5 everywhere with white #F5F5F5
 val RiviaModeViolet = Color(0xFFA78BFA)
 val RiviaModeBlue = Color(0xFF60A5FA)
+val RiviaOnAccent = Color(0xFF000000) // Black for text and icons drawn on top of mode accents
 
-// Reactive primary accent token (shifts between Mint in Rivia, Violet in Dev, and Blue in Labs)
-var RiviaMint by mutableStateOf(RiviaModeMint)
+// Reactive primary accent token (shifts between White #F5F5F5 in Rivia, Violet #A78BFA in Dev, and Blue #60A5FA in Labs)
+var RiviaMint by mutableStateOf(RiviaModeWhite)
+var RiviaAccent: Color
+  get() = RiviaMint
+  set(value) {
+    RiviaMint = value
+  }
 
 // Reserved status-only colors (never change with the mode theme)
 val RiviaWarningAmber = Color(0xFFF2C14E)
@@ -43,10 +60,8 @@ val RiviaErrorRed = Color(0xFFFF6B6B)
 
 fun accentColorForMode(mode: AppUiMode): Color {
   return when (mode) {
-    AppUiMode.RIVIA -> RiviaModeMint
+    AppUiMode.RIVIA -> RiviaModeWhite
     AppUiMode.DEV -> RiviaModeViolet
     AppUiMode.LABS -> RiviaModeBlue
   }
 }
-
-

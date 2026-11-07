@@ -43,11 +43,14 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
-import com.example.ui.theme.RiviaMint
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMutedText
-import com.example.ui.theme.RiviaRaisedSurface
-import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextSecondary
+import com.example.ui.theme.RiviaTextTertiary
 
 data class SettingHelpTopic(
   val id: String,
@@ -325,7 +328,7 @@ fun InfoHelpIconButton(
     Icon(
       imageVector = Icons.Outlined.Info,
       contentDescription = contentDescription,
-      tint = RiviaMint.copy(alpha = 0.85f),
+      tint = RiviaTextTertiary,
       modifier = Modifier.size(18.dp),
     )
   }
@@ -338,7 +341,7 @@ fun GuideHeaderButton(
 ) {
   Surface(
     shape = RoundedCornerShape(18.dp),
-    color = RiviaMint.copy(alpha = 0.14f),
+    color = RiviaSurface2,
     modifier =
       modifier
         .minimumInteractiveComponentSize()
@@ -354,13 +357,13 @@ fun GuideHeaderButton(
       Icon(
         imageVector = Icons.Outlined.HelpOutline,
         contentDescription = "Open settings guide and examples",
-        tint = RiviaMint,
+        tint = RiviaIconDefault,
         modifier = Modifier.size(16.dp),
       )
       Text(
         text = "Guide",
         style = MaterialTheme.typography.labelLarge,
-        color = RiviaMint,
+        color = RiviaTextPrimary,
         fontWeight = FontWeight.SemiBold,
       )
     }
@@ -381,8 +384,8 @@ fun SettingHelpBottomSheet(
   ModalBottomSheet(
     onDismissRequest = onDismiss,
     sheetState = sheetState,
-    containerColor = RiviaRaisedSurface,
-    contentColor = RiviaText,
+    containerColor = RiviaSurface1,
+    contentColor = RiviaTextPrimary,
   ) {
     if (topic != null) {
       Column(
@@ -398,32 +401,32 @@ fun SettingHelpBottomSheet(
         ) {
           Surface(
             shape = CircleShape,
-            color = RiviaMint.copy(alpha = 0.16f),
+            color = RiviaSurface2,
             modifier = Modifier.size(36.dp),
           ) {
             Icon(
               imageVector = Icons.Outlined.Info,
               contentDescription = null,
-              tint = RiviaMint,
+              tint = RiviaTextTertiary,
               modifier = Modifier.padding(8.dp),
             )
           }
           Text(
             text = topic.title,
             style = MaterialTheme.typography.titleLarge,
-            color = RiviaText,
+            color = RiviaTextPrimary,
           )
         }
 
         Text(
           text = topic.summary,
           style = MaterialTheme.typography.bodyMedium,
-          color = RiviaText,
+          color = RiviaTextPrimary,
         )
 
         Surface(
           shape = RoundedCornerShape(14.dp),
-          color = RiviaSurface,
+          color = RiviaSurface2,
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
@@ -433,12 +436,12 @@ fun SettingHelpBottomSheet(
             Text(
               text = "When to adjust",
               style = MaterialTheme.typography.labelLarge,
-              color = RiviaMint,
+              color = RiviaTextPrimary,
             )
             Text(
               text = topic.whenToUse,
               style = MaterialTheme.typography.bodySmall,
-              color = RiviaMutedText,
+              color = RiviaTextSecondary,
             )
           }
         }
@@ -446,7 +449,7 @@ fun SettingHelpBottomSheet(
         if (topic.examples.isNotEmpty()) {
           Surface(
             shape = RoundedCornerShape(14.dp),
-            color = RiviaSurface,
+            color = RiviaSurface2,
             modifier = Modifier.fillMaxWidth(),
           ) {
             Column(
@@ -460,13 +463,13 @@ fun SettingHelpBottomSheet(
                 Icon(
                   imageVector = Icons.Outlined.Lightbulb,
                   contentDescription = null,
-                  tint = RiviaMint,
+                  tint = RiviaIconDefault,
                   modifier = Modifier.size(16.dp),
                 )
                 Text(
                   text = "Examples",
                   style = MaterialTheme.typography.labelLarge,
-                  color = RiviaMint,
+                  color = RiviaTextPrimary,
                 )
               }
               topic.examples.forEach { ex ->
@@ -476,14 +479,14 @@ fun SettingHelpBottomSheet(
                 ) {
                   Text(
                     text = "•",
-                    color = RiviaMint,
+                    color = RiviaTextSecondary,
                     fontWeight = FontWeight.Bold,
                   )
                   Text(
                     text = ex,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = ChivoMonoFontFamily,
-                    color = RiviaText,
+                    color = RiviaTextPrimary,
                     fontSize = 12.sp,
                   )
                 }
@@ -497,7 +500,7 @@ fun SettingHelpBottomSheet(
           horizontalArrangement = Arrangement.End,
         ) {
           TextButton(onClick = onDismiss) {
-            Text("Got it", color = RiviaMint, fontWeight = FontWeight.SemiBold)
+            Text("Got it", color = RiviaTextPrimary, fontWeight = FontWeight.SemiBold)
           }
         }
       }
@@ -513,13 +516,13 @@ fun SettingHelpBottomSheet(
           Text(
             text = sheetTitle,
             style = MaterialTheme.typography.titleLarge,
-            color = RiviaText,
+            color = RiviaTextPrimary,
           )
           TextButton(onClick = onDismiss) {
-            Text("Done", color = RiviaMint, fontWeight = FontWeight.SemiBold)
+            Text("Done", color = RiviaTextPrimary, fontWeight = FontWeight.SemiBold)
           }
         }
-        HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
+        HorizontalDivider(color = RiviaBorder)
         LazyColumn(
           modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
           contentPadding = PaddingValues(16.dp),
@@ -528,7 +531,7 @@ fun SettingHelpBottomSheet(
           items(allTopics, key = { it.id }) { item ->
             Surface(
               shape = RoundedCornerShape(16.dp),
-              color = RiviaSurface,
+              color = RiviaSurface2,
               modifier = Modifier.fillMaxWidth(),
             ) {
               Column(
@@ -538,17 +541,17 @@ fun SettingHelpBottomSheet(
                 Text(
                   text = item.title,
                   style = MaterialTheme.typography.titleMedium,
-                  color = RiviaMint,
+                  color = RiviaTextPrimary,
                 )
                 Text(
                   text = item.summary,
                   style = MaterialTheme.typography.bodySmall,
-                  color = RiviaText,
+                  color = RiviaTextPrimary,
                 )
                 Text(
                   text = item.whenToUse,
                   style = MaterialTheme.typography.bodySmall,
-                  color = RiviaMutedText,
+                  color = RiviaTextSecondary,
                 )
                 if (item.examples.isNotEmpty()) {
                   Spacer(modifier = Modifier.height(2.dp))
@@ -557,10 +560,10 @@ fun SettingHelpBottomSheet(
                       text = "• $ex",
                       style = MaterialTheme.typography.labelSmall,
                       fontFamily = ChivoMonoFontFamily,
-                      color = RiviaText,
+                      color = RiviaTextPrimary,
                       modifier =
                         Modifier.fillMaxWidth()
-                          .background(RiviaBackground.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                          .background(RiviaBackground, RoundedCornerShape(8.dp))
                           .padding(horizontal = 10.dp, vertical = 6.dp),
                     )
                   }

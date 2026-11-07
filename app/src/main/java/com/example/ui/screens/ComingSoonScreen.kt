@@ -42,11 +42,14 @@ import com.example.ui.theme.AppUiMode
 import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaMutedText
-import com.example.ui.theme.RiviaRaisedSurface
-import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaOnAccent
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextSecondary
 
 @Composable
 fun ComingSoonScreen(
@@ -94,13 +97,13 @@ fun ComingSoonScreen(
 
         Surface(
           shape = RoundedCornerShape(50),
-          color = RiviaMint.copy(alpha = 0.14f),
-          border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.55f)),
+          color = RiviaSurface2,
+          border = BorderStroke(1.dp, RiviaBorder),
           modifier = Modifier.padding(end = 12.dp),
         ) {
           Text(
             text = appUiMode.displayName.uppercase(),
-            color = RiviaMint,
+            color = RiviaTextSecondary,
             fontFamily = ChivoMonoFontFamily,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
@@ -117,8 +120,8 @@ fun ComingSoonScreen(
     ) {
       Surface(
         shape = RoundedCornerShape(24.dp),
-        color = RiviaSurface,
-        border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.45f)),
+        color = RiviaSurface2,
+        border = BorderStroke(1.dp, RiviaBorder),
         modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth(),
       ) {
         Column(
@@ -128,7 +131,7 @@ fun ComingSoonScreen(
         ) {
           Surface(
             shape = RoundedCornerShape(18.dp),
-            color = RiviaRaisedSurface,
+            color = RiviaSurface1,
             border = BorderStroke(1.dp, RiviaBorder),
             modifier = Modifier.size(64.dp),
           ) {
@@ -137,7 +140,7 @@ fun ComingSoonScreen(
                 imageVector =
                   if (isPipeline) Icons.Outlined.AccountTree else Icons.Outlined.Tune,
                 contentDescription = title,
-                tint = RiviaMint,
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(30.dp),
               )
             }
@@ -145,12 +148,12 @@ fun ComingSoonScreen(
 
           Surface(
             shape = RoundedCornerShape(50),
-            color = RiviaMint.copy(alpha = 0.16f),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+            color = RiviaSurface1,
+            border = BorderStroke(1.dp, RiviaBorder),
           ) {
             Text(
               text = "COMING SOON",
-              color = RiviaMint,
+              color = RiviaTextSecondary,
               fontFamily = ChivoMonoFontFamily,
               fontWeight = FontWeight.Bold,
               fontSize = 11.sp,
@@ -181,7 +184,7 @@ fun ComingSoonScreen(
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = RiviaMint,
-                contentColor = RiviaBackground,
+                contentColor = RiviaOnAccent,
               ),
             shape = RoundedCornerShape(14.dp),
             modifier =

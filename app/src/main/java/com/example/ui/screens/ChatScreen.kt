@@ -124,6 +124,7 @@ import com.example.model.ProfileTestState
 import com.example.model.RunSettings
 import com.example.ui.components.MarkdownText
 import com.example.ui.components.OrbState
+import com.example.ui.components.RiviaHomeParticleSphere
 import com.example.ui.components.RiviaOrb
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
@@ -134,14 +135,23 @@ import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
+import com.example.ui.theme.RiviaIconActive
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaModeBlue
 import com.example.ui.theme.RiviaModeMint
 import com.example.ui.theme.RiviaModeViolet
 import com.example.ui.theme.RiviaMutedText
+import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaSurface2
+import com.example.ui.theme.RiviaSurface3
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextSecondary
+import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.ui.theme.accentColorForMode
 import com.example.util.TextAudioTagProcessor
@@ -461,16 +471,16 @@ fun ChatScreen(
   messageForEdit?.let { msg ->
     AlertDialog(
       onDismissRequest = { messageForEdit = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
-      textContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
+      textContentColor = RiviaTextPrimary,
       title = { Text("Edit & resend message") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(
             text = "Resending from this turn will replace subsequent turns in this chat.",
             style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
+            color = RiviaTextSecondary,
           )
           OutlinedTextField(
             value = editDraftText,
@@ -490,15 +500,15 @@ fun ChatScreen(
             messageForEdit = null
             viewModel.editUserMessageAndResend(targetId, updatedText)
           },
-          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaBackground),
+          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaOnAccent),
           modifier = Modifier.testTag("confirm_edit_resend_button"),
         ) {
-          Text("Resend")
+          Text("Resend", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
         }
       },
       dismissButton = {
         TextButton(onClick = { messageForEdit = null }) {
-          Text("Cancel", color = RiviaMutedText)
+          Text("Cancel", color = RiviaTextSecondary)
         }
       },
     )
@@ -508,8 +518,8 @@ fun ChatScreen(
   chatForContextMenu?.let { chat ->
     AlertDialog(
       onDismissRequest = { chatForContextMenu = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
       title = { Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -524,10 +534,10 @@ fun ChatScreen(
             Icon(
               imageVector = Icons.Outlined.DriveFileRenameOutline,
               contentDescription = "Rename chat",
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
             )
             Spacer(modifier = Modifier.width(10.dp))
-            Text("Rename chat", color = RiviaText, modifier = Modifier.weight(1f))
+            Text("Rename chat", color = RiviaTextPrimary, modifier = Modifier.weight(1f))
           }
           TextButton(
             onClick = {
@@ -548,7 +558,7 @@ fun ChatScreen(
       },
       confirmButton = {
         TextButton(onClick = { chatForContextMenu = null }) {
-          Text("Close", color = RiviaMutedText)
+          Text("Close", color = RiviaTextSecondary)
         }
       },
     )
@@ -558,8 +568,8 @@ fun ChatScreen(
   chatToRename?.let { chat ->
     AlertDialog(
       onDismissRequest = { chatToRename = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
       title = { Text("Rename chat") },
       text = {
         OutlinedTextField(
@@ -576,14 +586,14 @@ fun ChatScreen(
             viewModel.renameChat(chat.id, renameDraftText)
             chatToRename = null
           },
-          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaBackground),
+          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaOnAccent),
         ) {
-          Text("Save")
+          Text("Save", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
         }
       },
       dismissButton = {
         TextButton(onClick = { chatToRename = null }) {
-          Text("Cancel", color = RiviaMutedText)
+          Text("Cancel", color = RiviaTextSecondary)
         }
       },
     )
@@ -593,13 +603,13 @@ fun ChatScreen(
   chatToDelete?.let { chat ->
     AlertDialog(
       onDismissRequest = { chatToDelete = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
       title = { Text("Delete chat?") },
       text = {
         Text(
           "Delete \"${chat.title}\" and all its turns? This cannot be undone.",
-          color = RiviaMutedText,
+          color = RiviaTextSecondary,
         )
       },
       confirmButton = {
@@ -608,14 +618,14 @@ fun ChatScreen(
             viewModel.deleteChat(chat.id)
             chatToDelete = null
           },
-          colors = ButtonDefaults.buttonColors(containerColor = RiviaErrorRed, contentColor = RiviaBackground),
+          colors = ButtonDefaults.buttonColors(containerColor = RiviaErrorRed, contentColor = RiviaOnAccent),
         ) {
-          Text("Delete")
+          Text("Delete", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
         }
       },
       dismissButton = {
         TextButton(onClick = { chatToDelete = null }) {
-          Text("Cancel", color = RiviaMutedText)
+          Text("Cancel", color = RiviaTextSecondary)
         }
       },
     )
@@ -629,8 +639,8 @@ fun ChatScreen(
 
     AlertDialog(
       onDismissRequest = { presetToEdit = null },
-      containerColor = RiviaRaisedSurface,
-      titleContentColor = RiviaText,
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
       title = { Text("Edit ${preset.name} Preset") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -645,7 +655,7 @@ fun ChatScreen(
           Text(
             text = "Thinking level",
             style = MaterialTheme.typography.labelLarge,
-            color = RiviaMutedText,
+            color = RiviaTextSecondary,
           )
           Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -655,7 +665,7 @@ fun ChatScreen(
               val selected = editThinking == lvl
               Surface(
                 shape = RoundedCornerShape(8.dp),
-                color = if (selected) RiviaMint else RiviaSurface,
+                color = if (selected) RiviaMint else RiviaSurface2,
                 border = BorderStroke(1.dp, if (selected) RiviaMint else RiviaBorder),
                 modifier =
                   Modifier.clip(RoundedCornerShape(8.dp))
@@ -663,9 +673,10 @@ fun ChatScreen(
               ) {
                 Text(
                   text = if (lvl == "model_default") "default" else lvl,
-                  color = if (selected) RiviaBackground else RiviaText,
+                  color = if (selected) RiviaOnAccent else RiviaTextPrimary,
                   fontFamily = ChivoMonoFontFamily,
                   fontSize = 12.sp,
+                  fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                   modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                 )
               }
@@ -685,14 +696,14 @@ fun ChatScreen(
             )
             presetToEdit = null
           },
-          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaBackground),
+          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaOnAccent),
         ) {
-          Text("Save Preset")
+          Text("Save Preset", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
         }
       },
       dismissButton = {
         TextButton(onClick = { presetToEdit = null }) {
-          Text("Cancel", color = RiviaMutedText)
+          Text("Cancel", color = RiviaTextSecondary)
         }
       },
     )
@@ -760,7 +771,7 @@ private fun ChatDrawerContent(
         colors =
           ButtonDefaults.buttonColors(
             containerColor = RiviaMint,
-            contentColor = RiviaBackground,
+            contentColor = RiviaOnAccent,
           ),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
         modifier = Modifier.minimumInteractiveComponentSize().testTag("new_chat_button"),
@@ -768,10 +779,16 @@ private fun ChatDrawerContent(
         Icon(
           imageVector = Icons.Default.Add,
           contentDescription = newChatButtonLabel,
+          tint = RiviaOnAccent,
           modifier = Modifier.size(16.dp),
         )
         Spacer(modifier = Modifier.width(4.dp))
-        Text(newChatButtonLabel, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+          newChatButtonLabel,
+          color = RiviaOnAccent,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.SemiBold,
+        )
       }
     }
 
@@ -784,14 +801,14 @@ private fun ChatDrawerContent(
           text =
             if (appUiMode == AppUiMode.LABS) "Search Labs chats..."
             else "Search Rivia chats...",
-          color = RiviaMutedText,
+          color = RiviaTextTertiary,
         )
       },
       leadingIcon = {
         Icon(
           imageVector = Icons.Outlined.Search,
           contentDescription = "Search chats",
-          tint = RiviaMutedText,
+          tint = RiviaIconDefault,
         )
       },
       singleLine = true,
@@ -799,12 +816,12 @@ private fun ChatDrawerContent(
       modifier = Modifier.fillMaxWidth().testTag("drawer_search_input"),
       colors =
         OutlinedTextFieldDefaults.colors(
-          focusedTextColor = RiviaText,
-          unfocusedTextColor = RiviaText,
-          focusedContainerColor = RiviaRaisedSurface,
-          unfocusedContainerColor = RiviaRaisedSurface,
-          focusedBorderColor = RiviaMint.copy(alpha = 0.5f),
-          unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+          focusedTextColor = RiviaTextPrimary,
+          unfocusedTextColor = RiviaTextPrimary,
+          focusedContainerColor = RiviaSurface2,
+          unfocusedContainerColor = RiviaSurface2,
+          focusedBorderColor = RiviaMint,
+          unfocusedBorderColor = RiviaBorder,
           cursorColor = RiviaMint,
         ),
     )
@@ -825,7 +842,7 @@ private fun ChatDrawerContent(
               else -> "No conversations yet"
             },
           style = MaterialTheme.typography.bodyMedium,
-          color = RiviaMutedText,
+          color = RiviaTextSecondary,
         )
       }
     } else {
@@ -838,8 +855,11 @@ private fun ChatDrawerContent(
           Surface(
             shape = RoundedCornerShape(14.dp),
             color =
-              if (isSelected) RiviaMint.copy(alpha = 0.14f)
+              if (isSelected) RiviaSurface3
               else androidx.compose.ui.graphics.Color.Transparent,
+            border =
+              if (isSelected) BorderStroke(1.dp, RiviaBorder)
+              else null,
             modifier =
               Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
@@ -861,7 +881,7 @@ private fun ChatDrawerContent(
                   text = chat.title,
                   style = MaterialTheme.typography.bodyMedium,
                   fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                  color = if (isSelected) RiviaMint else RiviaText,
+                  color = RiviaTextPrimary,
                   maxLines = 1,
                   overflow = TextOverflow.Ellipsis,
                   modifier = Modifier.weight(1f),
@@ -870,12 +890,12 @@ private fun ChatDrawerContent(
                   Spacer(modifier = Modifier.width(6.dp))
                   Surface(
                     shape = RoundedCornerShape(50),
-                    color = RiviaModeBlue.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, RiviaModeBlue.copy(alpha = 0.55f)),
+                    color = RiviaSurface2,
+                    border = BorderStroke(1.dp, RiviaBorder),
                   ) {
                     Text(
                       text = "Labs",
-                      color = RiviaModeBlue,
+                      color = RiviaTextSecondary,
                       fontFamily = ChivoMonoFontFamily,
                       fontSize = 10.sp,
                       fontWeight = FontWeight.SemiBold,
@@ -888,7 +908,7 @@ private fun ChatDrawerContent(
                 text = dateFormatter.format(Date(chat.updatedAt)),
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = ChivoMonoFontFamily,
-                color = RiviaMutedText,
+                color = RiviaTextTertiary,
               )
             }
           }
@@ -900,7 +920,8 @@ private fun ChatDrawerContent(
     if (appUiMode == AppUiMode.LABS) {
       Surface(
         shape = RoundedCornerShape(16.dp),
-        color = RiviaRaisedSurface,
+        color = RiviaSurface2,
+        border = BorderStroke(1.dp, RiviaBorder),
         modifier =
           Modifier.fillMaxWidth()
             .minimumInteractiveComponentSize()
@@ -916,14 +937,14 @@ private fun ChatDrawerContent(
           Icon(
             imageVector = Icons.Outlined.Science,
             contentDescription = "Tests",
-            tint = RiviaMint,
+            tint = RiviaIconDefault,
             modifier = Modifier.size(18.dp),
           )
           Spacer(modifier = Modifier.width(8.dp))
           Text(
             text = "Tests",
             style = MaterialTheme.typography.labelLarge,
-            color = RiviaText,
+            color = RiviaTextPrimary,
           )
         }
       }
@@ -932,7 +953,8 @@ private fun ChatDrawerContent(
     // Pipeline item directly above Layers (opens Coming Soon screen in all 3 modes)
     Surface(
       shape = RoundedCornerShape(16.dp),
-      color = RiviaRaisedSurface,
+      color = RiviaSurface2,
+      border = BorderStroke(1.dp, RiviaBorder),
       modifier =
         Modifier.fillMaxWidth()
           .minimumInteractiveComponentSize()
@@ -948,24 +970,24 @@ private fun ChatDrawerContent(
         Icon(
           imageVector = Icons.Outlined.AccountTree,
           contentDescription = "Pipeline",
-          tint = RiviaMint,
+          tint = RiviaIconDefault,
           modifier = Modifier.size(18.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
           text = "Pipeline",
           style = MaterialTheme.typography.labelLarge,
-          color = RiviaText,
+          color = RiviaTextPrimary,
         )
         Spacer(modifier = Modifier.width(8.dp))
         Surface(
           shape = RoundedCornerShape(50),
-          color = RiviaMint.copy(alpha = 0.14f),
-          border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.45f)),
+          color = RiviaSurface3,
+          border = BorderStroke(1.dp, RiviaBorder),
         ) {
           Text(
             text = "Soon",
-            color = RiviaMint,
+            color = RiviaTextSecondary,
             fontFamily = ChivoMonoFontFamily,
             fontSize = 9.sp,
             fontWeight = FontWeight.SemiBold,
@@ -978,7 +1000,8 @@ private fun ChatDrawerContent(
     // Layers item above Settings (visual Coming Soon in Rivia mode; full editor in Dev & Labs modes)
     Surface(
       shape = RoundedCornerShape(16.dp),
-      color = RiviaRaisedSurface,
+      color = RiviaSurface2,
+      border = BorderStroke(1.dp, RiviaBorder),
       modifier =
         Modifier.fillMaxWidth()
           .minimumInteractiveComponentSize()
@@ -994,25 +1017,25 @@ private fun ChatDrawerContent(
         Icon(
           imageVector = Icons.Outlined.Tune,
           contentDescription = "Layers",
-          tint = RiviaMint,
+          tint = RiviaIconDefault,
           modifier = Modifier.size(18.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
           text = if (appUiMode == AppUiMode.LABS) "Layers (Labs)" else "Layers",
           style = MaterialTheme.typography.labelLarge,
-          color = RiviaText,
+          color = RiviaTextPrimary,
         )
         if (appUiMode == AppUiMode.RIVIA) {
           Spacer(modifier = Modifier.width(8.dp))
           Surface(
             shape = RoundedCornerShape(50),
-            color = RiviaMint.copy(alpha = 0.14f),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.45f)),
+            color = RiviaSurface3,
+            border = BorderStroke(1.dp, RiviaBorder),
           ) {
             Text(
               text = "Soon",
-              color = RiviaMint,
+              color = RiviaTextSecondary,
               fontFamily = ChivoMonoFontFamily,
               fontSize = 9.sp,
               fontWeight = FontWeight.SemiBold,
@@ -1033,7 +1056,8 @@ private fun ChatDrawerContent(
 
     Surface(
       shape = RoundedCornerShape(16.dp),
-      color = RiviaRaisedSurface,
+      color = RiviaSurface2,
+      border = BorderStroke(1.dp, RiviaBorder),
       modifier =
         Modifier.fillMaxWidth()
           .minimumInteractiveComponentSize()
@@ -1049,14 +1073,14 @@ private fun ChatDrawerContent(
         Icon(
           imageVector = Icons.Outlined.Settings,
           contentDescription = "Settings",
-          tint = RiviaMint,
+          tint = RiviaIconDefault,
           modifier = Modifier.size(18.dp),
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
           text = settingsButtonLabel,
           style = MaterialTheme.typography.labelLarge,
-          color = RiviaText,
+          color = RiviaTextPrimary,
         )
       }
     }
@@ -1065,8 +1089,8 @@ private fun ChatDrawerContent(
     if (appUiMode != AppUiMode.RIVIA) {
       Surface(
         shape = RoundedCornerShape(14.dp),
-        color = RiviaRaisedSurface,
-        border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.45f)),
+        color = RiviaSurface2,
+        border = BorderStroke(1.dp, RiviaBorder),
         modifier =
           Modifier.fillMaxWidth()
             .minimumInteractiveComponentSize()
@@ -1082,14 +1106,14 @@ private fun ChatDrawerContent(
           Icon(
             imageVector = Icons.AutoMirrored.Outlined.ExitToApp,
             contentDescription = "Exit to Rivia",
-            tint = RiviaMint,
+            tint = RiviaIconDefault,
             modifier = Modifier.size(16.dp),
           )
           Spacer(modifier = Modifier.width(8.dp))
           Text(
             text = "Exit to Rivia",
             style = MaterialTheme.typography.labelMedium,
-            color = RiviaMint,
+            color = RiviaTextPrimary,
             fontWeight = FontWeight.SemiBold,
           )
         }
@@ -1112,7 +1136,7 @@ private fun ChatDrawerContent(
         text = "Dev & Labs",
         style = MaterialTheme.typography.labelSmall,
         fontFamily = ChivoMonoFontFamily,
-        color = RiviaMutedText.copy(alpha = 0.75f),
+        color = RiviaTextTertiary,
       )
     }
   }
@@ -1130,8 +1154,8 @@ private fun DevLabsModeSheet(
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
-    containerColor = RiviaRaisedSurface,
-    contentColor = RiviaText,
+    containerColor = RiviaSurface1,
+    contentColor = RiviaTextPrimary,
   ) {
     Column(
       modifier =
@@ -1144,13 +1168,13 @@ private fun DevLabsModeSheet(
         text = "Dev & Labs",
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        color = RiviaText,
+        color = RiviaTextPrimary,
       )
 
       // Dev choice: requires 600 ms long press + haptic tick on unlock
       Surface(
         shape = RoundedCornerShape(16.dp),
-        color = RiviaSurface,
+        color = RiviaSurface2,
         border =
           BorderStroke(
             1.dp,
@@ -1191,17 +1215,17 @@ private fun DevLabsModeSheet(
               Text(
                 text = "Dev",
                 style = MaterialTheme.typography.titleSmall,
-                color = RiviaModeViolet,
+                color = RiviaTextPrimary,
                 fontWeight = FontWeight.Bold,
               )
               Surface(
                 shape = RoundedCornerShape(50),
-                color = RiviaModeViolet.copy(alpha = 0.16f),
-                border = BorderStroke(1.dp, RiviaModeViolet.copy(alpha = 0.5f)),
+                color = RiviaSurface3,
+                border = BorderStroke(1.dp, RiviaBorder),
               ) {
                 Text(
                   text = "Hold 600ms",
-                  color = RiviaModeViolet,
+                  color = RiviaTextSecondary,
                   fontFamily = ChivoMonoFontFamily,
                   fontSize = 9.sp,
                   fontWeight = FontWeight.SemiBold,
@@ -1212,14 +1236,14 @@ private fun DevLabsModeSheet(
             Text(
               text = "Edit Rivia's live layers, keys, voice, and internals.",
               style = MaterialTheme.typography.bodySmall,
-              color = RiviaMutedText,
+              color = RiviaTextSecondary,
             )
             if (showDevHoldHint) {
               Text(
                 text = "Hold for 600ms to unlock Dev",
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = ChivoMonoFontFamily,
-                color = RiviaModeViolet,
+                color = RiviaTextSecondary,
                 modifier = Modifier.padding(top = 4.dp).testTag("dev_hold_hint_text"),
               )
             }
@@ -1230,7 +1254,7 @@ private fun DevLabsModeSheet(
       // Labs choice: opens on a normal tap
       Surface(
         shape = RoundedCornerShape(16.dp),
-        color = RiviaSurface,
+        color = RiviaSurface2,
         border =
           BorderStroke(
             1.dp,
@@ -1255,13 +1279,13 @@ private fun DevLabsModeSheet(
             Text(
               text = "Labs",
               style = MaterialTheme.typography.titleSmall,
-              color = RiviaModeBlue,
+              color = RiviaTextPrimary,
               fontWeight = FontWeight.Bold,
             )
             Text(
               text = "Isolated sandbox for testing models, layers, voice, VAD, and Step 0/1 checks.",
               style = MaterialTheme.typography.bodySmall,
-              color = RiviaMutedText,
+              color = RiviaTextSecondary,
             )
           }
         }
@@ -1377,7 +1401,7 @@ private fun ChatConversationPane(
               Icon(
                 imageVector = Icons.Outlined.Menu,
                 contentDescription = "Open navigation drawer",
-                tint = RiviaText,
+                tint = RiviaIconDefault,
               )
             }
           } else {
@@ -1392,7 +1416,7 @@ private fun ChatConversationPane(
               Text(
                 text = chatTitle,
                 style = MaterialTheme.typography.titleMedium,
-                color = RiviaText,
+                color = RiviaTextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -1401,13 +1425,13 @@ private fun ChatConversationPane(
               if (appUiMode != AppUiMode.RIVIA) {
                 Surface(
                   shape = RoundedCornerShape(50),
-                  color = RiviaMint.copy(alpha = 0.16f),
-                  border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.6f)),
+                  color = RiviaSurface2,
+                  border = BorderStroke(1.dp, RiviaBorder),
                   modifier = Modifier.testTag("top_bar_mode_tag"),
                 ) {
                   Text(
                     text = if (appUiMode == AppUiMode.DEV) "DEV" else "LABS",
-                    color = RiviaMint,
+                    color = RiviaTextSecondary,
                     fontFamily = ChivoMonoFontFamily,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
@@ -1441,7 +1465,7 @@ private fun ChatConversationPane(
                 text = displayedModelName,
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = ChivoMonoFontFamily,
-                color = RiviaMutedText,
+                color = RiviaTextTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
               )
@@ -1461,7 +1485,7 @@ private fun ChatConversationPane(
                 contentDescription =
                   if (runSettings.autoReadAloud) "Disable auto read-aloud"
                   else "Enable auto read-aloud",
-                tint = if (runSettings.autoReadAloud) RiviaMint else RiviaMutedText,
+                tint = if (runSettings.autoReadAloud) RiviaIconActive else RiviaIconDefault,
               )
             }
           }
@@ -1481,7 +1505,8 @@ private fun ChatConversationPane(
               Box {
                 Surface(
                   shape = RoundedCornerShape(18.dp),
-                  color = RiviaMint.copy(alpha = 0.14f),
+                  color = RiviaSurface2,
+                  border = BorderStroke(1.dp, RiviaBorder),
                   modifier =
                     Modifier.minimumInteractiveComponentSize()
                       .clip(RoundedCornerShape(18.dp))
@@ -1497,7 +1522,7 @@ private fun ChatConversationPane(
                     Text(
                       text = runSettings.activeModeName,
                       style = MaterialTheme.typography.labelLarge,
-                      color = RiviaMint,
+                      color = RiviaTextPrimary,
                     )
                   }
                 }
@@ -1505,7 +1530,7 @@ private fun ChatConversationPane(
                 DropdownMenu(
                   expanded = showPresetMenu,
                   onDismissRequest = { showPresetMenu = false },
-                  modifier = Modifier.background(RiviaRaisedSurface),
+                  modifier = Modifier.background(RiviaSurface1),
                 ) {
                   modePresets.forEach { preset ->
                     DropdownMenuItem(
@@ -1513,12 +1538,12 @@ private fun ChatConversationPane(
                         Column {
                           Text(
                             text = preset.name,
-                            color = RiviaText,
+                            color = RiviaTextPrimary,
                             fontWeight = FontWeight.SemiBold,
                           )
                           Text(
                             text = "${preset.model} · ${preset.thinkingLevel}",
-                            color = RiviaMutedText,
+                            color = RiviaTextSecondary,
                             fontFamily = ChivoMonoFontFamily,
                             fontSize = 11.sp,
                           )
@@ -1535,7 +1560,7 @@ private fun ChatConversationPane(
                           Icon(
                             imageVector = Icons.Outlined.Edit,
                             contentDescription = "Edit ${preset.name} preset",
-                            tint = RiviaMutedText,
+                            tint = RiviaIconDefault,
                             modifier = Modifier.size(16.dp),
                           )
                         }
@@ -1558,7 +1583,8 @@ private fun ChatConversationPane(
                 Box {
                   Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = RiviaMint.copy(alpha = 0.14f),
+                    color = RiviaSurface2,
+                    border = BorderStroke(1.dp, RiviaBorder),
                     modifier =
                       Modifier.minimumInteractiveComponentSize()
                         .clip(RoundedCornerShape(18.dp))
@@ -1579,7 +1605,7 @@ private fun ChatConversationPane(
                       Text(
                         text = LayerConfigManager.displayProfileLabel(activeRiviaProfile),
                         style = MaterialTheme.typography.labelLarge,
-                        color = RiviaMint,
+                        color = RiviaTextPrimary,
                       )
                     }
                   }
@@ -1587,7 +1613,7 @@ private fun ChatConversationPane(
                   DropdownMenu(
                     expanded = showPresetMenu,
                     onDismissRequest = { showPresetMenu = false },
-                    modifier = Modifier.background(RiviaRaisedSurface),
+                    modifier = Modifier.background(RiviaSurface1),
                   ) {
                     val riviaModes = listOf("fast", "balanced", "deep", "live_typed")
                     riviaModes.forEach { modeKey ->
@@ -1606,13 +1632,13 @@ private fun ChatConversationPane(
                             Column {
                               Text(
                                 text = LayerConfigManager.displayProfileLabel(modeKey),
-                                color = RiviaText,
+                                color = RiviaTextPrimary,
                                 fontWeight = FontWeight.SemiBold,
                               )
                               if (profCfg != null) {
                                 Text(
                                   text = "${profCfg.model} · ${profCfg.thinking_level}",
-                                  color = RiviaMutedText,
+                                  color = RiviaTextSecondary,
                                   fontFamily = ChivoMonoFontFamily,
                                   fontSize = 11.sp,
                                 )
@@ -1639,7 +1665,7 @@ private fun ChatConversationPane(
                   Icon(
                     imageVector = Icons.Outlined.Edit,
                     contentDescription = "Edit Engine profiles in Layers",
-                    tint = RiviaMutedText,
+                    tint = RiviaIconDefault,
                     modifier = Modifier.size(16.dp),
                   )
                 }
@@ -1660,7 +1686,7 @@ private fun ChatConversationPane(
                   contentDescription =
                     if (runSettings.autoReadAloud) "Disable auto read-aloud"
                     else "Enable auto read-aloud",
-                  tint = if (runSettings.autoReadAloud) RiviaMint else RiviaMutedText,
+                  tint = if (runSettings.autoReadAloud) RiviaIconActive else RiviaIconDefault,
                 )
               }
 
@@ -1674,7 +1700,7 @@ private fun ChatConversationPane(
                   Icon(
                     imageVector = Icons.Outlined.Science,
                     contentDescription = "Open Labs Sandbox Layers",
-                    tint = RiviaMint,
+                    tint = RiviaIconDefault,
                   )
                 }
                 IconButton(
@@ -1685,7 +1711,7 @@ private fun ChatConversationPane(
                   Icon(
                     imageVector = Icons.Outlined.Tune,
                     contentDescription = "Open Run settings for this Labs chat",
-                    tint = RiviaText,
+                    tint = RiviaIconDefault,
                   )
                 }
               } else if (appUiMode == AppUiMode.DEV) {
@@ -1697,7 +1723,7 @@ private fun ChatConversationPane(
                   Icon(
                     imageVector = Icons.Outlined.Info,
                     contentDescription = "Open Chat info for this Rivia chat",
-                    tint = RiviaText,
+                    tint = RiviaTextTertiary,
                   )
                 }
               }
@@ -1710,7 +1736,8 @@ private fun ChatConversationPane(
     // Confirmed Decision 1: Setup Banner on first launch before keys are entered
     if (missingKeys) {
       Surface(
-        color = RiviaSurface,
+        color = RiviaSurface1,
+        border = BorderStroke(1.dp, RiviaBorder),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
       ) {
@@ -1730,13 +1757,14 @@ private fun ChatConversationPane(
             Text(
               text = "Paste your Gemini and ElevenLabs API keys in Settings to get started.",
               style = MaterialTheme.typography.bodySmall,
-              color = RiviaText,
+              color = RiviaTextPrimary,
             )
           }
           Spacer(modifier = Modifier.width(8.dp))
           Surface(
             shape = RoundedCornerShape(14.dp),
-            color = RiviaMint.copy(alpha = 0.16f),
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
             modifier =
               Modifier.minimumInteractiveComponentSize()
                 .clip(RoundedCornerShape(14.dp))
@@ -1755,13 +1783,13 @@ private fun ChatConversationPane(
               Icon(
                 imageVector = Icons.Outlined.Key,
                 contentDescription = "Open Settings",
-                tint = RiviaMint,
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(16.dp),
               )
               Spacer(modifier = Modifier.width(6.dp))
               Text(
                 text = if (appUiMode == AppUiMode.RIVIA) "Dev Settings" else "Settings",
-                color = RiviaMint,
+                color = RiviaTextPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
               )
@@ -1774,7 +1802,8 @@ private fun ChatConversationPane(
     // Plain API Error / Status Banner
     if (!statusBanner.isNullOrBlank()) {
       Surface(
-        color = RiviaSurface,
+        color = RiviaSurface1,
+        border = BorderStroke(1.dp, RiviaBorder),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
       ) {
@@ -1797,11 +1826,11 @@ private fun ChatConversationPane(
             Text(
               text = statusBanner,
               style = MaterialTheme.typography.bodySmall,
-              color = if (isErrorBanner) RiviaErrorRed else RiviaText,
+              color = if (isErrorBanner) RiviaErrorRed else RiviaTextPrimary,
             )
           }
           TextButton(onClick = onDismissBanner) {
-            Text("Dismiss", color = RiviaMutedText, fontSize = 12.sp)
+            Text("Dismiss", color = RiviaTextSecondary, fontSize = 12.sp)
           }
         }
       }
@@ -1817,19 +1846,18 @@ private fun ChatConversationPane(
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-          RiviaOrb(
-            state = if (isSpeaking) OrbState.SPEAKING else OrbState.IDLE,
-            size = 76.dp,
+          RiviaHomeParticleSphere(
+            showDevTuning = appUiMode == AppUiMode.DEV,
           )
           Text(
             text = "Rivia",
             style = MaterialTheme.typography.headlineMedium,
-            color = RiviaText,
+            color = RiviaTextPrimary,
           )
           Text(
             text = "Ask anything below, tap the mic to dictate, or start a hands-free Live voice session.",
             style = MaterialTheme.typography.bodyMedium,
-            color = RiviaMutedText,
+            color = RiviaTextSecondary,
             modifier = Modifier.widthIn(max = 360.dp),
           )
         }
@@ -1905,7 +1933,8 @@ private fun UserMessageBubble(
           bottomStart = 22.dp,
           bottomEnd = 6.dp,
         ),
-      color = RiviaMint.copy(alpha = 0.14f),
+      color = RiviaSurface3,
+      border = BorderStroke(1.dp, RiviaBorder),
       modifier = Modifier.widthIn(max = 520.dp),
     ) {
       Column(
@@ -1922,14 +1951,14 @@ private fun UserMessageBubble(
               text = message.voiceLabel,
               style = MaterialTheme.typography.labelSmall,
               fontFamily = ChivoMonoFontFamily,
-              color = RiviaMint,
+              color = RiviaTextSecondary,
             )
           }
         }
         Text(
           text = TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
           style = MaterialTheme.typography.bodyLarge,
-          color = RiviaText,
+          color = RiviaTextPrimary,
         )
       }
     }
@@ -1946,7 +1975,7 @@ private fun UserMessageBubble(
         Icon(
           imageVector = Icons.Outlined.ContentCopy,
           contentDescription = "Copy my message",
-          tint = RiviaMutedText.copy(alpha = 0.75f),
+          tint = RiviaIconDefault,
           modifier = Modifier.size(15.dp),
         )
       }
@@ -1957,7 +1986,7 @@ private fun UserMessageBubble(
         Icon(
           imageVector = Icons.Outlined.Edit,
           contentDescription = "Edit and resend message",
-          tint = RiviaMutedText.copy(alpha = 0.75f),
+          tint = RiviaIconDefault,
           modifier = Modifier.size(15.dp),
         )
       }
@@ -2005,7 +2034,8 @@ internal fun AssistantMessageBubble(
       if (message.thoughtSummary.isNotBlank()) {
         Surface(
           shape = RoundedCornerShape(14.dp),
-          color = RiviaSurface,
+          color = RiviaSurface2,
+          border = BorderStroke(1.dp, RiviaBorder),
           modifier =
             Modifier.fillMaxWidth()
               .clip(RoundedCornerShape(14.dp))
@@ -2028,7 +2058,7 @@ internal fun AssistantMessageBubble(
                 Text(
                   text = "Thinking",
                   style = MaterialTheme.typography.labelLarge,
-                  color = RiviaMutedText,
+                  color = RiviaTextSecondary,
                 )
               }
               Icon(
@@ -2037,7 +2067,7 @@ internal fun AssistantMessageBubble(
                   else Icons.Outlined.ExpandMore,
                 contentDescription =
                   if (thinkingExpanded) "Collapse Thinking" else "Expand Thinking",
-                tint = RiviaMutedText,
+                tint = RiviaIconDefault,
                 modifier = Modifier.size(18.dp),
               )
             }
@@ -2045,7 +2075,7 @@ internal fun AssistantMessageBubble(
               Text(
                 text = message.thoughtSummary,
                 style = MaterialTheme.typography.bodySmall,
-                color = RiviaMutedText,
+                color = RiviaTextSecondary,
                 modifier = Modifier.padding(top = 4.dp),
               )
             }
@@ -2057,7 +2087,8 @@ internal fun AssistantMessageBubble(
       if (message.status.startsWith("polling")) {
         Surface(
           shape = RoundedCornerShape(12.dp),
-          color = RiviaSurface,
+          color = RiviaSurface2,
+          border = BorderStroke(1.dp, RiviaBorder),
         ) {
           Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -2129,7 +2160,7 @@ internal fun AssistantMessageBubble(
               else Icons.AutoMirrored.Outlined.VolumeUp,
             contentDescription =
               if (isSpeaking) "Stop read-aloud" else "Listen with ElevenLabs",
-            tint = if (isSpeaking) RiviaMint else RiviaMutedText.copy(alpha = 0.8f),
+            tint = if (isSpeaking) RiviaIconActive else RiviaIconDefault,
             modifier = Modifier.size(18.dp),
           )
         }
@@ -2147,7 +2178,7 @@ internal fun AssistantMessageBubble(
           Icon(
             imageVector = Icons.Outlined.ContentCopy,
             contentDescription = "Copy reply",
-            tint = RiviaMutedText.copy(alpha = 0.8f),
+            tint = RiviaIconDefault,
             modifier = Modifier.size(16.dp),
           )
         }
@@ -2169,7 +2200,7 @@ internal fun AssistantMessageBubble(
           Icon(
             imageVector = Icons.Outlined.Share,
             contentDescription = "Share reply",
-            tint = RiviaMutedText.copy(alpha = 0.8f),
+            tint = RiviaIconDefault,
             modifier = Modifier.size(16.dp),
           )
         }
@@ -2182,7 +2213,7 @@ internal fun AssistantMessageBubble(
             Icon(
               imageVector = Icons.Outlined.Refresh,
               contentDescription = "Regenerate last reply",
-              tint = RiviaMutedText.copy(alpha = 0.8f),
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
           }
@@ -2195,7 +2226,7 @@ internal fun AssistantMessageBubble(
           Icon(
             imageVector = Icons.Outlined.Info,
             contentDescription = "Reply details",
-            tint = RiviaMutedText.copy(alpha = 0.8f),
+            tint = RiviaTextTertiary,
             modifier = Modifier.size(16.dp),
           )
         }
@@ -2204,7 +2235,7 @@ internal fun AssistantMessageBubble(
           text = message.requestId,
           style = MaterialTheme.typography.labelSmall,
           fontFamily = ChivoMonoFontFamily,
-          color = RiviaMutedText.copy(alpha = 0.7f),
+          color = RiviaTextTertiary,
           modifier = Modifier.padding(start = 6.dp),
         )
 
@@ -2256,8 +2287,8 @@ private fun RiviaChatInfoDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = RiviaRaisedSurface,
-    titleContentColor = RiviaText,
+    containerColor = RiviaSurface1,
+    titleContentColor = RiviaTextPrimary,
     title = { Text("Chat info") },
     text = {
       Column(
@@ -2277,7 +2308,7 @@ private fun RiviaChatInfoDialog(
           Text(
             text = "Layer versions (* = phone draft)",
             style = MaterialTheme.typography.labelSmall,
-            color = RiviaMutedText,
+            color = RiviaTextSecondary,
           )
           for (layerKey in listOf("persona", "style", "engine", "hard_rules")) {
             val meta = cardMetas[layerKey]
@@ -2301,6 +2332,12 @@ private fun RiviaChatInfoDialog(
         ) {
           OutlinedButton(
             onClick = { showPreview = !showPreview },
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
+            border = BorderStroke(1.dp, RiviaBorder),
             modifier = Modifier.testTag("chat_info_preview_request_button"),
           ) {
             Text(if (showPreview) "Hide request" else "Preview request")
@@ -2311,7 +2348,7 @@ private fun RiviaChatInfoDialog(
               for (ch in listOf("text", "voice")) {
                 Surface(
                   shape = RoundedCornerShape(8.dp),
-                  color = if (previewChannel == ch) RiviaMint else RiviaSurface,
+                  color = if (previewChannel == ch) RiviaMint else RiviaSurface2,
                   border =
                     BorderStroke(1.dp, if (previewChannel == ch) RiviaMint else RiviaBorder),
                   modifier =
@@ -2321,7 +2358,7 @@ private fun RiviaChatInfoDialog(
                 ) {
                   Text(
                     text = if (ch == "text") "Text" else "Voice",
-                    color = if (previewChannel == ch) RiviaBackground else RiviaText,
+                    color = if (previewChannel == ch) RiviaOnAccent else RiviaTextPrimary,
                     fontFamily = ChivoMonoFontFamily,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -2334,7 +2371,8 @@ private fun RiviaChatInfoDialog(
 
         if (showPreview) {
           Surface(
-            color = RiviaSurface,
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
             shape = RoundedCornerShape(10.dp),
             modifier = Modifier.fillMaxWidth(),
           ) {
@@ -2343,7 +2381,7 @@ private fun RiviaChatInfoDialog(
                 text = previewJson,
                 fontFamily = ChivoMonoFontFamily,
                 fontSize = 11.sp,
-                color = RiviaText,
+                color = RiviaTextPrimary,
                 modifier = Modifier.padding(10.dp),
               )
             }
@@ -2353,7 +2391,7 @@ private fun RiviaChatInfoDialog(
     },
     confirmButton = {
       TextButton(onClick = onDismiss) {
-        Text("Close", color = RiviaMint)
+        Text("Close", color = RiviaTextPrimary)
       }
     },
   )
@@ -2372,8 +2410,8 @@ private fun MessageDetailsDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    containerColor = RiviaRaisedSurface,
-    titleContentColor = RiviaText,
+    containerColor = RiviaSurface1,
+    titleContentColor = RiviaTextPrimary,
     title = {
       Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -2480,13 +2518,20 @@ private fun MessageDetailsDialog(
         if (message.rawStepsJson.isNotBlank() && message.rawStepsJson != "[]") {
           OutlinedButton(
             onClick = { showRawSteps = !showRawSteps },
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
+            border = BorderStroke(1.dp, RiviaBorder),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Text(if (showRawSteps) "Hide Raw Steps" else "Show Raw Steps")
           }
           if (showRawSteps) {
             Surface(
-              color = RiviaSurface,
+              color = RiviaSurface2,
+              border = BorderStroke(1.dp, RiviaBorder),
               shape = RoundedCornerShape(8.dp),
               modifier = Modifier.fillMaxWidth(),
             ) {
@@ -2495,7 +2540,7 @@ private fun MessageDetailsDialog(
                   text = message.rawStepsJson,
                   fontFamily = ChivoMonoFontFamily,
                   fontSize = 10.sp,
-                  color = RiviaText,
+                  color = RiviaTextPrimary,
                   modifier = Modifier.padding(8.dp),
                 )
               }
@@ -2506,7 +2551,7 @@ private fun MessageDetailsDialog(
     },
     confirmButton = {
       TextButton(onClick = onDismiss) {
-        Text("Close", color = RiviaMint)
+        Text("Close", color = RiviaTextPrimary)
       }
     },
   )
@@ -2522,13 +2567,13 @@ private fun DetailMonoRow(label: String, value: String) {
     Text(
       text = label,
       style = MaterialTheme.typography.bodySmall,
-      color = RiviaMutedText,
+      color = RiviaTextSecondary,
     )
     Text(
       text = value,
       style = MaterialTheme.typography.labelMedium,
       fontFamily = ChivoMonoFontFamily,
-      color = RiviaText,
+      color = RiviaTextPrimary,
     )
   }
 }
@@ -2672,7 +2717,8 @@ private fun ChatComposerBar(
   ) {
     Surface(
       shape = RoundedCornerShape(28.dp),
-      color = RiviaSurface,
+      color = RiviaSurface1,
+      border = BorderStroke(1.dp, RiviaBorder),
       modifier = Modifier.fillMaxWidth(),
     ) {
       Row(
@@ -2685,14 +2731,14 @@ private fun ChatComposerBar(
         OutlinedTextField(
           value = text,
           onValueChange = onTextChange,
-          placeholder = { Text("Message Rivia...", color = RiviaMutedText) },
+          placeholder = { Text("Message Rivia...", color = RiviaTextTertiary) },
           modifier = Modifier.weight(1f).testTag("message_rivia_input"),
           maxLines = 5,
           shape = RoundedCornerShape(24.dp),
           colors =
             OutlinedTextFieldDefaults.colors(
-              focusedTextColor = RiviaText,
-              unfocusedTextColor = RiviaText,
+              focusedTextColor = RiviaTextPrimary,
+              unfocusedTextColor = RiviaTextPrimary,
               focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
               unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
               focusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -2701,7 +2747,7 @@ private fun ChatComposerBar(
             ),
         )
 
-        // Mic button for dictation into the field
+        // Mic button for dictation into the field (Surface 2 fill, text-primary icon)
         IconButton(
           onClick = {
             if (isDictating) {
@@ -2724,16 +2770,13 @@ private fun ChatComposerBar(
             Modifier.size(40.dp)
               .minimumInteractiveComponentSize()
               .clip(CircleShape)
-              .background(
-                if (isDictating) RiviaMint.copy(alpha = 0.2f)
-                else androidx.compose.ui.graphics.Color.Transparent
-              )
+              .background(RiviaSurface2)
               .testTag("dictate_mic_button"),
         ) {
           Icon(
             imageVector = Icons.Default.Mic,
             contentDescription = if (isDictating) "Stop dictation" else "Dictate into message field",
-            tint = if (isDictating) RiviaMint else RiviaMutedText,
+            tint = if (isDictating) RiviaIconActive else RiviaTextPrimary,
           )
         }
 
@@ -2751,7 +2794,7 @@ private fun ChatComposerBar(
             Icon(
               imageVector = Icons.Default.Stop,
               contentDescription = "Stop streaming reply",
-              tint = RiviaBackground,
+              tint = RiviaOnAccent,
             )
           }
         } else {
@@ -2762,35 +2805,32 @@ private fun ChatComposerBar(
               Modifier.size(40.dp)
                 .minimumInteractiveComponentSize()
                 .clip(CircleShape)
-                .background(
-                  if (text.isNotBlank()) RiviaMint
-                  else RiviaRaisedSurface.copy(alpha = 0.6f)
-                )
+                .background(RiviaSurface2)
                 .testTag("send_message_button"),
           ) {
             Icon(
               imageVector = Icons.AutoMirrored.Filled.Send,
               contentDescription = "Send message",
-              tint = if (text.isNotBlank()) RiviaBackground else RiviaMutedText.copy(alpha = 0.6f),
+              tint = if (text.isNotBlank()) RiviaTextPrimary else RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
           }
         }
 
-        // Live button inside unified pill
+        // Live button inside unified pill (Surface 2 fill, text-primary icon)
         IconButton(
           onClick = onOpenLive,
           modifier =
             Modifier.size(40.dp)
               .minimumInteractiveComponentSize()
               .clip(CircleShape)
-              .background(RiviaMint.copy(alpha = 0.16f))
+              .background(RiviaSurface2)
               .testTag("open_live_mode_button"),
         ) {
           Icon(
             imageVector = Icons.Default.GraphicEq,
             contentDescription = "Open hands-free Live voice mode",
-            tint = RiviaMint,
+            tint = RiviaTextPrimary,
           )
         }
       }
@@ -2801,13 +2841,13 @@ private fun ChatComposerBar(
 @Composable
 fun riviaTextFieldColors() =
   OutlinedTextFieldDefaults.colors(
-    focusedTextColor = RiviaText,
-    unfocusedTextColor = RiviaText,
-    focusedContainerColor = RiviaRaisedSurface,
-    unfocusedContainerColor = RiviaRaisedSurface,
+    focusedTextColor = RiviaTextPrimary,
+    unfocusedTextColor = RiviaTextPrimary,
+    focusedContainerColor = RiviaSurface2,
+    unfocusedContainerColor = RiviaSurface2,
     focusedBorderColor = RiviaMint,
-    unfocusedBorderColor = RiviaBorder.copy(alpha = 0.45f),
+    unfocusedBorderColor = RiviaBorder,
     cursorColor = RiviaMint,
-    focusedLabelColor = RiviaMint,
-    unfocusedLabelColor = RiviaMutedText,
+    focusedLabelColor = RiviaTextPrimary,
+    unfocusedLabelColor = RiviaTextSecondary,
   )

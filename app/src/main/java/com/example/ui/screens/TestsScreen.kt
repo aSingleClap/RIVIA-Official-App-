@@ -61,11 +61,18 @@ import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
+import com.example.ui.theme.RiviaIconActive
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaMutedText
+import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface2
+import com.example.ui.theme.RiviaSurface3
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
 import com.example.viewmodel.StepTestVerificationResult
@@ -350,7 +357,7 @@ fun TestsScreen(
           colors =
             ButtonDefaults.buttonColors(
               containerColor = RiviaMint,
-              contentColor = RiviaBackground,
+              contentColor = RiviaOnAccent,
             ),
           contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
           modifier =
@@ -361,10 +368,16 @@ fun TestsScreen(
           Icon(
             imageVector = Icons.Outlined.Science,
             contentDescription = "Run all checks",
+            tint = RiviaOnAccent,
             modifier = Modifier.size(16.dp),
           )
           Spacer(modifier = Modifier.width(6.dp))
-          Text("Run All 7 Checks", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+          Text(
+            "Run All 7 Checks",
+            color = RiviaOnAccent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
         }
       }
     }
@@ -414,8 +427,8 @@ fun TestsScreen(
       item {
         Surface(
           shape = RoundedCornerShape(16.dp),
-          color = RiviaSurface,
-          border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.35f)),
+          color = RiviaSurface2,
+          border = BorderStroke(1.dp, RiviaBorder),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(
@@ -432,23 +445,28 @@ fun TestsScreen(
                 style = MaterialTheme.typography.labelMedium,
                 fontFamily = ChivoMonoFontFamily,
                 fontWeight = FontWeight.Bold,
-                color = RiviaMint,
+                color = RiviaTextPrimary,
               )
               OutlinedButton(
                 onClick = onOpenLabSettings,
                 shape = RoundedCornerShape(10.dp),
                 border = BorderStroke(1.dp, RiviaBorder),
+                colors =
+                  ButtonDefaults.outlinedButtonColors(
+                    containerColor = RiviaSurface3,
+                    contentColor = RiviaTextPrimary,
+                  ),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                 modifier = Modifier.minimumInteractiveComponentSize(),
               ) {
                 Icon(
                   imageVector = Icons.Outlined.Settings,
                   contentDescription = "Open Settings & Logs",
-                  tint = RiviaMint,
+                  tint = RiviaIconDefault,
                   modifier = Modifier.size(14.dp),
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Lab & Logs", color = RiviaText, fontSize = 11.sp)
+                Text("Lab & Logs", color = RiviaTextPrimary, fontSize = 11.sp)
               }
             }
 
@@ -524,7 +542,7 @@ fun TestsScreen(
                     style = MaterialTheme.typography.labelMedium,
                     fontFamily = ChivoMonoFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    color = RiviaMint,
+                    color = RiviaTextPrimary,
                   )
                   val advLabel =
                     if (
@@ -567,7 +585,12 @@ fun TestsScreen(
                       }
                     },
                     shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, RiviaMint),
+                    border = BorderStroke(1.dp, RiviaBorder),
+                    colors =
+                      ButtonDefaults.outlinedButtonColors(
+                        containerColor = RiviaSurface3,
+                        contentColor = RiviaTextPrimary,
+                      ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     modifier =
                       Modifier.minimumInteractiveComponentSize()
@@ -576,13 +599,13 @@ fun TestsScreen(
                     Icon(
                       imageVector = if (isPlayingWav) Icons.Default.Stop else Icons.Default.PlayArrow,
                       contentDescription = "Play or stop latest WAV",
-                      tint = RiviaMint,
+                      tint = if (isPlayingWav) RiviaIconActive else RiviaIconDefault,
                       modifier = Modifier.size(16.dp),
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                       text = if (isPlayingWav) "Stop WAV" else "Play WAV",
-                      color = RiviaMint,
+                      color = RiviaTextPrimary,
                       fontFamily = ChivoMonoFontFamily,
                       fontSize = 11.sp,
                     )
@@ -601,7 +624,7 @@ fun TestsScreen(
           style = MaterialTheme.typography.labelLarge,
           fontFamily = ChivoMonoFontFamily,
           fontWeight = FontWeight.Bold,
-          color = RiviaMint,
+          color = RiviaTextPrimary,
           modifier = Modifier.padding(top = 4.dp),
         )
       }
@@ -639,7 +662,7 @@ fun TestsScreen(
           style = MaterialTheme.typography.labelLarge,
           fontFamily = ChivoMonoFontFamily,
           fontWeight = FontWeight.Bold,
-          color = RiviaMint,
+          color = RiviaTextPrimary,
           modifier = Modifier.padding(top = 8.dp),
         )
       }
@@ -684,7 +707,7 @@ internal fun StepTestCard(
 ) {
   Surface(
     shape = RoundedCornerShape(16.dp),
-    color = RiviaSurface,
+    color = RiviaSurface2,
     border = BorderStroke(1.dp, RiviaBorder),
     modifier = Modifier.fillMaxWidth().testTag("test_card_${spec.id}"),
   ) {
@@ -700,14 +723,14 @@ internal fun StepTestCard(
       ) {
         Surface(
           shape = RoundedCornerShape(6.dp),
-          color = RiviaMint.copy(alpha = 0.16f),
-          border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.55f)),
+          color = RiviaSurface3,
+          border = BorderStroke(1.dp, RiviaBorder),
         ) {
           Text(
             text = spec.stepBadge,
             fontFamily = ChivoMonoFontFamily,
             fontWeight = FontWeight.Bold,
-            color = RiviaMint,
+            color = RiviaTextSecondary,
             fontSize = 10.sp,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
           )
@@ -726,7 +749,7 @@ internal fun StepTestCard(
               text = if (verificationResult.passed) "PASSED" else "FAILED",
               fontFamily = ChivoMonoFontFamily,
               fontWeight = FontWeight.Bold,
-              color = if (verificationResult.passed) RiviaMint else RiviaErrorRed,
+              color = if (verificationResult.passed) RiviaTextPrimary else RiviaErrorRed,
               fontSize = 11.sp,
               modifier = Modifier.testTag("step_test_badge_${spec.id}"),
             )
@@ -737,14 +760,15 @@ internal fun StepTestCard(
       Text(
         text = spec.title,
         style = MaterialTheme.typography.titleMedium,
-        color = RiviaText,
+        color = RiviaTextPrimary,
         fontWeight = FontWeight.SemiBold,
       )
 
       // Exact Settings Box
       Surface(
         shape = RoundedCornerShape(10.dp),
-        color = RiviaRaisedSurface,
+        color = RiviaSurface3,
+        border = BorderStroke(1.dp, RiviaBorder),
         modifier = Modifier.fillMaxWidth(),
       ) {
         Column(
@@ -755,7 +779,7 @@ internal fun StepTestCard(
             text = "EXACT SETTINGS FOR THIS TEST",
             fontFamily = ChivoMonoFontFamily,
             fontWeight = FontWeight.Bold,
-            color = RiviaMint,
+            color = RiviaTextSecondary,
             fontSize = 10.sp,
           )
           Text(
@@ -790,12 +814,12 @@ internal fun StepTestCard(
         Surface(
           shape = RoundedCornerShape(10.dp),
           color =
-            if (verificationResult.passed) RiviaMint.copy(alpha = 0.10f)
+            if (verificationResult.passed) RiviaSurface3
             else RiviaErrorRed.copy(alpha = 0.12f),
           border =
             BorderStroke(
               1.dp,
-              if (verificationResult.passed) RiviaMint.copy(alpha = 0.5f)
+              if (verificationResult.passed) RiviaBorder
               else RiviaErrorRed.copy(alpha = 0.6f),
             ),
           modifier = Modifier.fillMaxWidth(),
@@ -808,7 +832,7 @@ internal fun StepTestCard(
               text = verificationResult.headline,
               fontFamily = ChivoMonoFontFamily,
               fontWeight = FontWeight.Bold,
-              color = if (verificationResult.passed) RiviaMint else RiviaErrorRed,
+              color = if (verificationResult.passed) RiviaTextPrimary else RiviaErrorRed,
               fontSize = 11.sp,
             )
             if (verificationResult.details.isNotBlank()) {
@@ -823,20 +847,21 @@ internal fun StepTestCard(
         }
       }
 
-      // Action Buttons
+      // Action Buttons (secondary card buttons use Surface 2 fill, text primary, no accent outline)
       FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
       ) {
-        Button(
+        OutlinedButton(
           onClick = onRunVerification,
           enabled = !isRunning,
           shape = RoundedCornerShape(12.dp),
+          border = BorderStroke(1.dp, RiviaBorder),
           colors =
-            ButtonDefaults.buttonColors(
-              containerColor = RiviaMint,
-              contentColor = RiviaBackground,
+            ButtonDefaults.outlinedButtonColors(
+              containerColor = RiviaSurface2,
+              contentColor = RiviaTextPrimary,
             ),
           modifier =
             Modifier.minimumInteractiveComponentSize()
@@ -847,11 +872,13 @@ internal fun StepTestCard(
               if (verificationResult?.passed == true) Icons.Outlined.CheckCircle
               else Icons.Outlined.Tune,
             contentDescription = spec.verifyButtonLabel,
+            tint = if (verificationResult?.passed == true) RiviaIconActive else RiviaIconDefault,
             modifier = Modifier.size(16.dp),
           )
           Spacer(modifier = Modifier.width(6.dp))
           Text(
             text = if (isRunning) "Running..." else spec.verifyButtonLabel,
+            color = RiviaTextPrimary,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
           )
@@ -861,7 +888,12 @@ internal fun StepTestCard(
           OutlinedButton(
             onClick = onApplyAndLaunchLive,
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, RiviaMint.copy(alpha = 0.7f)),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaSurface2,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier =
               Modifier.minimumInteractiveComponentSize()
                 .testTag("launch_live_button_${spec.id}"),
@@ -869,13 +901,13 @@ internal fun StepTestCard(
             Icon(
               imageVector = Icons.Default.GraphicEq,
               contentDescription = spec.liveLaunchButtonLabel,
-              tint = RiviaMint,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(16.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text(
               text = spec.liveLaunchButtonLabel,
-              color = RiviaMint,
+              color = RiviaTextPrimary,
               fontSize = 12.sp,
               fontWeight = FontWeight.SemiBold,
             )

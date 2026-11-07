@@ -46,11 +46,15 @@ import com.example.ui.theme.ChivoFontFamily
 import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
-import com.example.ui.theme.RiviaMint
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMutedText
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaText
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextSecondary
 import com.example.util.TextAudioTagProcessor
 
 private sealed class MarkdownBlock {
@@ -110,7 +114,7 @@ fun MarkdownText(
               ) {
                 Text(
                   text = "•",
-                  color = RiviaMint,
+                  color = RiviaTextSecondary,
                   fontFamily = ChivoFontFamily,
                   fontWeight = FontWeight.Bold,
                   modifier = Modifier.padding(end = 8.dp, top = 1.dp),
@@ -131,7 +135,7 @@ fun MarkdownText(
               ) {
                 Text(
                   text = "$num.",
-                  color = RiviaMint,
+                  color = RiviaTextSecondary,
                   fontFamily = ChivoMonoFontFamily,
                   fontSize = 13.sp,
                   modifier = Modifier.padding(end = 8.dp, top = 2.dp),
@@ -187,7 +191,7 @@ private fun CodeBlockCard(language: String, code: String) {
         Icon(
           imageVector = Icons.Outlined.ContentCopy,
           contentDescription = "Copy code block",
-          tint = RiviaMint,
+          tint = RiviaIconDefault,
           modifier = Modifier.size(18.dp),
         )
       }
@@ -306,8 +310,8 @@ private fun buildInlineAnnotatedString(text: String): AnnotatedString {
           withStyle(
             SpanStyle(
               fontFamily = ChivoMonoFontFamily,
-              background = RiviaRaisedSurface,
-              color = RiviaMint,
+              background = RiviaSurface2,
+              color = RiviaTextPrimary,
               fontSize = 13.sp,
             )
           ) {
@@ -332,7 +336,7 @@ private fun buildInlineAnnotatedString(text: String): AnnotatedString {
           pushStringAnnotation(tag = "URL", annotation = url)
           withStyle(
             SpanStyle(
-              color = RiviaMint,
+              color = RiviaTextPrimary,
               textDecoration = TextDecoration.Underline,
               fontWeight = FontWeight.Medium,
             )
@@ -345,7 +349,7 @@ private fun buildInlineAnnotatedString(text: String): AnnotatedString {
           pushStringAnnotation(tag = "URL", annotation = token)
           withStyle(
             SpanStyle(
-              color = RiviaMint,
+              color = RiviaTextPrimary,
               textDecoration = TextDecoration.Underline,
             )
           ) {

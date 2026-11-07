@@ -2,10 +2,20 @@ package com.example
 
 import android.content.Context
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -26,7 +36,12 @@ import com.example.ui.screens.AssistantMessageBubble
 import com.example.ui.screens.STEP_0_AND_1_TEST_SPECS
 import com.example.ui.screens.StepTestCard
 import com.example.ui.screens.TopFingerprintSummaryBar
+import com.example.ui.screens.riviaSwitchColors
 import com.example.ui.theme.AppUiMode
+import com.example.ui.theme.RiviaMint
+import com.example.ui.theme.RiviaOnAccent
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaTextPrimary
 import com.example.ui.theme.RiviaTheme
 import com.example.util.TextAudioTagProcessor
 import com.example.viewmodel.StepTestVerificationResult
@@ -665,14 +680,14 @@ class Pass1LayersTest {
     )
   }
 
-  // 9. Status Colors Rendering Test across Rivia (#5DCAA5), Dev (#A78BFA), and Labs (#60A5FA) themes
+  // 9. Status Colors Rendering Test across Rivia (#F5F5F5), Dev (#A78BFA), and Labs (#60A5FA) themes
   @Test
   fun statusColors_renderRedAndAmberAcrossAllThreeModeThemes() {
     val expectedRed = Color(0xFFFF6B6B)
     val expectedAmber = Color(0xFFF2C14E)
     val expectedModeAccents =
       mapOf(
-        AppUiMode.RIVIA to Color(0xFF5DCAA5),
+        AppUiMode.RIVIA to Color(0xFFF5F5F5),
         AppUiMode.DEV to Color(0xFFA78BFA),
         AppUiMode.LABS to Color(0xFF60A5FA),
       )
@@ -756,7 +771,7 @@ class Pass1LayersTest {
       activeMode = mode
       composeTestRule.waitForIdle()
 
-      // Verify the mode theme accent itself shifted to the mode's signature color (#5DCAA5, #A78BFA, #60A5FA)
+      // Verify the mode theme accent itself shifted to the mode's signature color (#F5F5F5, #A78BFA, #60A5FA)
       assertEquals(
         "Passed profile dot should match mode accent in $mode",
         expectedModeAccents.getValue(mode),
@@ -792,6 +807,177 @@ class Pass1LayersTest {
         "Failed test badge must be #FF6B6B in $mode",
         expectedRed,
         renderedTextColorForTag("step_test_badge_S0_T1"),
+      )
+    }
+  }
+
+  // 10. Mode Accents Test: Switch, Primary Button, and Selected Tab Indicator across Rivia (#F5F5F5), Dev (#A78BFA), and Labs (#60A5FA)
+  @Test
+  fun modeAccents_renderSwitchPrimaryButtonAndTabIndicatorAcrossAllThreeModes() {
+    val expectedModeAccents =
+      mapOf(
+        AppUiMode.RIVIA to Color(0xFFF5F5F5),
+        AppUiMode.DEV to Color(0xFFA78BFA),
+        AppUiMode.LABS to Color(0xFF60A5FA),
+      )
+
+    var activeMode by mutableStateOf(AppUiMode.RIVIA)
+    var renderedSwitchTrackColor = Color.Unspecified
+    var renderedSwitchThumbColor = Color.Unspecified
+    var renderedSwitchUncheckedTrackColor = Color.Unspecified
+    var renderedSwitchUncheckedThumbColor = Color.Unspecified
+    var renderedPrimaryButtonContainerColor = Color.Unspecified
+    var renderedPrimaryButtonContentColor = Color.Unspecified
+    var renderedTabIndicatorColor = Color.Unspecified
+
+    composeTestRule.setContent {
+      RiviaTheme(appUiMode = activeMode) {
+        val switchColors = riviaSwitchColors()
+        renderedSwitchTrackColor = switchColors.checkedTrackColor
+        renderedSwitchThumbColor = switchColors.checkedThumbColor
+        renderedSwitchUncheckedTrackColor = switchColors.uncheckedTrackColor
+        renderedSwitchUncheckedThumbColor = switchColors.uncheckedThumbColor
+        renderedPrimaryButtonContainerColor = RiviaMint
+        renderedPrimaryButtonContentColor = RiviaOnAccent
+        renderedTabIndicatorColor = RiviaMint
+
+        Column {
+          Switch(
+            checked = true,
+            onCheckedChange = {},
+            colors = switchColors,
+            modifier = Modifier.testTag("mode_accent_switch"),
+          )
+          Text(
+            text = "switch_track_probe",
+            color = switchColors.checkedTrackColor,
+            modifier = Modifier.testTag("switch_track_color_probe"),
+          )
+
+          Button(
+            onClick = {},
+            colors =
+              ButtonDefaults.buttonColors(
+                containerColor = RiviaMint,
+                contentColor = RiviaOnAccent,
+              ),
+            modifier = Modifier.testTag("mode_accent_primary_button"),
+          ) {
+            Text(
+              text = "Primary Action",
+              color = RiviaMint,
+              modifier = Modifier.testTag("primary_button_accent_probe"),
+            )
+          }
+
+          TabRow(
+            selectedTabIndex = 0,
+            containerColor = RiviaSurface1,
+            contentColor = RiviaTextPrimary,
+            indicator = { tabPositions ->
+              if (tabPositions.isNotEmpty()) {
+                val indicatorColor = RiviaMint
+                TabRowDefaults.SecondaryIndicator(
+                  modifier =
+                    Modifier.tabIndicatorOffset(tabPositions[0])
+                      .testTag("mode_accent_tab_indicator"),
+                  color = indicatorColor,
+                )
+                Text(
+                  text = "tab_indicator_probe",
+                  color = indicatorColor,
+                  modifier = Modifier.testTag("tab_indicator_color_probe"),
+                )
+              }
+            },
+          ) {
+            Tab(
+              selected = true,
+              onClick = {},
+              text = { Text("Voice", color = RiviaTextPrimary) },
+            )
+            Tab(
+              selected = false,
+              onClick = {},
+              text = { Text("Backup") },
+            )
+          }
+        }
+      }
+    }
+
+    fun renderedTextColorForTag(tag: String): Color {
+      val node = composeTestRule.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
+      val layoutResults = mutableListOf<TextLayoutResult>()
+      val gotLayout =
+        node.config[SemanticsActions.GetTextLayoutResult].action?.invoke(layoutResults) ?: false
+      assertTrue("Expected TextLayoutResult for tag=$tag", gotLayout && layoutResults.isNotEmpty())
+      return layoutResults.first().layoutInput.style.color
+    }
+
+    for (mode in listOf(AppUiMode.RIVIA, AppUiMode.DEV, AppUiMode.LABS)) {
+      activeMode = mode
+      composeTestRule.waitForIdle()
+
+      val expectedAccent = expectedModeAccents.getValue(mode)
+
+      // 1) Switch rendered & checked track matches mode accent; thumb is #000000; off track #262626; off thumb #8F8F8F
+      composeTestRule.onNodeWithTag("mode_accent_switch").fetchSemanticsNode()
+      assertEquals(
+        "Switch checked track color must match mode accent in $mode",
+        expectedAccent,
+        renderedSwitchTrackColor,
+      )
+      assertEquals(
+        "Switch checked track probe must render mode accent in $mode",
+        expectedAccent,
+        renderedTextColorForTag("switch_track_color_probe"),
+      )
+      assertEquals(
+        "Switch checked thumb color must be #000000 in $mode",
+        Color(0xFF000000),
+        renderedSwitchThumbColor,
+      )
+      assertEquals(
+        "Switch unchecked track color must be #262626 in $mode",
+        Color(0xFF262626),
+        renderedSwitchUncheckedTrackColor,
+      )
+      assertEquals(
+        "Switch unchecked thumb color must be #8F8F8F in $mode",
+        Color(0xFF8F8F8F),
+        renderedSwitchUncheckedThumbColor,
+      )
+
+      // 2) Primary button rendered & uses mode accent with #000000 on-accent content
+      composeTestRule.onNodeWithTag("mode_accent_primary_button").fetchSemanticsNode()
+      assertEquals(
+        "Primary button container color must match mode accent in $mode",
+        expectedAccent,
+        renderedPrimaryButtonContainerColor,
+      )
+      assertEquals(
+        "Primary button content color must be #000000 in $mode",
+        Color(0xFF000000),
+        renderedPrimaryButtonContentColor,
+      )
+      assertEquals(
+        "Primary button accent probe must render mode accent in $mode",
+        expectedAccent,
+        renderedTextColorForTag("primary_button_accent_probe"),
+      )
+
+      // 3) Selected tab indicator rendered & uses mode accent
+      composeTestRule.onNodeWithTag("mode_accent_tab_indicator", useUnmergedTree = true).fetchSemanticsNode()
+      assertEquals(
+        "Selected tab indicator color must match mode accent in $mode",
+        expectedAccent,
+        renderedTabIndicatorColor,
+      )
+      assertEquals(
+        "Selected tab indicator probe must render mode accent in $mode",
+        expectedAccent,
+        renderedTextColorForTag("tab_indicator_color_probe"),
       )
     }
   }

@@ -98,13 +98,21 @@ import com.example.model.LoadedLayersBundle
 import com.example.model.ProfileTestState
 import com.example.model.RunSettings
 import com.example.model.TestDefConfig
+import androidx.compose.material3.TabRowDefaults
 import com.example.ui.theme.AppUiMode
 import com.example.ui.theme.ChivoMonoFontFamily as MonoFontFamily
+import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed as RiviaDestructive
+import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint as RiviaSuccess
 import com.example.ui.theme.RiviaMint as RiviaTeal
 import com.example.ui.theme.RiviaMutedText as RiviaSecondaryText
-import com.example.ui.theme.RiviaSurface as RiviaPanelSurface
+import com.example.ui.theme.RiviaOnAccent
+import com.example.ui.theme.RiviaSurface1
+import com.example.ui.theme.RiviaSurface2 as RiviaPanelSurface
+import com.example.ui.theme.RiviaSurface3
+import com.example.ui.theme.RiviaTextPrimary
+import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber as RiviaAmber
 import com.example.viewmodel.RiviaViewModel
 import java.text.SimpleDateFormat
@@ -205,17 +213,18 @@ fun LayersScreen(
             Text(
               text = "Layers",
               style = MaterialTheme.typography.titleMedium,
+              color = RiviaTextPrimary,
               fontWeight = FontWeight.SemiBold,
             )
             Surface(
               shape = RoundedCornerShape(50),
-              color = RiviaTeal.copy(alpha = 0.14f),
-              border = BorderStroke(1.dp, RiviaTeal.copy(alpha = 0.55f)),
+              color = RiviaPanelSurface,
+              border = BorderStroke(1.dp, RiviaBorder),
               modifier = Modifier.testTag("layers_mode_badge"),
             ) {
               Text(
                 text = modeBadgeText,
-                color = RiviaTeal,
+                color = RiviaSecondaryText,
                 fontFamily = MonoFontFamily,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -229,7 +238,11 @@ fun LayersScreen(
             onClick = onNavigateBack,
             modifier = Modifier.testTag("layers_back_button"),
           ) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to chat")
+            Icon(
+              Icons.AutoMirrored.Filled.ArrowBack,
+              contentDescription = "Back to chat",
+              tint = RiviaTextPrimary,
+            )
           }
         },
         actions = {
@@ -240,6 +253,7 @@ fun LayersScreen(
                 expandedSections[k] = targetState
               }
             },
+            colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
           ) {
             Icon(
@@ -247,12 +261,14 @@ fun LayersScreen(
                 if (anyExpanded) Icons.Default.KeyboardArrowUp
                 else Icons.Default.KeyboardArrowDown,
               contentDescription = null,
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
               text = if (anyExpanded) "Collapse all" else "Expand all",
               style = MaterialTheme.typography.labelMedium,
+              color = RiviaTextPrimary,
             )
           }
         },
@@ -484,10 +500,12 @@ fun LayersScreen(
   startDraftConfirmLayer?.let { layerKey ->
     AlertDialog(
       onDismissRequest = { startDraftConfirmLayer = null },
-      title = { Text("Start a draft for $layerKey?") },
+      containerColor = RiviaSurface1,
+      title = { Text("Start a draft for $layerKey?", color = RiviaTextPrimary) },
       text = {
         Text(
-          "This layer is currently Locked in the build. Starting a draft lets you edit it on the phone until you discard the draft or lock a new version."
+          "This layer is currently Locked in the build. Starting a draft lets you edit it on the phone until you discard the draft or lock a new version.",
+          color = RiviaSecondaryText,
         )
       },
       confirmButton = {
@@ -495,13 +513,20 @@ fun LayersScreen(
           onClick = {
             viewModel.startDraftFromLocked(layerKey)
             startDraftConfirmLayer = null
-          }
+          },
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = RiviaTeal,
+              contentColor = RiviaOnAccent,
+            ),
         ) {
-          Text("Start draft")
+          Text("Start draft", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
         }
       },
       dismissButton = {
-        TextButton(onClick = { startDraftConfirmLayer = null }) { Text("Cancel") }
+        TextButton(onClick = { startDraftConfirmLayer = null }) {
+          Text("Cancel", color = RiviaSecondaryText)
+        }
       },
     )
   }
@@ -512,17 +537,20 @@ fun LayersScreen(
     val fileName = LayerConfigManager.LAYER_FILES[layerKey] ?: "$layerKey.json"
     AlertDialog(
       onDismissRequest = { viewFileDialogLayer = null },
+      containerColor = RiviaSurface1,
       title = {
         Text(
           text = "Running file: $fileName",
           style = MaterialTheme.typography.titleSmall,
           fontFamily = MonoFontFamily,
+          color = RiviaTextPrimary,
         )
       },
       text = {
         Surface(
           color = RiviaPanelSurface,
           shape = RoundedCornerShape(10.dp),
+          border = BorderStroke(1.dp, RiviaBorder),
           modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
         ) {
           SelectionContainer {
@@ -530,6 +558,7 @@ fun LayersScreen(
               text = rawJson,
               fontFamily = MonoFontFamily,
               fontSize = 11.sp,
+              color = RiviaTextPrimary,
               modifier =
                 Modifier.padding(12.dp)
                   .verticalScroll(rememberScrollState())
@@ -545,13 +574,20 @@ fun LayersScreen(
             viewModel.showNotice("Copied $fileName to clipboard.")
           }
         ) {
-          Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+          Icon(
+            Icons.Default.ContentCopy,
+            contentDescription = null,
+            tint = RiviaIconDefault,
+            modifier = Modifier.size(16.dp),
+          )
           Spacer(modifier = Modifier.width(6.dp))
-          Text("Copy JSON")
+          Text("Copy JSON", color = RiviaTextPrimary)
         }
       },
       dismissButton = {
-        TextButton(onClick = { viewFileDialogLayer = null }) { Text("Close") }
+        TextButton(onClick = { viewFileDialogLayer = null }) {
+          Text("Close", color = RiviaSecondaryText)
+        }
       },
     )
   }
@@ -563,16 +599,17 @@ fun LayersScreen(
 
     AlertDialog(
       onDismissRequest = { lockExportDialogData = null },
+      containerColor = RiviaSurface1,
       title = {
         Row(verticalAlignment = Alignment.CenterVertically) {
           Icon(
             Icons.Default.Lock,
             contentDescription = null,
-            tint = RiviaTeal,
+            tint = RiviaIconDefault,
             modifier = Modifier.size(18.dp),
           )
           Spacer(modifier = Modifier.width(8.dp))
-          Text("Lock $fileName", style = MaterialTheme.typography.titleMedium)
+          Text("Lock $fileName", style = MaterialTheme.typography.titleMedium, color = RiviaTextPrimary)
         }
       },
       text = {
@@ -586,6 +623,7 @@ fun LayersScreen(
           Surface(
             color = RiviaPanelSurface,
             shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
             modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
           ) {
             SelectionContainer {
@@ -593,6 +631,7 @@ fun LayersScreen(
                 text = exportedJson,
                 fontFamily = MonoFontFamily,
                 fontSize = 11.sp,
+                color = RiviaTextPrimary,
                 modifier =
                   Modifier.padding(12.dp)
                     .verticalScroll(rememberScrollState())
@@ -619,11 +658,22 @@ fun LayersScreen(
                 }
               context.startActivity(Intent.createChooser(sendIntent, "Share $fileName"))
             },
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaPanelSurface,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier = Modifier.testTag("lock_share_button"),
           ) {
-            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(
+              Icons.Default.Share,
+              contentDescription = null,
+              tint = RiviaIconDefault,
+              modifier = Modifier.size(16.dp),
+            )
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Share")
+            Text("Share", color = RiviaTextPrimary)
           }
           Button(
             onClick = {
@@ -633,18 +683,25 @@ fun LayersScreen(
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = RiviaTeal,
-                contentColor = Color(0xFF062019),
+                contentColor = RiviaOnAccent,
               ),
             modifier = Modifier.testTag("lock_copy_button"),
           ) {
-            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(
+              Icons.Default.ContentCopy,
+              contentDescription = null,
+              tint = RiviaOnAccent,
+              modifier = Modifier.size(16.dp),
+            )
             Spacer(modifier = Modifier.width(4.dp))
-            Text("Copy")
+            Text("Copy", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
           }
         }
       },
       dismissButton = {
-        TextButton(onClick = { lockExportDialogData = null }) { Text("Done") }
+        TextButton(onClick = { lockExportDialogData = null }) {
+          Text("Done", color = RiviaSecondaryText)
+        }
       },
     )
   }
@@ -870,18 +927,30 @@ private fun LayerCardHeader(
           OutlinedButton(
             onClick = onRequestStartDraft,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaPanelSurface,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier = Modifier.testTag("start_draft_${meta.layerKey}"),
           ) {
-            Text("Start draft", style = MaterialTheme.typography.labelSmall)
+            Text("Start draft", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
           }
         }
         if (meta.hasDraft) {
           OutlinedButton(
             onClick = onDiscardDraft,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaPanelSurface,
+                contentColor = RiviaTextPrimary,
+              ),
             modifier = Modifier.testTag("discard_draft_${meta.layerKey}"),
           ) {
-            Text("Discard draft", style = MaterialTheme.typography.labelSmall)
+            Text("Discard draft", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
           }
         }
         if (isLockPending) {
@@ -901,27 +970,30 @@ private fun LayerCardHeader(
           contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
           colors =
             ButtonDefaults.outlinedButtonColors(
-              contentColor = RiviaTeal,
-              disabledContentColor = RiviaSecondaryText.copy(alpha = 0.45f),
+              containerColor = RiviaPanelSurface,
+              contentColor = RiviaTextPrimary,
+              disabledContainerColor = RiviaPanelSurface,
+              disabledContentColor = RiviaTextTertiary,
             ),
-          border =
-            BorderStroke(
-              1.dp,
-              if (canLock) RiviaTeal.copy(alpha = 0.6f)
-              else RiviaSecondaryText.copy(alpha = 0.25f),
-            ),
+          border = BorderStroke(1.dp, RiviaBorder),
           modifier = Modifier.testTag("lock_it_${meta.layerKey}"),
         ) {
-          Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(14.dp))
+          Icon(
+            Icons.Default.Lock,
+            contentDescription = null,
+            tint = if (canLock) RiviaIconDefault else RiviaTextTertiary,
+            modifier = Modifier.size(14.dp),
+          )
           Spacer(modifier = Modifier.width(4.dp))
           Text("Lock it", style = MaterialTheme.typography.labelSmall)
         }
         TextButton(
           onClick = onViewFile,
           contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+          colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
           modifier = Modifier.testTag("view_file_${meta.layerKey}"),
         ) {
-          Text("View file", style = MaterialTheme.typography.labelSmall)
+          Text("View file", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
         }
       }
     }
@@ -1012,10 +1084,15 @@ private fun PersonaLayerCard(
                 colors =
                   ButtonDefaults.buttonColors(
                     containerColor = RiviaTeal,
-                    contentColor = Color(0xFF062019),
+                    contentColor = RiviaOnAccent,
                   ),
               ) {
-                Text("Save draft", style = MaterialTheme.typography.labelSmall)
+                Text(
+                  "Save draft",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = RiviaOnAccent,
+                  fontWeight = FontWeight.SemiBold,
+                )
               }
             }
           }
@@ -1083,16 +1160,37 @@ private fun StyleLayerCard(
           SecondaryTabRow(
             selectedTabIndex = selectedTab,
             containerColor = MaterialTheme.colorScheme.background,
+            contentColor = RiviaTextPrimary,
+            indicator = {
+              TabRowDefaults.SecondaryIndicator(
+                modifier = Modifier.tabIndicatorOffset(selectedTab),
+                color = RiviaTeal,
+              )
+            },
           ) {
             Tab(
               selected = selectedTab == 0,
               onClick = { selectedTab = 0 },
-              text = { Text("Text") },
+              selectedContentColor = RiviaTextPrimary,
+              unselectedContentColor = RiviaSecondaryText,
+              text = {
+                Text(
+                  "Text",
+                  color = if (selectedTab == 0) RiviaTextPrimary else RiviaSecondaryText,
+                )
+              },
             )
             Tab(
               selected = selectedTab == 1,
               onClick = { selectedTab = 1 },
-              text = { Text("Voice") },
+              selectedContentColor = RiviaTextPrimary,
+              unselectedContentColor = RiviaSecondaryText,
+              text = {
+                Text(
+                  "Voice",
+                  color = if (selectedTab == 1) RiviaTextPrimary else RiviaSecondaryText,
+                )
+              },
             )
           }
 
@@ -1134,10 +1232,15 @@ private fun StyleLayerCard(
                 colors =
                   ButtonDefaults.buttonColors(
                     containerColor = RiviaTeal,
-                    contentColor = Color(0xFF062019),
+                    contentColor = RiviaOnAccent,
                   ),
               ) {
-                Text("Save draft", style = MaterialTheme.typography.labelSmall)
+                Text(
+                  "Save draft",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = RiviaOnAccent,
+                  fontWeight = FontWeight.SemiBold,
+                )
               }
             }
           }
@@ -1226,15 +1329,37 @@ private fun EngineLayerCard(
           )
           FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (profKey in LayerConfigManager.REQUIRED_PROFILES) {
+              val isSelected = engine.default_profile == profKey
               FilterChip(
-                selected = engine.default_profile == profKey,
+                selected = isSelected,
                 onClick = {
                   if (!isReadOnly) {
                     onSaveDraft(engine.copy(default_profile = profKey))
                   }
                 },
                 enabled = !isReadOnly,
-                label = { Text(profKey) },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    containerColor = RiviaPanelSurface,
+                    labelColor = RiviaTextPrimary,
+                    selectedContainerColor = RiviaTeal,
+                    selectedLabelColor = RiviaOnAccent,
+                    disabledContainerColor = RiviaPanelSurface,
+                    disabledLabelColor = RiviaTextTertiary,
+                    disabledSelectedContainerColor = RiviaTeal,
+                  ),
+                border =
+                  BorderStroke(
+                    width = 1.dp,
+                    color = if (isSelected) RiviaTeal else RiviaBorder,
+                  ),
+                label = {
+                  Text(
+                    profKey,
+                    color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                  )
+                },
               )
             }
           }
@@ -1248,13 +1373,35 @@ private fun EngineLayerCard(
             Text("Thought summaries", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               for (opt in listOf("auto", "none")) {
+                val isSelected = engine.thought_summaries == opt
                 FilterChip(
-                  selected = engine.thought_summaries == opt,
+                  selected = isSelected,
                   onClick = {
                     if (!isReadOnly) onSaveDraft(engine.copy(thought_summaries = opt))
                   },
                   enabled = !isReadOnly,
-                  label = { Text(opt) },
+                  colors =
+                    FilterChipDefaults.filterChipColors(
+                      containerColor = RiviaPanelSurface,
+                      labelColor = RiviaTextPrimary,
+                      selectedContainerColor = RiviaTeal,
+                      selectedLabelColor = RiviaOnAccent,
+                      disabledContainerColor = RiviaPanelSurface,
+                      disabledLabelColor = RiviaTextTertiary,
+                      disabledSelectedContainerColor = RiviaTeal,
+                    ),
+                  border =
+                    BorderStroke(
+                      width = 1.dp,
+                      color = if (isSelected) RiviaTeal else RiviaBorder,
+                    ),
+                  label = {
+                    Text(
+                      opt,
+                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                  },
                 )
               }
             }
@@ -1268,13 +1415,35 @@ private fun EngineLayerCard(
             Text("Service tier", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               for (tier in listOf("standard", "priority")) {
+                val isSelected = engine.service_tier == tier
                 FilterChip(
-                  selected = engine.service_tier == tier,
+                  selected = isSelected,
                   onClick = {
                     if (!isReadOnly) onSaveDraft(engine.copy(service_tier = tier))
                   },
                   enabled = !isReadOnly,
-                  label = { Text(tier) },
+                  colors =
+                    FilterChipDefaults.filterChipColors(
+                      containerColor = RiviaPanelSurface,
+                      labelColor = RiviaTextPrimary,
+                      selectedContainerColor = RiviaTeal,
+                      selectedLabelColor = RiviaOnAccent,
+                      disabledContainerColor = RiviaPanelSurface,
+                      disabledLabelColor = RiviaTextTertiary,
+                      disabledSelectedContainerColor = RiviaTeal,
+                    ),
+                  border =
+                    BorderStroke(
+                      width = 1.dp,
+                      color = if (isSelected) RiviaTeal else RiviaBorder,
+                    ),
+                  label = {
+                    Text(
+                      tier,
+                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                  },
                 )
               }
             }
@@ -1290,6 +1459,7 @@ private fun EngineLayerCard(
               checked = engine.store,
               onCheckedChange = { if (!isReadOnly) onSaveDraft(engine.copy(store = it)) },
               enabled = !isReadOnly,
+              colors = riviaSwitchColors(),
             )
           }
 
@@ -1321,9 +1491,15 @@ private fun EngineLayerCard(
                       onSaveDraft(engine.copy(max_output_tokens = parsed))
                     }
                   }
-                }
+                },
+                border = BorderStroke(1.dp, RiviaBorder),
+                colors =
+                  ButtonDefaults.outlinedButtonColors(
+                    containerColor = RiviaPanelSurface,
+                    contentColor = RiviaTextPrimary,
+                  ),
               ) {
-                Text("Apply")
+                Text("Apply", color = RiviaTextPrimary)
               }
             }
           }
@@ -1346,7 +1522,28 @@ private fun EngineLayerCard(
                   }
                 },
                 enabled = !isReadOnly,
-                label = { Text("model_default") },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    containerColor = RiviaPanelSurface,
+                    labelColor = RiviaTextPrimary,
+                    selectedContainerColor = RiviaTeal,
+                    selectedLabelColor = RiviaOnAccent,
+                    disabledContainerColor = RiviaPanelSurface,
+                    disabledLabelColor = RiviaTextTertiary,
+                    disabledSelectedContainerColor = RiviaTeal,
+                  ),
+                border =
+                  BorderStroke(
+                    width = 1.dp,
+                    color = if (isModelDefault) RiviaTeal else RiviaBorder,
+                  ),
+                label = {
+                  Text(
+                    "model_default",
+                    color = if (isModelDefault) RiviaOnAccent else RiviaTextPrimary,
+                    fontWeight = if (isModelDefault) FontWeight.Bold else FontWeight.Normal,
+                  )
+                },
               )
               FilterChip(
                 selected = !isModelDefault,
@@ -1368,7 +1565,28 @@ private fun EngineLayerCard(
                   }
                 },
                 enabled = !isReadOnly,
-                label = { Text("custom list") },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    containerColor = RiviaPanelSurface,
+                    labelColor = RiviaTextPrimary,
+                    selectedContainerColor = RiviaTeal,
+                    selectedLabelColor = RiviaOnAccent,
+                    disabledContainerColor = RiviaPanelSurface,
+                    disabledLabelColor = RiviaTextTertiary,
+                    disabledSelectedContainerColor = RiviaTeal,
+                  ),
+                border =
+                  BorderStroke(
+                    width = 1.dp,
+                    color = if (!isModelDefault) RiviaTeal else RiviaBorder,
+                  ),
+                label = {
+                  Text(
+                    "custom list",
+                    color = if (!isModelDefault) RiviaOnAccent else RiviaTextPrimary,
+                    fontWeight = if (!isModelDefault) FontWeight.Bold else FontWeight.Normal,
+                  )
+                },
               )
             }
           }
@@ -1393,6 +1611,7 @@ private fun EngineProfileEditorRow(
   Surface(
     color = MaterialTheme.colorScheme.background,
     shape = RoundedCornerShape(10.dp),
+    border = BorderStroke(1.dp, RiviaBorder),
     modifier = Modifier.fillMaxWidth(),
   ) {
     Column(
@@ -1407,7 +1626,7 @@ private fun EngineProfileEditorRow(
         Text(
           text = LayerConfigManager.displayProfileLabel(profileKey),
           style = MaterialTheme.typography.labelLarge,
-          color = RiviaTeal,
+          color = RiviaTextPrimary,
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier.align(Alignment.CenterVertically),
         )
@@ -1415,6 +1634,7 @@ private fun EngineProfileEditorRow(
           Surface(
             color = RiviaPanelSurface,
             shape = RoundedCornerShape(8.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
             modifier =
               Modifier.clickable(enabled = !readOnly) { modelMenuExpanded = true },
           ) {
@@ -1422,16 +1642,18 @@ private fun EngineProfileEditorRow(
               text = profileConfig.model,
               fontFamily = MonoFontFamily,
               fontSize = 12.sp,
+              color = RiviaTextPrimary,
               modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
             )
           }
           DropdownMenu(
             expanded = modelMenuExpanded,
             onDismissRequest = { modelMenuExpanded = false },
+            containerColor = RiviaSurface1,
           ) {
             for (m in availableModels) {
               DropdownMenuItem(
-                text = { Text(m, fontFamily = MonoFontFamily, fontSize = 12.sp) },
+                text = { Text(m, fontFamily = MonoFontFamily, fontSize = 12.sp, color = RiviaTextPrimary) },
                 onClick = {
                   modelMenuExpanded = false
                   val newAllowed = RunSettings.allowedThinkingLevels(m)
@@ -1473,7 +1695,7 @@ private fun EngineProfileEditorRow(
                   Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = null,
-                    tint = RiviaTeal,
+                    tint = RiviaOnAccent,
                     modifier = Modifier.size(14.dp),
                   )
                 }
@@ -1482,23 +1704,25 @@ private fun EngineProfileEditorRow(
               },
             colors =
               FilterChipDefaults.filterChipColors(
-                selectedContainerColor = RiviaTeal.copy(alpha = 0.22f),
-                selectedLabelColor = RiviaTeal,
-                disabledSelectedContainerColor = RiviaTeal.copy(alpha = 0.22f),
+                containerColor = RiviaPanelSurface,
+                labelColor = RiviaTextPrimary,
+                selectedContainerColor = RiviaTeal,
+                selectedLabelColor = RiviaOnAccent,
+                disabledContainerColor = RiviaPanelSurface,
+                disabledSelectedContainerColor = RiviaTeal,
                 disabledLabelColor =
-                  if (isSelected) RiviaTeal else RiviaSecondaryText.copy(alpha = 0.6f),
+                  if (isSelected) RiviaOnAccent else RiviaTextTertiary,
               ),
             border =
               BorderStroke(
-                width = if (isSelected) 1.5.dp else 1.dp,
-                color =
-                  if (isSelected) RiviaTeal
-                  else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                width = 1.dp,
+                color = if (isSelected) RiviaTeal else RiviaBorder,
               ),
             label = {
               Text(
                 text = lvl,
                 fontSize = 11.sp,
+                color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 maxLines = 1,
                 softWrap = false,
@@ -1590,10 +1814,29 @@ private fun HardRulesLayerCard(
               }
               Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (n in 1..4) {
+                  val isSelected = spokenMaxSentences == n
                   FilterChip(
-                    selected = spokenMaxSentences == n,
+                    selected = isSelected,
                     onClick = { onSpokenMaxChange(n) },
-                    label = { Text(n.toString()) },
+                    colors =
+                      FilterChipDefaults.filterChipColors(
+                        containerColor = RiviaPanelSurface,
+                        labelColor = RiviaTextPrimary,
+                        selectedContainerColor = RiviaTeal,
+                        selectedLabelColor = RiviaOnAccent,
+                      ),
+                    border =
+                      BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) RiviaTeal else RiviaBorder,
+                      ),
+                    label = {
+                      Text(
+                        n.toString(),
+                        color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                      )
+                    },
                     modifier = Modifier.testTag("spoken_max_$n"),
                   )
                 }
@@ -1640,7 +1883,11 @@ private fun HardRulesLayerCard(
               },
               modifier = Modifier.testTag("h11_add_watch_word_button"),
             ) {
-              Icon(Icons.Default.Add, contentDescription = "Add watch word")
+              Icon(
+                Icons.Default.Add,
+                contentDescription = "Add watch word",
+                tint = RiviaIconDefault,
+              )
             }
           }
           if (h11WatchWords.isNotEmpty()) {
@@ -1650,18 +1897,20 @@ private fun HardRulesLayerCard(
             ) {
               for (w in h11WatchWords) {
                 Surface(
-                  color = MaterialTheme.colorScheme.background,
+                  color = RiviaSurface3,
                   shape = RoundedCornerShape(50),
+                  border = BorderStroke(1.dp, RiviaBorder),
                 ) {
                   Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
-                    Text(w, style = MaterialTheme.typography.labelSmall)
+                    Text(w, style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
                     Icon(
                       Icons.Default.Close,
                       contentDescription = "Remove $w",
+                      tint = RiviaIconDefault,
                       modifier =
                         Modifier.size(14.dp).clickable { onRemoveWatchWord(w) },
                     )
@@ -1702,7 +1951,7 @@ private fun HardRulesLayerCard(
                   text = "${ev.requestId} · ${timeFormat.format(Date(ev.timestamp))}",
                   fontFamily = MonoFontFamily,
                   fontSize = 10.sp,
-                  color = RiviaSecondaryText,
+                  color = RiviaTextTertiary,
                 )
               }
             }
@@ -1721,6 +1970,7 @@ private fun HardRuleItemRow(
   Surface(
     color = MaterialTheme.colorScheme.background,
     shape = RoundedCornerShape(10.dp),
+    border = BorderStroke(1.dp, RiviaBorder),
     modifier = Modifier.fillMaxWidth(),
   ) {
     Column(
@@ -1735,6 +1985,7 @@ private fun HardRuleItemRow(
         Text(
           text = "#${rule.priority} ${rule.id} · ${rule.name}",
           style = MaterialTheme.typography.labelLarge,
+          color = RiviaTextPrimary,
           fontWeight = FontWeight.SemiBold,
         )
         Text(
@@ -1743,7 +1994,7 @@ private fun HardRuleItemRow(
             else "inactive (${rule.status.ifBlank { "deferred" }})",
           fontFamily = MonoFontFamily,
           fontSize = 10.sp,
-          color = if (rule.active) RiviaSuccess else RiviaSecondaryText,
+          color = if (rule.active) RiviaTextPrimary else RiviaSecondaryText,
         )
       }
       Text(
@@ -1801,6 +2052,7 @@ private fun TestsLayerCard(
           Text(
             text = "Tests",
             style = MaterialTheme.typography.titleMedium,
+            color = RiviaTextPrimary,
             fontWeight = FontWeight.SemiBold,
           )
           Text(
@@ -1833,9 +2085,10 @@ private fun TestsLayerCard(
             TextButton(
               onClick = onViewFile,
               contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+              colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
               modifier = Modifier.testTag("view_file_tests"),
             ) {
-              Text("View file", style = MaterialTheme.typography.labelSmall)
+              Text("View file", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
             }
           }
 
@@ -1843,6 +2096,7 @@ private fun TestsLayerCard(
             Surface(
               color = MaterialTheme.colorScheme.background,
               shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
               modifier = Modifier.fillMaxWidth(),
             ) {
               Column(
@@ -1858,6 +2112,7 @@ private fun TestsLayerCard(
                     Text(
                       text = testDef.name,
                       style = MaterialTheme.typography.labelLarge,
+                      color = RiviaTextPrimary,
                       fontWeight = FontWeight.SemiBold,
                     )
                     Text(
@@ -1870,9 +2125,15 @@ private fun TestsLayerCard(
                   OutlinedButton(
                     onClick = { onOpenLogRun(testDef) },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    border = BorderStroke(1.dp, RiviaBorder),
+                    colors =
+                      ButtonDefaults.outlinedButtonColors(
+                        containerColor = RiviaPanelSurface,
+                        contentColor = RiviaTextPrimary,
+                      ),
                     modifier = Modifier.testTag("log_run_${testDef.id}"),
                   ) {
-                    Text("Log a run", style = MaterialTheme.typography.labelSmall)
+                    Text("Log a run", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
                   }
                 }
 
@@ -1956,7 +2217,14 @@ private fun LogTestRunDialog(
 
   AlertDialog(
     onDismissRequest = onDismiss,
-    title = { Text("Log a run: ${testDef.name}", style = MaterialTheme.typography.titleMedium) },
+    containerColor = RiviaSurface1,
+    title = {
+      Text(
+        "Log a run: ${testDef.name}",
+        style = MaterialTheme.typography.titleMedium,
+        color = RiviaTextPrimary,
+      )
+    },
     text = {
       Column(
         modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -1971,10 +2239,29 @@ private fun LogTestRunDialog(
           val profileChoices =
             (testDef.required_profiles + listOf("live_typed")).distinct()
           for (profChoice in profileChoices) {
+            val isSelected = selectedProfile == profChoice
             FilterChip(
-              selected = selectedProfile == profChoice,
+              selected = isSelected,
               onClick = { selectedProfile = profChoice },
-              label = { Text(LayerConfigManager.displayProfileLabel(profChoice)) },
+              colors =
+                FilterChipDefaults.filterChipColors(
+                  containerColor = RiviaPanelSurface,
+                  labelColor = RiviaTextPrimary,
+                  selectedContainerColor = RiviaTeal,
+                  selectedLabelColor = RiviaOnAccent,
+                ),
+              border =
+                BorderStroke(
+                  width = 1.dp,
+                  color = if (isSelected) RiviaTeal else RiviaBorder,
+                ),
+              label = {
+                Text(
+                  LayerConfigManager.displayProfileLabel(profChoice),
+                  color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                  fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                )
+              },
             )
           }
         }
@@ -1999,13 +2286,22 @@ private fun LogTestRunDialog(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
           ) {
-            Text("Target met (≤ 2 violations)", style = MaterialTheme.typography.bodySmall)
-            Switch(checked = targetMet, onCheckedChange = { targetMet = it })
+            Text(
+              "Target met (≤ 2 violations)",
+              style = MaterialTheme.typography.bodySmall,
+              color = RiviaTextPrimary,
+            )
+            Switch(
+              checked = targetMet,
+              onCheckedChange = { targetMet = it },
+              colors = riviaSwitchColors(),
+            )
           }
         } else {
           Text(
             text = "Verify every check on $normProfile ($currentFp):",
             style = MaterialTheme.typography.labelMedium,
+            color = RiviaTextPrimary,
           )
           testDef.checks.forEachIndexed { idx, checkText ->
             Row(
@@ -2022,6 +2318,7 @@ private fun LogTestRunDialog(
               Text(
                 text = checkText,
                 style = MaterialTheme.typography.bodySmall,
+                color = RiviaTextPrimary,
                 modifier = Modifier.weight(1f),
               )
             }
@@ -2063,16 +2360,21 @@ private fun LogTestRunDialog(
         colors =
           ButtonDefaults.buttonColors(
             containerColor = RiviaTeal,
-            contentColor = Color(0xFF062019),
+            contentColor = RiviaOnAccent,
           ),
       ) {
-        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+        Icon(
+          Icons.Default.Check,
+          contentDescription = null,
+          tint = RiviaOnAccent,
+          modifier = Modifier.size(16.dp),
+        )
         Spacer(modifier = Modifier.width(4.dp))
-        Text("Save run")
+        Text("Save run", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
       }
     },
     dismissButton = {
-      TextButton(onClick = onDismiss) { Text("Cancel") }
+      TextButton(onClick = onDismiss) { Text("Cancel", color = RiviaSecondaryText) }
     },
   )
 }
