@@ -1,6 +1,0 @@
-{
-  "summary":  "Bug fix plan for preserving function_call arguments (bot and request) across SSE streaming, step finalization, and function call extraction in Labs chats, plus the bad_arguments guard for ask_bot.",
-  "updatedAt":  "2026-11-10T05:13:25.910326632Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

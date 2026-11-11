@@ -75,8 +75,6 @@ class GeminiInteractionsClient {
   companion object {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-    const val TABLET_TOOLS_SYSTEM_SUFFIX =
-      "You are Rivia. Your bots are parts of you, not other people: whatever they do, you did. Talk to Jordan in first person and never mention bots, Ard, tickets or tools."
     private val EXCLUDED_MODEL_SUBSTRINGS =
       listOf(
         "tts",
@@ -284,10 +282,6 @@ class GeminiInteractionsClient {
             if (isNotEmpty()) append("\n\n")
             append(channelStyle.trim())
           }
-          if (settings.tabletToolsEnabled) {
-            if (isNotEmpty()) append("\n\n")
-            append(TABLET_TOOLS_SYSTEM_SUFFIX)
-          }
         }
         .trim()
     if (combinedSystemInstruction.isNotEmpty()) {
@@ -385,14 +379,18 @@ class GeminiInteractionsClient {
       }
 
       // Section 4: Tablet tools (Labs chats only).
-      // Include ONLY ask_bot and get_tablet_battery (never check_reply).
-      // Never send an empty or half-built tablet tools list: both ask_bot and get_tablet_battery must be present.
+      // Expose every tool from tools/list that has a description and input schema, except ask_bot, check_reply and post_reply.
       if (settings.tabletToolsEnabled && !tabletToolDefs.isNullOrEmpty()) {
-        val askBotDef = tabletToolDefs.firstOrNull { it.name == "ask_bot" }
-        val batteryDef = tabletToolDefs.firstOrNull { it.name == "get_tablet_battery" }
-        if (askBotDef != null && batteryDef != null) {
-          toolsArray.put(askBotDef.toGeminiFunctionToolJson())
-          toolsArray.put(batteryDef.toGeminiFunctionToolJson())
+        for (toolDef in tabletToolDefs) {
+          if (
+            toolDef.name != "ask_bot" &&
+              toolDef.name != "check_reply" &&
+              toolDef.name != "post_reply" &&
+              toolDef.description.isNotBlank() &&
+              toolDef.inputSchemaJson.isNotBlank()
+          ) {
+            toolsArray.put(toolDef.toGeminiFunctionToolJson())
+          }
         }
       }
 
@@ -663,7 +661,6 @@ class GeminiInteractionsClient {
     tabletToolDefs: List<TabletToolDef>? = null,
     includeToolsOnTurn: Boolean = true,
     overrideInputSteps: JSONArray? = null,
-    earlierToldPrefixWhenChained: String? = null,
     onEvent: suspend (GeminiStreamEvent) -> Unit,
   ) =
     withContext(Dispatchers.IO) {
@@ -711,15 +708,8 @@ class GeminiInteractionsClient {
       fun resolveInputStepsForAttempt(prevId: String?): JSONArray {
         if (overrideInputSteps != null) return overrideInputSteps
         return if (prevId != null) {
-          val textWithPrefix =
-            if (!earlierToldPrefixWhenChained.isNullOrBlank()) {
-              "$earlierToldPrefixWhenChained\n$newUserText"
-            } else {
-              newUserText
-            }
-          buildSingleTurnInput(textWithPrefix)
+          buildSingleTurnInput(newUserText)
         } else {
-          // When rebuilding history from Room, skip the earlier-told note
           buildFullConversationSteps(priorMessages, newUserText)
         }
       }

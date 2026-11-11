@@ -92,7 +92,6 @@ fun BotsScreen(
   val tabletTestRunning by viewModel.tabletTestRunning.collectAsStateWithLifecycle()
   val tabletTestResultText by viewModel.tabletTestResultText.collectAsStateWithLifecycle()
   val tabletTestIsError by viewModel.tabletTestIsError.collectAsStateWithLifecycle()
-  val roundTripState by viewModel.roundTripTestState.collectAsStateWithLifecycle()
   val pendingTickets by viewModel.pendingBotTickets.collectAsStateWithLifecycle()
   val last20Results by viewModel.last20TabletResults.collectAsStateWithLifecycle()
 
@@ -314,108 +313,7 @@ fun BotsScreen(
         }
       }
 
-      // 2. Round Trip Test
-      item {
-        BotsCardSection(title = "Round trip test") {
-          Text(
-            text =
-              "Sends ask_bot with bot=\"ard\" and request=\"What does tomorrow look like? Don't write anything.\", then polls check_reply until answered.",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-          )
-          Button(
-            onClick = {
-              commitTabletIfChanged()
-              focusManager.clearFocus()
-              viewModel.runRoundTripTest()
-            },
-            enabled = !roundTripState.isRunning,
-            shape = RoundedCornerShape(14.dp),
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = RiviaMint,
-                contentColor = RiviaOnAccent,
-              ),
-            modifier =
-              Modifier.fillMaxWidth()
-                .minimumInteractiveComponentSize()
-                .testTag("bots_round_trip_test_button"),
-          ) {
-            Text(
-              text =
-                if (roundTripState.isRunning) "Running round trip test..."
-                else "Round trip test",
-              color = RiviaOnAccent,
-              fontWeight = FontWeight.SemiBold,
-            )
-          }
-
-          if (roundTripState.statusText.isNotBlank() || roundTripState.errorText != null) {
-            Surface(
-              shape = RoundedCornerShape(12.dp),
-              color = RiviaSurface3,
-              border = BorderStroke(1.dp, RiviaBorder),
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-              ) {
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically,
-                ) {
-                  Text(
-                    text = roundTripState.statusText.ifBlank { "Error" },
-                    fontFamily = ChivoMonoFontFamily,
-                    fontSize = 12.sp,
-                    color =
-                      if (roundTripState.errorText != null) RiviaErrorRed
-                      else RiviaTextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                  )
-                  roundTripState.secondsTaken?.let { secs ->
-                    Text(
-                      text = String.format(Locale.US, "%.1fs", secs),
-                      fontFamily = ChivoMonoFontFamily,
-                      fontSize = 12.sp,
-                      color = RiviaTextSecondary,
-                    )
-                  }
-                }
-                roundTripState.errorText?.let { errText ->
-                  Text(
-                    text = errText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RiviaErrorRed,
-                  )
-                }
-                if (roundTripState.replySummary.isNotBlank()) {
-                  Text(
-                    text = roundTripState.replySummary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RiviaTextPrimary,
-                  )
-                }
-                if (roundTripState.rawJson.isNotBlank()) {
-                  HorizontalDivider(color = RiviaBorder)
-                  SelectionContainer {
-                    Text(
-                      text = roundTripState.rawJson,
-                      fontFamily = ChivoMonoFontFamily,
-                      fontSize = 11.sp,
-                      color = RiviaTextSecondary,
-                    )
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // 3. Pending List
+      // 2. Pending List
       item {
         BotsCardSection(title = "Pending list (${pendingTickets.size})") {
           if (pendingTickets.isEmpty()) {
