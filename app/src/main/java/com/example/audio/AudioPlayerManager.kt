@@ -73,11 +73,18 @@ class AudioPlayerManager(
   private val scope =
     CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + exceptionHandler)
 
+  private data class QueuedSpokenLine(
+    val messageId: String?,
+    val rawMarkdown: String,
+    val isLiveChannel: Boolean,
+  )
+
   private var exoPlayer: ExoPlayer? = null
   private var synthesisJob: Job? = null
   private var allChunksEnqueued = true
   private var pausedByTransientFocusLoss = false
   private var liveSessionHoldsFocus = false
+  private var currentPlaybackIsLive = false
   private var onQueueFinishedCallback: (() -> Unit)? = null
   private val tempFiles = mutableListOf<File>()
 
@@ -85,6 +92,12 @@ class AudioPlayerManager(
   private var livePreviousText: String? = null
   private val liveSentenceChannel = Channel<String>(Channel.UNLIMITED)
   private var liveQueueJob: Job? = null
+  private val pendingQueuedLines = mutableListOf<QueuedSpokenLine>()
+
+  @Volatile var shouldHoldLiveQueuedLineProvider: (() -> Boolean)? = null
+  @Volatile var onLiveTurnStreamSentencesCompleted: (() -> Unit)? = null
+  @Volatile var onLiveQueuedLineStarted: ((String) -> Unit)? = null
+  @Volatile var onAllLivePlaybackDrained: (() -> Unit)? = null
 
   private val focusChangeListener =
     AudioManager.OnAudioFocusChangeListener { focusChange ->
@@ -110,7 +123,11 @@ class AudioPlayerManager(
             AudioManager.AUDIOFOCUS_LOSS -> {
               // Permanent focus loss stops her playback
               pausedByTransientFocusLoss = false
-              stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+              stopPlaybackInternalOnMain(
+                abandonFocus = !liveSessionHoldsFocus,
+                clearPendingQueue = true,
+                applyLiveTailGate = false,
+              )
             }
           }
         } catch (_: Throwable) {}
@@ -165,6 +182,9 @@ class AudioPlayerManager(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
               if (isPlaying) {
                 _isSpeaking.value = true
+                if (liveSessionHoldsFocus || currentPlaybackIsLive) {
+                  MicSharingRecorder.setLivePlaybackActive(true)
+                }
               } else if (
                 playbackState == Player.STATE_ENDED &&
                   allChunksEnqueued &&
@@ -189,6 +209,9 @@ class AudioPlayerManager(
   private fun enqueueAudioFileOnMain(audioFile: File, firstChunkStarted: Boolean): Boolean {
     val player = getOrCreatePlayerOnMain()
     val mediaItem = MediaItem.fromUri(Uri.fromFile(audioFile))
+    if (liveSessionHoldsFocus || currentPlaybackIsLive) {
+      MicSharingRecorder.setLivePlaybackActive(true)
+    }
     if (!firstChunkStarted) {
       if (!liveSessionHoldsFocus) {
         requestTransientFocus()
@@ -248,7 +271,12 @@ class AudioPlayerManager(
   fun releaseLiveSessionAudioFocus() {
     scope.launch(Dispatchers.Main.immediate) {
       liveSessionHoldsFocus = false
-      stopPlaybackInternalOnMain(abandonFocus = true)
+      MicSharingRecorder.clearLivePlaybackGateImmediate()
+      stopPlaybackInternalOnMain(
+        abandonFocus = true,
+        clearPendingQueue = true,
+        applyLiveTailGate = false,
+      )
     }
   }
 
@@ -270,136 +298,165 @@ class AudioPlayerManager(
     onError: ((String) -> Unit)? = null,
   ) {
     scope.launch(Dispatchers.Main.immediate) {
-      try {
-        if (messageId != null && _speakingMessageId.value == messageId && _isSpeaking.value) {
-          stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
-          return@launch
-        }
+      if (messageId != null && _speakingMessageId.value == messageId && _isSpeaking.value) {
+        stopPlaybackInternalOnMain(
+          abandonFocus = !liveSessionHoldsFocus,
+          clearPendingQueue = true,
+          applyLiveTailGate = isLiveChannel || liveSessionHoldsFocus,
+        )
+        return@launch
+      }
+      speakMarkdownMessageInternalOnMain(
+        messageId = messageId,
+        rawMarkdown = rawMarkdown,
+        isLiveChannel = isLiveChannel,
+        onFinished = onFinished,
+        onError = onError,
+        clearPendingQueue = true,
+      )
+    }
+  }
 
-        stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
-        _lastAudioError.value = null
-        _lastAudioNotice.value = null
-        _speakingMessageId.value = messageId
-        onQueueFinishedCallback = onFinished
+  private fun speakMarkdownMessageInternalOnMain(
+    messageId: String?,
+    rawMarkdown: String,
+    isLiveChannel: Boolean,
+    onFinished: (() -> Unit)?,
+    onError: ((String) -> Unit)?,
+    clearPendingQueue: Boolean,
+  ) {
+    try {
+      stopPlaybackInternalOnMain(
+        abandonFocus = !liveSessionHoldsFocus,
+        clearPendingQueue = clearPendingQueue,
+        applyLiveTailGate = false,
+      )
+      _lastAudioError.value = null
+      _lastAudioNotice.value = null
+      _speakingMessageId.value = messageId
+      currentPlaybackIsLive = isLiveChannel || liveSessionHoldsFocus
+      onQueueFinishedCallback = onFinished
 
-        synthesisJob =
-          scope.launch(Dispatchers.Main) {
-            var firstChunkStarted = false
-            try {
-              val apiKey = keyRepository.getElevenLabsKey()
-              val voicePrefs = keyRepository.voicePreferencesFlow.first()
-              if (apiKey.isBlank()) {
-                val msg = "ElevenLabs API key is not set. Add it in Settings."
-                _lastAudioError.value = msg
-                _speakingMessageId.value = null
-                onError?.invoke(msg)
-                onFinished?.invoke()
-                return@launch
-              }
-              if (voicePrefs.voiceId.isBlank()) {
-                val msg =
-                  "No ElevenLabs Voice selected. Choose your custom voice in Settings > Voice."
-                _lastAudioError.value = msg
-                _speakingMessageId.value = null
-                onError?.invoke(msg)
-                onFinished?.invoke()
-                return@launch
-              }
+      synthesisJob =
+        scope.launch(Dispatchers.Main) {
+          var firstChunkStarted = false
+          try {
+            val apiKey = keyRepository.getElevenLabsKey()
+            val voicePrefs = keyRepository.voicePreferencesFlow.first()
+            if (apiKey.isBlank()) {
+              val msg = "ElevenLabs API key is not set. Add it in Settings."
+              _lastAudioError.value = msg
+              _speakingMessageId.value = null
+              onError?.invoke(msg)
+              onAllPlaybackCompletedOnMain(hadAudioStarted = false)
+              return@launch
+            }
+            if (voicePrefs.voiceId.isBlank()) {
+              val msg =
+                "No ElevenLabs Voice selected. Choose your custom voice in Settings > Voice."
+              _lastAudioError.value = msg
+              _speakingMessageId.value = null
+              onError?.invoke(msg)
+              onAllPlaybackCompletedOnMain(hadAudioStarted = false)
+              return@launch
+            }
 
-              var activeModelId =
-                if (isLiveChannel) voicePrefs.liveModelId else voicePrefs.readAloudModelId
-              val keepTags =
-                voicePrefs.sendAudioTags &&
-                  TextAudioTagProcessor.modelSupportsAudioTags(activeModelId)
+            var activeModelId =
+              if (isLiveChannel) voicePrefs.liveModelId else voicePrefs.readAloudModelId
+            val keepTags =
+              voicePrefs.sendAudioTags &&
+                TextAudioTagProcessor.modelSupportsAudioTags(activeModelId)
 
-              val speakable =
-                TextAudioTagProcessor.toSpeakableText(
-                  markdown = rawMarkdown,
-                  keepAudioTags = keepTags,
+            val speakable =
+              TextAudioTagProcessor.toSpeakableText(
+                markdown = rawMarkdown,
+                keepAudioTags = keepTags,
+              )
+            val sentences = TextAudioTagProcessor.splitIntoSentences(speakable)
+            if (sentences.isEmpty()) {
+              _speakingMessageId.value = null
+              onAllPlaybackCompletedOnMain(hadAudioStarted = false)
+              return@launch
+            }
+
+            allChunksEnqueued = false
+            _isSpeaking.value = true
+            if (currentPlaybackIsLive) {
+              MicSharingRecorder.setLivePlaybackActive(true)
+            }
+
+            var prevText: String? = null
+
+            for ((index, sentence) in sentences.withIndex()) {
+              val result =
+                elevenLabsClient.streamSentenceToFile(
+                  apiKey = apiKey,
+                  voicePrefs = voicePrefs,
+                  modelId = activeModelId,
+                  text = sentence,
+                  previousText = prevText,
+                  cacheDir = context.cacheDir,
                 )
-              val sentences = TextAudioTagProcessor.splitIntoSentences(speakable)
-              if (sentences.isEmpty()) {
-                _speakingMessageId.value = null
-                onFinished?.invoke()
-                return@launch
-              }
 
-              allChunksEnqueued = false
-              _isSpeaking.value = true
-
-              var prevText: String? = null
-
-              for ((index, sentence) in sentences.withIndex()) {
-                val result =
-                  elevenLabsClient.streamSentenceToFile(
-                    apiKey = apiKey,
-                    voicePrefs = voicePrefs,
-                    modelId = activeModelId,
-                    text = sentence,
-                    previousText = prevText,
-                    cacheDir = context.cacheDir,
-                  )
-
-                result.fold(
-                  onSuccess = { chunk ->
-                    // Fix #8: Model fallback is a notice, not an error
-                    if (!chunk.fallbackNotice.isNullOrBlank()) {
-                      _lastAudioNotice.value = chunk.fallbackNotice
-                    }
-                    if (chunk.usedModelId.isNotBlank()) {
-                      activeModelId = chunk.usedModelId
-                    }
-                    if (!chunk.skippedEmpty && chunk.audioFile != null) {
-                      tempFiles.add(chunk.audioFile)
-                      firstChunkStarted =
-                        enqueueAudioFileOnMain(chunk.audioFile, firstChunkStarted)
-                      prevText = sentence
-                    }
-                  },
-                  onFailure = { err ->
-                    val msg = err.message ?: "ElevenLabs synthesis failed"
-                    _lastAudioError.value = msg
-                    onError?.invoke(msg)
-                    allChunksEnqueued = true
-                    if (!firstChunkStarted) {
-                      onAllPlaybackCompletedOnMain()
-                    }
-                    return@launch
-                  },
-                )
-                if (index == sentences.lastIndex) {
-                  allChunksEnqueued = true
-                  val player = exoPlayer
-                  if (
-                    !firstChunkStarted ||
-                      (player != null &&
-                        !player.isPlaying &&
-                        player.playbackState == Player.STATE_ENDED &&
-                        !pausedByTransientFocusLoss)
-                  ) {
-                    onAllPlaybackCompletedOnMain()
+              result.fold(
+                onSuccess = { chunk ->
+                  // Fix #8: Model fallback is a notice, not an error
+                  if (!chunk.fallbackNotice.isNullOrBlank()) {
+                    _lastAudioNotice.value = chunk.fallbackNotice
                   }
+                  if (chunk.usedModelId.isNotBlank()) {
+                    activeModelId = chunk.usedModelId
+                  }
+                  if (!chunk.skippedEmpty && chunk.audioFile != null) {
+                    tempFiles.add(chunk.audioFile)
+                    firstChunkStarted =
+                      enqueueAudioFileOnMain(chunk.audioFile, firstChunkStarted)
+                    prevText = sentence
+                  }
+                },
+                onFailure = { err ->
+                  val msg = err.message ?: "ElevenLabs synthesis failed"
+                  _lastAudioError.value = msg
+                  onError?.invoke(msg)
+                  allChunksEnqueued = true
+                  if (!firstChunkStarted) {
+                    onAllPlaybackCompletedOnMain(hadAudioStarted = false)
+                  }
+                  return@launch
+                },
+              )
+              if (index == sentences.lastIndex) {
+                allChunksEnqueued = true
+                val player = exoPlayer
+                if (
+                  !firstChunkStarted ||
+                    (player != null &&
+                      !player.isPlaying &&
+                      player.playbackState == Player.STATE_ENDED &&
+                      !pausedByTransientFocusLoss)
+                ) {
+                  onAllPlaybackCompletedOnMain(hadAudioStarted = firstChunkStarted)
                 }
               }
-            } catch (e: CancellationException) {
-              throw e
-            } catch (e: Throwable) {
-              val msg = e.message ?: "Voice synthesis error"
-              _lastAudioError.value = msg
-              onError?.invoke(msg)
-              allChunksEnqueued = true
-              if (!firstChunkStarted) {
-                onAllPlaybackCompletedOnMain()
-              }
+            }
+          } catch (e: CancellationException) {
+            throw e
+          } catch (e: Throwable) {
+            val msg = e.message ?: "Voice synthesis error"
+            _lastAudioError.value = msg
+            onError?.invoke(msg)
+            allChunksEnqueued = true
+            if (!firstChunkStarted) {
+              onAllPlaybackCompletedOnMain(hadAudioStarted = false)
             }
           }
-      } catch (e: Throwable) {
-        val msg = e.message ?: "Voice playback error"
-        _lastAudioError.value = msg
-        _isSpeaking.value = false
-        _speakingMessageId.value = null
-        onError?.invoke(msg)
-      }
+        }
+    } catch (e: Throwable) {
+      val msg = e.message ?: "Voice playback error"
+      _lastAudioError.value = msg
+      _isSpeaking.value = false
+      _speakingMessageId.value = null
+      onError?.invoke(msg)
     }
   }
 
@@ -415,9 +472,14 @@ class AudioPlayerManager(
   ) {
     scope.launch(Dispatchers.Main.immediate) {
       try {
-        stopPlaybackInternalOnMain(abandonFocus = false)
+        stopPlaybackInternalOnMain(
+          abandonFocus = false,
+          clearPendingQueue = false,
+          applyLiveTailGate = false,
+        )
         allChunksEnqueued = false
         livePreviousText = null
+        currentPlaybackIsLive = true
         onQueueFinishedCallback = onTurnPlaybackFinished
 
         liveQueueJob =
@@ -431,6 +493,7 @@ class AudioPlayerManager(
               for (rawSentence in liveSentenceChannel) {
                 if (rawSentence == "__END_OF_TURN__") {
                   allChunksEnqueued = true
+                  onLiveTurnStreamSentencesCompleted?.invoke()
                   val player = exoPlayer
                   if (
                     !firstChunkStarted ||
@@ -439,7 +502,7 @@ class AudioPlayerManager(
                         player.playbackState == Player.STATE_ENDED &&
                         !pausedByTransientFocusLoss)
                   ) {
-                    onAllPlaybackCompletedOnMain()
+                    onAllPlaybackCompletedOnMain(hadAudioStarted = firstChunkStarted)
                   }
                   break
                 }
@@ -450,7 +513,8 @@ class AudioPlayerManager(
                     else "ElevenLabs Voice ID is not configured in Settings > Voice."
                   )
                   allChunksEnqueued = true
-                  onAllPlaybackCompletedOnMain()
+                  onLiveTurnStreamSentencesCompleted?.invoke()
+                  onAllPlaybackCompletedOnMain(hadAudioStarted = firstChunkStarted)
                   break
                 }
 
@@ -465,6 +529,7 @@ class AudioPlayerManager(
                 if (speakable.isBlank()) continue
 
                 _isSpeaking.value = true
+                MicSharingRecorder.setLivePlaybackActive(true)
                 val res =
                   elevenLabsClient.streamSentenceToFile(
                     apiKey = apiKey,
@@ -498,8 +563,9 @@ class AudioPlayerManager(
                   onFailure = { err ->
                     onError(err.message ?: "ElevenLabs synthesis failed")
                     allChunksEnqueued = true
+                    onLiveTurnStreamSentencesCompleted?.invoke()
                     if (!firstChunkStarted) {
-                      onAllPlaybackCompletedOnMain()
+                      onAllPlaybackCompletedOnMain(hadAudioStarted = false)
                     }
                   },
                 )
@@ -509,7 +575,8 @@ class AudioPlayerManager(
             } catch (e: Throwable) {
               onError(e.message ?: "Live voice playback error")
               allChunksEnqueued = true
-              onAllPlaybackCompletedOnMain()
+              onLiveTurnStreamSentencesCompleted?.invoke()
+              onAllPlaybackCompletedOnMain(hadAudioStarted = firstChunkStarted)
             }
           }
       } catch (e: Throwable) {
@@ -542,9 +609,14 @@ class AudioPlayerManager(
   fun playPreviewUrl(url: String) {
     scope.launch(Dispatchers.Main.immediate) {
       try {
-        stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+        stopPlaybackInternalOnMain(
+          abandonFocus = !liveSessionHoldsFocus,
+          clearPendingQueue = true,
+          applyLiveTailGate = false,
+        )
         requestTransientFocus()
         allChunksEnqueued = true
+        currentPlaybackIsLive = false
         _isSpeaking.value = true
         val player = getOrCreatePlayerOnMain()
         player.setMediaItem(MediaItem.fromUri(Uri.parse(url)))
@@ -565,7 +637,11 @@ class AudioPlayerManager(
       try {
         val tagId = "wav:$filePath"
         if (_speakingMessageId.value == tagId && _isSpeaking.value) {
-          stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+          stopPlaybackInternalOnMain(
+            abandonFocus = !liveSessionHoldsFocus,
+            clearPendingQueue = true,
+            applyLiveTailGate = false,
+          )
           return@launch
         }
         val wavFile = File(filePath)
@@ -573,9 +649,14 @@ class AudioPlayerManager(
           _lastAudioError.value = "Saved WAV clip no longer exists on disk."
           return@launch
         }
-        stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+        stopPlaybackInternalOnMain(
+          abandonFocus = !liveSessionHoldsFocus,
+          clearPendingQueue = true,
+          applyLiveTailGate = false,
+        )
         requestTransientFocus()
         allChunksEnqueued = true
+        currentPlaybackIsLive = false
         _speakingMessageId.value = tagId
         _isSpeaking.value = true
         val player = getOrCreatePlayerOnMain()
@@ -601,15 +682,93 @@ class AudioPlayerManager(
     }
 
   /**
+   * Queues a spoken line after whatever Rivia is currently saying (never cutting her off)
+   * and while Jordan is mid-sentence in Live, or speaks it immediately if neither is active.
+   */
+  fun enqueueOrSpeakLineWithoutInterrupting(
+    messageId: String? = null,
+    rawMarkdown: String,
+    isLiveChannel: Boolean = true,
+  ) {
+    scope.launch(Dispatchers.Main.immediate) {
+      if (rawMarkdown.isBlank()) return@launch
+      val busy =
+        _isSpeaking.value ||
+          synthesisJob?.isActive == true ||
+          liveQueueJob?.isActive == true ||
+          exoPlayer?.isPlaying == true
+      val holdForUserTurn =
+        isLiveChannel && (shouldHoldLiveQueuedLineProvider?.invoke() == true)
+      if (busy || holdForUserTurn) {
+        pendingQueuedLines.add(QueuedSpokenLine(messageId, rawMarkdown, isLiveChannel))
+      } else {
+        if (isLiveChannel) {
+          onLiveQueuedLineStarted?.invoke(rawMarkdown)
+        }
+        speakMarkdownMessageInternalOnMain(
+          messageId = messageId,
+          rawMarkdown = rawMarkdown,
+          isLiveChannel = isLiveChannel,
+          onFinished = null,
+          onError = null,
+          clearPendingQueue = false,
+        )
+      }
+    }
+  }
+
+  /**
+   * Plays any held Live lines once Jordan's turn has ended.
+   */
+  fun drainHeldLiveQueuedLinesIfReady() {
+    scope.launch(Dispatchers.Main.immediate) {
+      if (pendingQueuedLines.isEmpty()) return@launch
+      val busy =
+        _isSpeaking.value ||
+          synthesisJob?.isActive == true ||
+          liveQueueJob?.isActive == true ||
+          exoPlayer?.isPlaying == true
+      if (busy) return@launch
+      val nextItem = pendingQueuedLines.first()
+      if (nextItem.isLiveChannel && shouldHoldLiveQueuedLineProvider?.invoke() == true) {
+        return@launch
+      }
+      val popped = pendingQueuedLines.removeAt(0)
+      if (popped.isLiveChannel) {
+        onLiveQueuedLineStarted?.invoke(popped.rawMarkdown)
+      }
+      speakMarkdownMessageInternalOnMain(
+        messageId = popped.messageId,
+        rawMarkdown = popped.rawMarkdown,
+        isLiveChannel = popped.isLiveChannel,
+        onFinished = null,
+        onError = null,
+        clearPendingQueue = false,
+      )
+    }
+  }
+
+  /**
    * Fix #2: Switches to Main thread itself.
    */
   fun stopPlayback() {
     scope.launch(Dispatchers.Main.immediate) {
-      stopPlaybackInternalOnMain(abandonFocus = !liveSessionHoldsFocus)
+      stopPlaybackInternalOnMain(
+        abandonFocus = !liveSessionHoldsFocus,
+        clearPendingQueue = true,
+        applyLiveTailGate = false,
+      )
     }
   }
 
-  private fun stopPlaybackInternalOnMain(abandonFocus: Boolean) {
+  private fun stopPlaybackInternalOnMain(
+    abandonFocus: Boolean,
+    clearPendingQueue: Boolean = true,
+    applyLiveTailGate: Boolean = false,
+  ) {
+    if (clearPendingQueue) {
+      pendingQueuedLines.clear()
+    }
     synthesisJob?.cancel()
     synthesisJob = null
     liveQueueJob?.cancel()
@@ -620,6 +779,8 @@ class AudioPlayerManager(
     onQueueFinishedCallback = null
     pausedByTransientFocusLoss = false
     allChunksEnqueued = false
+    val wasLivePlayback = currentPlaybackIsLive || liveSessionHoldsFocus
+    currentPlaybackIsLive = false
     try {
       exoPlayer?.stop()
       exoPlayer?.clearMediaItems()
@@ -627,16 +788,54 @@ class AudioPlayerManager(
     allChunksEnqueued = true
     _isSpeaking.value = false
     _speakingMessageId.value = null
+    if (wasLivePlayback) {
+      if (applyLiveTailGate) {
+        MicSharingRecorder.setLivePlaybackActive(false, tailMs = MicSharingRecorder.LIVE_PLAYBACK_TAIL_MS)
+      } else {
+        MicSharingRecorder.clearLivePlaybackGateImmediate()
+      }
+    }
     cleanupTempFiles()
     if (abandonFocus) {
       abandonTransientFocus()
     }
   }
 
-  private fun onAllPlaybackCompletedOnMain() {
+  private fun onAllPlaybackCompletedOnMain(hadAudioStarted: Boolean = true) {
+    onLiveTurnStreamSentencesCompleted?.invoke()
+    if (pendingQueuedLines.isNotEmpty()) {
+      val nextItem = pendingQueuedLines.first()
+      val holdForUser =
+        nextItem.isLiveChannel && (shouldHoldLiveQueuedLineProvider?.invoke() == true)
+      if (!holdForUser) {
+        val popped = pendingQueuedLines.removeAt(0)
+        val savedCallback = onQueueFinishedCallback
+        if (popped.isLiveChannel) {
+          onLiveQueuedLineStarted?.invoke(popped.rawMarkdown)
+        }
+        speakMarkdownMessageInternalOnMain(
+          messageId = popped.messageId,
+          rawMarkdown = popped.rawMarkdown,
+          isLiveChannel = popped.isLiveChannel,
+          onFinished = savedCallback,
+          onError = null,
+          clearPendingQueue = false,
+        )
+        return
+      }
+    }
+    val wasLive = currentPlaybackIsLive || liveSessionHoldsFocus
+    currentPlaybackIsLive = false
     _isSpeaking.value = false
     _speakingMessageId.value = null
     pausedByTransientFocusLoss = false
+    if (wasLive) {
+      if (hadAudioStarted) {
+        MicSharingRecorder.setLivePlaybackActive(false, tailMs = MicSharingRecorder.LIVE_PLAYBACK_TAIL_MS)
+      } else {
+        MicSharingRecorder.setLivePlaybackActive(false, tailMs = 0L)
+      }
+    }
     cleanupTempFiles()
     if (!liveSessionHoldsFocus) {
       abandonTransientFocus()
@@ -644,6 +843,9 @@ class AudioPlayerManager(
     val cb = onQueueFinishedCallback
     onQueueFinishedCallback = null
     cb?.invoke()
+    if (wasLive) {
+      onAllLivePlaybackDrained?.invoke()
+    }
   }
 
   private fun cleanupTempFiles() {

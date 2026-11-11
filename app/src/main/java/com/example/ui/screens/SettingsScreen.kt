@@ -487,8 +487,14 @@ private fun KeysAndBackupTab(
   val context = LocalContext.current
   val focusManager = LocalFocusManager.current
   val scope = rememberCoroutineScope()
+  val appUiMode by viewModel.appUiMode.collectAsStateWithLifecycle()
   val savedGeminiKey by viewModel.geminiKey.collectAsStateWithLifecycle()
   val savedElevenKey by viewModel.elevenLabsKey.collectAsStateWithLifecycle()
+  val savedTabletUrl by viewModel.tabletServerUrl.collectAsStateWithLifecycle()
+  val savedTabletToken by viewModel.tabletAppToken.collectAsStateWithLifecycle()
+  val tabletTestRunning by viewModel.tabletTestRunning.collectAsStateWithLifecycle()
+  val tabletTestResultText by viewModel.tabletTestResultText.collectAsStateWithLifecycle()
+  val tabletTestIsError by viewModel.tabletTestIsError.collectAsStateWithLifecycle()
   val cachedModels by viewModel.cachedModels.collectAsStateWithLifecycle()
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
   val isLoadingModels by viewModel.isLoadingModels.collectAsStateWithLifecycle()
@@ -496,11 +502,16 @@ private fun KeysAndBackupTab(
 
   var geminiDraft by remember { mutableStateOf(savedGeminiKey) }
   var elevenDraft by remember { mutableStateOf(savedElevenKey) }
+  var tabletUrlDraft by remember { mutableStateOf(savedTabletUrl) }
+  var tabletTokenDraft by remember { mutableStateOf(savedTabletToken) }
   var showGeminiPlain by remember { mutableStateOf(false) }
   var showElevenPlain by remember { mutableStateOf(false) }
+  var showTabletTokenPlain by remember { mutableStateOf(false) }
 
   LaunchedEffect(savedGeminiKey) { geminiDraft = savedGeminiKey }
   LaunchedEffect(savedElevenKey) { elevenDraft = savedElevenKey }
+  LaunchedEffect(savedTabletUrl) { tabletUrlDraft = savedTabletUrl }
+  LaunchedEffect(savedTabletToken) { tabletTokenDraft = savedTabletToken }
 
   fun commitGeminiKeyIfChanged() {
     if (geminiDraft.trim() != savedGeminiKey) {
@@ -514,9 +525,21 @@ private fun KeysAndBackupTab(
     }
   }
 
+  fun commitTabletIfChanged() {
+    val cleanUrl = com.example.security.SecureKeyRepository.normalizeNoWhitespace(tabletUrlDraft)
+    val cleanToken =
+      com.example.security.SecureKeyRepository.normalizeNoWhitespace(tabletTokenDraft)
+    if (cleanUrl != savedTabletUrl || cleanToken != savedTabletToken) {
+      viewModel.saveTabletSettings(cleanUrl, cleanToken)
+    }
+  }
+
   val commitBothRef by rememberUpdatedState {
     commitGeminiKeyIfChanged()
     commitElevenKeyIfChanged()
+    if (appUiMode == AppUiMode.DEV) {
+      commitTabletIfChanged()
+    }
   }
 
   DisposableEffect(Unit) { onDispose { commitBothRef() } }
@@ -767,6 +790,138 @@ private fun KeysAndBackupTab(
               color = RiviaTextPrimary,
               fontWeight = FontWeight.SemiBold,
             )
+          }
+        }
+      }
+    }
+
+    // Bots Pass 1 Section 1: Tablet (Dev mode only)
+    if (appUiMode == AppUiMode.DEV) {
+      item {
+        SettingsCardSection(
+          title = "Tablet",
+        ) {
+          Text(
+            text =
+              "Encrypted with Android Keystore AES-256. Server URL must start with https:// and end in /app/mcp.",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaMutedText,
+          )
+          OutlinedTextField(
+            value = tabletUrlDraft,
+            onValueChange = { tabletUrlDraft = it },
+            label = { Text("Server URL") },
+            shape = RoundedCornerShape(14.dp),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions =
+              KeyboardActions(
+                onDone = {
+                  commitTabletIfChanged()
+                  focusManager.clearFocus()
+                }
+              ),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitTabletIfChanged() })
+                .testTag("tablet_server_url_input"),
+            colors = riviaTextFieldColors(),
+          )
+
+          OutlinedTextField(
+            value = tabletTokenDraft,
+            onValueChange = { tabletTokenDraft = it },
+            label = { Text("App token") },
+            shape = RoundedCornerShape(14.dp),
+            visualTransformation =
+              if (showTabletTokenPlain) VisualTransformation.None
+              else PasswordVisualTransformation(),
+            trailingIcon = {
+              IconButton(
+                onClick = { showTabletTokenPlain = !showTabletTokenPlain },
+                modifier = Modifier.minimumInteractiveComponentSize(),
+              ) {
+                Icon(
+                  imageVector =
+                    if (showTabletTokenPlain) Icons.Outlined.VisibilityOff
+                    else Icons.Outlined.Visibility,
+                  contentDescription =
+                    if (showTabletTokenPlain) "Hide App token" else "Show App token",
+                  tint = RiviaMutedText,
+                )
+              }
+            },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions =
+              KeyboardActions(
+                onDone = {
+                  commitTabletIfChanged()
+                  focusManager.clearFocus()
+                }
+              ),
+            modifier =
+              Modifier.fillMaxWidth()
+                .then(commitOnFocusLostModifier { commitTabletIfChanged() })
+                .testTag("tablet_app_token_input"),
+            colors = riviaTextFieldColors(),
+          )
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              modifier = Modifier.weight(1f).padding(end = 12.dp),
+            ) {
+              StatusShape(
+                status =
+                  when {
+                    tabletTestIsError -> StatusType.ERROR
+                    !tabletTestResultText.isNullOrBlank() -> StatusType.OK
+                    tabletTokenDraft.isNotBlank() -> StatusType.OK
+                    else -> StatusType.WARNING
+                  },
+                size = 8.dp,
+              )
+              Text(
+                text =
+                  tabletTestResultText
+                    ?: if (tabletTokenDraft.isNotBlank()) "Token saved in Keystore"
+                    else "No token entered",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = ChivoMonoFontFamily,
+                color = if (tabletTestIsError) RiviaErrorRed else RiviaMutedText,
+                modifier = Modifier.testTag("tablet_test_inline_result"),
+              )
+            }
+
+            OutlinedButton(
+              onClick = {
+                focusManager.clearFocus()
+                viewModel.testTabletConnection(tabletUrlDraft, tabletTokenDraft)
+              },
+              enabled = !tabletTestRunning,
+              shape = RoundedCornerShape(14.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              colors =
+                ButtonDefaults.outlinedButtonColors(
+                  containerColor = RiviaSurface2,
+                  contentColor = RiviaTextPrimary,
+                ),
+              modifier =
+                Modifier.minimumInteractiveComponentSize()
+                  .testTag("test_tablet_connection_button"),
+            ) {
+              Text(
+                if (tabletTestRunning) "Testing..." else "Test",
+                color = RiviaTextPrimary,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
           }
         }
       }

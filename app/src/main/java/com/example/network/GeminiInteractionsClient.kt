@@ -25,6 +25,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class GeminiFunctionCall(
+  val id: String,
+  val name: String,
+  val arguments: JSONObject,
+)
+
 sealed class GeminiStreamEvent {
   data class InteractionCreated(val interactionId: String, val serviceTierHeader: String?) :
     GeminiStreamEvent()
@@ -49,6 +55,8 @@ sealed class GeminiStreamEvent {
     val completionStatus: String = "completed",
     val finishReason: String? = null,
     val safetyBlockReason: String? = null,
+    val functionCalls: List<GeminiFunctionCall> = emptyList(),
+    val chainedWithPreviousInteractionId: Boolean = false,
   ) : GeminiStreamEvent()
 
   data class RequestDispatched(
@@ -67,6 +75,8 @@ class GeminiInteractionsClient {
   companion object {
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+    const val TABLET_TOOLS_SYSTEM_SUFFIX =
+      "You are Rivia. Your bots are parts of you, not other people: whatever they do, you did. Talk to Jordan in first person and never mention bots, Ard, tickets or tools."
     private val EXCLUDED_MODEL_SUBSTRINGS =
       listOf(
         "tts",
@@ -79,6 +89,42 @@ class GeminiInteractionsClient {
         "omni",
         "robotics",
       )
+
+    /**
+     * Parses function_call arguments whether provided as a JSONObject or a JSON-encoded String.
+     */
+    fun parseArgumentsObject(raw: Any?): JSONObject? {
+      when (raw) {
+        null, JSONObject.NULL -> return null
+        is JSONObject -> {
+          // If the JSONObject itself wraps a stringified JSON under no keys or already has keys, return it
+          return raw
+        }
+        is String -> {
+          var s = raw.trim()
+          if (s.isEmpty()) return null
+          repeat(2) {
+            if (s.startsWith("{") && s.endsWith("}")) {
+              try {
+                return JSONObject(s)
+              } catch (_: Exception) {}
+            }
+            try {
+              val tok = org.json.JSONTokener(s).nextValue()
+              when (tok) {
+                is JSONObject -> return tok
+                is String -> s = tok.trim()
+                else -> return null
+              }
+            } catch (_: Exception) {
+              return null
+            }
+          }
+          return null
+        }
+        else -> return null
+      }
+    }
   }
 
   // Zero HTTP logging of headers or bodies so API keys are never logged.
@@ -176,6 +222,33 @@ class GeminiInteractionsClient {
     }
   }
 
+  fun buildFunctionResultInput(
+    toolName: String,
+    callId: String,
+    resultJsonString: String,
+  ): JSONArray {
+    return JSONArray().apply {
+      put(
+        JSONObject().apply {
+          put("type", "function_result")
+          put("name", toolName)
+          put("call_id", callId)
+          put(
+            "result",
+            JSONArray().apply {
+              put(
+                JSONObject().apply {
+                  put("type", "text")
+                  put("text", resultJsonString)
+                }
+              )
+            },
+          )
+        }
+      )
+    }
+  }
+
   /**
    * Builds the exact JSON body for POST /v1beta/interactions according to Section 3, Section 4,
    * and Fixes #4, #7, #11, #13.
@@ -186,6 +259,8 @@ class GeminiInteractionsClient {
     inputSteps: JSONArray,
     previousInteractionId: String?,
     stream: Boolean = true,
+    tabletToolDefs: List<TabletToolDef>? = null,
+    includeToolsOnTurn: Boolean = true,
   ): JSONObject {
     val isLive = channel == RiviaChannel.LIVE_VOICE
     val chosenModel = if (isLive) settings.liveModel else settings.model
@@ -208,6 +283,10 @@ class GeminiInteractionsClient {
           if (channelStyle.isNotBlank()) {
             if (isNotEmpty()) append("\n\n")
             append(channelStyle.trim())
+          }
+          if (settings.tabletToolsEnabled) {
+            if (isNotEmpty()) append("\n\n")
+            append(TABLET_TOOLS_SYSTEM_SUFFIX)
           }
         }
         .trim()
@@ -261,52 +340,66 @@ class GeminiInteractionsClient {
     }
 
     // Tools (Fix #4 & Fix #13)
-    val toolsArray = JSONArray()
-    if (settings.googleSearchEnabled) {
-      // Fix #4: Google Search is {"type":"google_search"}, plus "search_types":["image_search"] for image search; remove "mode".
-      toolsArray.put(
-        JSONObject().apply {
-          put("type", "google_search")
-          if (settings.googleSearchMode.equals("image", ignoreCase = true)) {
-            put("search_types", JSONArray().apply { put("image_search") })
+    if (includeToolsOnTurn) {
+      val toolsArray = JSONArray()
+      if (settings.googleSearchEnabled) {
+        // Fix #4: Google Search is {"type":"google_search"}, plus "search_types":["image_search"] for image search; remove "mode".
+        toolsArray.put(
+          JSONObject().apply {
+            put("type", "google_search")
+            if (settings.googleSearchMode.equals("image", ignoreCase = true)) {
+              put("search_types", JSONArray().apply { put("image_search") })
+            }
           }
-        }
-      )
-    }
-    if (settings.urlContextEnabled) {
-      toolsArray.put(JSONObject().apply { put("type", "url_context") })
-    }
-    if (settings.codeExecutionEnabled) {
-      toolsArray.put(JSONObject().apply { put("type", "code_execution") })
-    }
-    if (settings.googleMapsEnabled) {
-      toolsArray.put(
-        JSONObject().apply {
-          put("type", "google_maps")
-          val lat = settings.googleMapsLatitude.toDoubleOrNull()
-          val lng = settings.googleMapsLongitude.toDoubleOrNull()
-          if (lat != null) put("latitude", lat)
-          if (lng != null) put("longitude", lng)
-        }
-      )
-    }
-    if (settings.fileSearchEnabled && settings.fileSearchStoreNames.isNotEmpty()) {
-      // Fix #4: File search is {"type":"file_search","file_search_store_names":[...]}
-      toolsArray.put(
-        JSONObject().apply {
-          put("type", "file_search")
-          put("file_search_store_names", JSONArray(settings.fileSearchStoreNames))
-        }
-      )
-    }
-    // Fix #13: Each plug-in function goes in tools as its own {"type":"function","name":...,"description":...,"parameters":{...}} object
-    for (fnToolObj in PluginRegistry.getEnabledFunctionToolObjects()) {
-      toolsArray.put(fnToolObj)
-    }
+        )
+      }
+      if (settings.urlContextEnabled) {
+        toolsArray.put(JSONObject().apply { put("type", "url_context") })
+      }
+      if (settings.codeExecutionEnabled) {
+        toolsArray.put(JSONObject().apply { put("type", "code_execution") })
+      }
+      if (settings.googleMapsEnabled) {
+        toolsArray.put(
+          JSONObject().apply {
+            put("type", "google_maps")
+            val lat = settings.googleMapsLatitude.toDoubleOrNull()
+            val lng = settings.googleMapsLongitude.toDoubleOrNull()
+            if (lat != null) put("latitude", lat)
+            if (lng != null) put("longitude", lng)
+          }
+        )
+      }
+      if (settings.fileSearchEnabled && settings.fileSearchStoreNames.isNotEmpty()) {
+        // Fix #4: File search is {"type":"file_search","file_search_store_names":[...]}
+        toolsArray.put(
+          JSONObject().apply {
+            put("type", "file_search")
+            put("file_search_store_names", JSONArray(settings.fileSearchStoreNames))
+          }
+        )
+      }
+      // Fix #13: Each plug-in function goes in tools as its own {"type":"function","name":...,"description":...,"parameters":{...}} object
+      for (fnToolObj in PluginRegistry.getEnabledFunctionToolObjects()) {
+        toolsArray.put(fnToolObj)
+      }
 
-    if (toolsArray.length() > 0) {
-      body.put("tools", toolsArray)
-      genConfig.put("tool_choice", settings.toolChoice)
+      // Section 4: Tablet tools (Labs chats only).
+      // Include ONLY ask_bot and get_tablet_battery (never check_reply).
+      // Never send an empty or half-built tablet tools list: both ask_bot and get_tablet_battery must be present.
+      if (settings.tabletToolsEnabled && !tabletToolDefs.isNullOrEmpty()) {
+        val askBotDef = tabletToolDefs.firstOrNull { it.name == "ask_bot" }
+        val batteryDef = tabletToolDefs.firstOrNull { it.name == "get_tablet_battery" }
+        if (askBotDef != null && batteryDef != null) {
+          toolsArray.put(askBotDef.toGeminiFunctionToolJson())
+          toolsArray.put(batteryDef.toGeminiFunctionToolJson())
+        }
+      }
+
+      if (toolsArray.length() > 0) {
+        body.put("tools", toolsArray)
+        genConfig.put("tool_choice", settings.toolChoice)
+      }
     }
 
     body.put("generation_config", genConfig)
@@ -404,6 +497,8 @@ class GeminiInteractionsClient {
     previousInteractionId: String?,
     geminiKey: String,
     elevenKey: String,
+    tabletToken: String = "",
+    tabletToolDefs: List<TabletToolDef>? = null,
   ): String {
     val sampleInput = buildSingleTurnInput("<your next message>")
     val isBackground =
@@ -415,6 +510,8 @@ class GeminiInteractionsClient {
         inputSteps = sampleInput,
         previousInteractionId = previousInteractionId,
         stream = !isBackground,
+        tabletToolDefs = tabletToolDefs,
+        includeToolsOnTurn = true,
       )
     val wrapper =
       JSONObject().apply {
@@ -431,7 +528,7 @@ class GeminiInteractionsClient {
         )
         put("body", bodyObj)
       }
-    return SecureKeyRepository.redactText(wrapper.toString(2), geminiKey, elevenKey)
+    return SecureKeyRepository.redactText(wrapper.toString(2), geminiKey, elevenKey, tabletToken)
   }
 
   /**
@@ -563,6 +660,10 @@ class GeminiInteractionsClient {
       null,
     customStore: Boolean? = null,
     customServiceTier: String? = null,
+    tabletToolDefs: List<TabletToolDef>? = null,
+    includeToolsOnTurn: Boolean = true,
+    overrideInputSteps: JSONArray? = null,
+    earlierToldPrefixWhenChained: String? = null,
     onEvent: suspend (GeminiStreamEvent) -> Unit,
   ) =
     withContext(Dispatchers.IO) {
@@ -607,15 +708,26 @@ class GeminiInteractionsClient {
 
       val client = clientForTier(effectiveTier)
 
+      fun resolveInputStepsForAttempt(prevId: String?): JSONArray {
+        if (overrideInputSteps != null) return overrideInputSteps
+        return if (prevId != null) {
+          val textWithPrefix =
+            if (!earlierToldPrefixWhenChained.isNullOrBlank()) {
+              "$earlierToldPrefixWhenChained\n$newUserText"
+            } else {
+              newUserText
+            }
+          buildSingleTurnInput(textWithPrefix)
+        } else {
+          // When rebuilding history from Room, skip the earlier-told note
+          buildFullConversationSteps(priorMessages, newUserText)
+        }
+      }
+
       try {
         // 1. Background polling flow when background == true (and not Live)
         if (useBackground) {
-          val inputSteps =
-            if (usePreviousInteractionId != null) {
-              buildSingleTurnInput(newUserText)
-            } else {
-              buildFullConversationSteps(priorMessages, newUserText)
-            }
+          val inputSteps = resolveInputStepsForAttempt(usePreviousInteractionId)
           val bodyJson =
             customBodyBuilder?.invoke(inputSteps, usePreviousInteractionId, false)
               ?: buildRequestBodyJson(
@@ -624,6 +736,8 @@ class GeminiInteractionsClient {
                 inputSteps = inputSteps,
                 previousInteractionId = usePreviousInteractionId,
                 stream = false,
+                tabletToolDefs = tabletToolDefs,
+                includeToolsOnTurn = includeToolsOnTurn,
               )
           val postUrl = "$BASE_URL/interactions"
           val req =
@@ -674,6 +788,7 @@ class GeminiInteractionsClient {
               apiKey = apiKey,
               interactionId = interactionId!!,
               defaultServiceTier = serviceTierHeader,
+              chainedWithPreviousInteractionId = usePreviousInteractionId != null,
               onEvent = onEvent,
             )
           } catch (e: CancellationException) {
@@ -698,12 +813,7 @@ class GeminiInteractionsClient {
 
         while (!postSucceededOrCreated && postAttempt <= maxPostRetries) {
           currentCoroutineContext().ensureActive()
-          val inputSteps =
-            if (usePreviousInteractionId != null) {
-              buildSingleTurnInput(newUserText)
-            } else {
-              buildFullConversationSteps(priorMessages, newUserText)
-            }
+          val inputSteps = resolveInputStepsForAttempt(usePreviousInteractionId)
           val bodyJson =
             customBodyBuilder?.invoke(inputSteps, usePreviousInteractionId, true)
               ?: buildRequestBodyJson(
@@ -712,6 +822,8 @@ class GeminiInteractionsClient {
                 inputSteps = inputSteps,
                 previousInteractionId = usePreviousInteractionId,
                 stream = true,
+                tabletToolDefs = tabletToolDefs,
+                includeToolsOnTurn = includeToolsOnTurn,
               )
 
           val request =
@@ -799,6 +911,9 @@ class GeminiInteractionsClient {
                 onThoughtSignature = { sig ->
                   appendDeltaToStep(currentStepObj, "thought_signature", null, sig)
                 },
+                onFunctionCallDelta = { deltaObj ->
+                  appendFunctionCallDeltaToStep(currentStepObj, deltaObj)
+                },
                 onStepStop = { stopObj ->
                   val finalized = finalizeStep(currentStepObj, stopObj)
                   rawSteps.put(finalized)
@@ -808,6 +923,9 @@ class GeminiInteractionsClient {
                 onStatusUpdate = { status ->
                   if (status.equals("incomplete", ignoreCase = true)) {
                     completionStatus = "incomplete"
+                  } else if (status.equals("requires_action", ignoreCase = true)) {
+                    completionStatus = "requires_action"
+                    streamCompleted = true
                   }
                   onEvent(GeminiStreamEvent.StatusUpdate(status))
                 },
@@ -824,6 +942,9 @@ class GeminiInteractionsClient {
                       for (i in 0 until outputsArr.length()) {
                         outputsArr.optJSONObject(i)?.let { rawSteps.put(sanitizeStepObject(it)) }
                       }
+                    } else {
+                      // Merge or add function_call steps from outputsArr without duplicating calls
+                      mergeFunctionCallOutputsIntoRawSteps(rawSteps, outputsArr)
                     }
                     if (!anyTextDeltaEmitted) {
                       val extracted = extractTextAndThoughtFromOutputs(outputsArr)
@@ -923,6 +1044,9 @@ class GeminiInteractionsClient {
                   onThoughtSignature = { sig ->
                     appendDeltaToStep(currentStepObj, "thought_signature", null, sig)
                   },
+                  onFunctionCallDelta = { deltaObj ->
+                    appendFunctionCallDeltaToStep(currentStepObj, deltaObj)
+                  },
                   onStepStop = { stopObj ->
                     val finalized = finalizeStep(currentStepObj, stopObj)
                     rawSteps.put(finalized)
@@ -932,16 +1056,28 @@ class GeminiInteractionsClient {
                   onStatusUpdate = { status ->
                     if (status.equals("incomplete", ignoreCase = true)) {
                       completionStatus = "incomplete"
+                    } else if (status.equals("requires_action", ignoreCase = true)) {
+                      completionStatus = "requires_action"
+                      streamCompleted = true
                     }
                     onEvent(GeminiStreamEvent.StatusUpdate(status))
                   },
-                  onCompleted = { _, inTok, outTok, thTok, _, cStatus, fReason, sReason ->
+                  onCompleted = { _, inTok, outTok, thTok, outputsArr, cStatus, fReason, sReason ->
                     inputTokens = inTok
                     outputTokens = outTok
                     thoughtTokens = thTok
                     if (cStatus.isNotBlank()) completionStatus = cStatus
                     if (!fReason.isNullOrBlank()) finishReason = fReason
                     if (!sReason.isNullOrBlank()) safetyBlockReason = sReason
+                    if (outputsArr != null && outputsArr.length() > 0) {
+                      if (rawSteps.length() == 0) {
+                        for (i in 0 until outputsArr.length()) {
+                          outputsArr.optJSONObject(i)?.let { rawSteps.put(sanitizeStepObject(it)) }
+                        }
+                      } else {
+                        mergeFunctionCallOutputsIntoRawSteps(rawSteps, outputsArr)
+                      }
+                    }
                     streamCompleted = true
                   },
                   onStreamError = { errMsg ->
@@ -964,6 +1100,7 @@ class GeminiInteractionsClient {
                 apiKey = apiKey,
                 interactionId = id,
                 defaultServiceTier = serviceTierHeader,
+                chainedWithPreviousInteractionId = usePreviousInteractionId != null,
                 onEvent = onEvent,
               )
             } catch (e: CancellationException) {
@@ -983,7 +1120,11 @@ class GeminiInteractionsClient {
         }
 
         activeCall = null
-        if (streamCompleted) {
+        val fnCalls = extractFunctionCalls(rawSteps)
+        if (fnCalls.isNotEmpty() && completionStatus == "completed") {
+          completionStatus = "requires_action"
+        }
+        if (streamCompleted || fnCalls.isNotEmpty()) {
           onEvent(
             GeminiStreamEvent.Completed(
               interactionId = interactionId,
@@ -995,6 +1136,8 @@ class GeminiInteractionsClient {
               completionStatus = completionStatus,
               finishReason = finishReason,
               safetyBlockReason = safetyBlockReason,
+              functionCalls = fnCalls,
+              chainedWithPreviousInteractionId = usePreviousInteractionId != null,
             )
           )
         } else if (interactionId == null) {
@@ -1013,7 +1156,7 @@ class GeminiInteractionsClient {
     }
 
   /**
-   * Polls GET /v1beta/interactions/{id} until its status is completed, failed, cancelled or incomplete,
+   * Polls GET /v1beta/interactions/{id} until its status is completed, requires_action, failed, cancelled or incomplete,
    * replacing the partial reply with its outputs and reporting usage.
    */
   private suspend fun pollInteractionUntilDone(
@@ -1021,6 +1164,7 @@ class GeminiInteractionsClient {
     apiKey: String,
     interactionId: String,
     defaultServiceTier: String,
+    chainedWithPreviousInteractionId: Boolean = false,
     onEvent: suspend (GeminiStreamEvent) -> Unit,
   ) {
     var serviceTier = defaultServiceTier
@@ -1065,18 +1209,22 @@ class GeminiInteractionsClient {
 
             when (status) {
               "completed",
-              "incomplete" -> {
+              "incomplete",
+              "requires_action" -> {
                 val outputs = json.optJSONArray("outputs") ?: JSONArray()
                 val extracted = extractTextAndThoughtFromOutputs(outputs)
-                onEvent(
-                  GeminiStreamEvent.ReplaceReplyText(extracted.first, extracted.second)
-                )
+                if (extracted.first.isNotEmpty() || extracted.second.isNotEmpty()) {
+                  onEvent(
+                    GeminiStreamEvent.ReplaceReplyText(extracted.first, extracted.second)
+                  )
+                }
                 val usage = json.optJSONObject("usage")
                 val inTok = usage?.optInt("total_input_tokens", 0) ?: 0
                 val outTok = usage?.optInt("total_output_tokens", 0) ?: 0
                 val thTok = usage?.optInt("total_thought_tokens", 0) ?: 0
                 val fReason = extractFinishReason(json, outputs)
                 val sReason = extractSafetyBlockReason(json, outputs)
+                val fnCalls = extractFunctionCalls(outputs)
                 onEvent(
                   GeminiStreamEvent.Completed(
                     interactionId = interactionId,
@@ -1085,9 +1233,11 @@ class GeminiInteractionsClient {
                     outputTokens = outTok,
                     thoughtTokens = thTok,
                     rawSteps = outputs,
-                    completionStatus = status,
+                    completionStatus = if (fnCalls.isNotEmpty() && status == "completed") "requires_action" else status,
                     finishReason = fReason,
                     safetyBlockReason = sReason,
+                    functionCalls = fnCalls,
+                    chainedWithPreviousInteractionId = chainedWithPreviousInteractionId,
                   )
                 )
                 return
@@ -1122,6 +1272,182 @@ class GeminiInteractionsClient {
       pollCount++
       delay(if (pollCount < 5) 1500L else 2500L)
     }
+  }
+
+  private fun extractCanonicalCallId(obj: JSONObject): String {
+    val nested = obj.optJSONObject("function_call")
+    return obj.optString("id", "").trim()
+      .ifBlank { obj.optString("call_id", "").trim() }
+      .ifBlank { nested?.optString("id", "")?.trim().orEmpty() }
+      .ifBlank { nested?.optString("call_id", "")?.trim().orEmpty() }
+  }
+
+  private fun extractFunctionCallName(obj: JSONObject): String {
+    val nested = obj.optJSONObject("function_call")
+    return obj.optString("name", "").trim()
+      .ifBlank { nested?.optString("name", "")?.trim().orEmpty() }
+  }
+
+  private fun extractArgumentsFromFnStep(obj: JSONObject): JSONObject {
+    val nested = obj.optJSONObject("function_call")
+    val candidates =
+      listOf(
+        obj.opt("arguments"),
+        obj.opt("args"),
+        nested?.opt("arguments"),
+        nested?.opt("args"),
+        obj.optString("_streamed_args_buffer", "").takeIf { it.isNotBlank() },
+        nested?.optString("_streamed_args_buffer", "")?.takeIf { it.isNotBlank() },
+      )
+    var firstParsed: JSONObject? = null
+    for (candidate in candidates) {
+      val parsed = parseArgumentsObject(candidate) ?: continue
+      if (parsed.length() > 0) return parsed
+      if (firstParsed == null) firstParsed = parsed
+    }
+    return firstParsed ?: JSONObject()
+  }
+
+  private fun mergeFunctionCallOutputsIntoRawSteps(rawSteps: JSONArray, outputsArr: JSONArray) {
+    fun collectFnObjects(step: JSONObject): List<JSONObject> {
+      val found = mutableListOf<JSONObject>()
+      if (step.optString("type") == "function_call" || step.optJSONObject("function_call") != null) {
+        found.add(step)
+      }
+      val contentArr = step.optJSONArray("content")
+      if (contentArr != null) {
+        for (j in 0 until contentArr.length()) {
+          val part = contentArr.optJSONObject(j) ?: continue
+          if (part.optString("type") == "function_call" || part.optJSONObject("function_call") != null) {
+            found.add(part)
+          }
+        }
+      } else {
+        val contentObj = step.optJSONObject("content")
+        if (contentObj != null && (contentObj.optString("type") == "function_call" || contentObj.optJSONObject("function_call") != null)) {
+          found.add(contentObj)
+        }
+      }
+      return found
+    }
+
+    for (i in 0 until outputsArr.length()) {
+      val outObj = outputsArr.optJSONObject(i) ?: continue
+      val outFnList = collectFnObjects(outObj)
+      if (outFnList.isEmpty()) continue
+      for (outFn in outFnList) {
+        val cleanOut = sanitizeStepObject(outFn)
+        val outId = extractCanonicalCallId(cleanOut)
+        val outName = extractFunctionCallName(cleanOut)
+        val outArgs = extractArgumentsFromFnStep(cleanOut)
+        if (outArgs.length() > 0) {
+          cleanOut.put("arguments", outArgs)
+        }
+
+        var matchedExisting = false
+        for (rIdx in 0 until rawSteps.length()) {
+          val existingStep = rawSteps.optJSONObject(rIdx) ?: continue
+          if (existingStep.optString("type") == "function_call" || existingStep.optJSONObject("function_call") != null) {
+            val exId = extractCanonicalCallId(existingStep)
+            val exName = extractFunctionCallName(existingStep)
+            val sameCall =
+              (outId.isNotBlank() && exId.isNotBlank() && outId == exId) ||
+                ((outId.isBlank() || exId.isBlank()) && outName.isNotBlank() && outName == exName)
+            if (sameCall) {
+              matchedExisting = true
+              if (outId.isNotBlank() && exId.isBlank()) {
+                existingStep.put("id", outId)
+              }
+              if (outArgs.length() > 0) {
+                existingStep.put("arguments", outArgs)
+              }
+              break
+            }
+          }
+        }
+        if (!matchedExisting) {
+          if (cleanOut.optString("type").isBlank()) {
+            cleanOut.put("type", "function_call")
+          }
+          rawSteps.put(cleanOut)
+        }
+      }
+    }
+  }
+
+  fun extractFunctionCalls(stepsArray: JSONArray?): List<GeminiFunctionCall> {
+    if (stepsArray == null) return emptyList()
+    val byKey = LinkedHashMap<String, GeminiFunctionCall>()
+
+    fun parseFnObject(obj: JSONObject) {
+      val type = obj.optString("type", "")
+      val hasNestedFn = obj.optJSONObject("function_call") != null
+      if (type == "function_call" || hasNestedFn) {
+        val name = extractFunctionCallName(obj)
+        if (name.isBlank()) return
+        val canonicalId = extractCanonicalCallId(obj)
+        val argsObj = extractArgumentsFromFnStep(obj)
+
+        // Treat id and call_id as the same key when deduplicating so a call seen in both
+        // the stream and interaction.completed outputs runs once.
+        val anonKey = "anon:$name"
+        val dedupKey: String =
+          if (canonicalId.isNotBlank()) {
+            // If an earlier step for the same function arrived without an id/call_id, upgrade it
+            if (!byKey.containsKey(canonicalId) && byKey.containsKey(anonKey)) {
+              val prevAnon = byKey.remove(anonKey)!!
+              byKey[canonicalId] = prevAnon.copy(id = canonicalId)
+            }
+            canonicalId
+          } else {
+            // Find any existing call for the same function name if this step lacked id/call_id
+            byKey.entries.firstOrNull { it.value.name == name }?.key ?: anonKey
+          }
+
+        val existing = byKey[dedupKey]
+        if (existing == null) {
+          val resolvedId = canonicalId.ifBlank { "call_${byKey.size + 1}" }
+          byKey[dedupKey] =
+            GeminiFunctionCall(
+              id = resolvedId,
+              name = name,
+              arguments = argsObj,
+            )
+        } else {
+          val updatedId =
+            if (canonicalId.isNotBlank() && existing.id.startsWith("call_")) canonicalId
+            else existing.id
+          val updatedArgs =
+            if (argsObj.length() > 0 && existing.arguments.length() == 0) {
+              argsObj
+            } else if (argsObj.length() > existing.arguments.length()) {
+              argsObj
+            } else {
+              existing.arguments
+            }
+          byKey[dedupKey] =
+            existing.copy(
+              id = updatedId,
+              arguments = updatedArgs,
+            )
+        }
+      }
+    }
+
+    for (i in 0 until stepsArray.length()) {
+      val step = stepsArray.optJSONObject(i) ?: continue
+      parseFnObject(step)
+      val contentArr = step.optJSONArray("content")
+      if (contentArr != null) {
+        for (j in 0 until contentArr.length()) {
+          val part = contentArr.optJSONObject(j) ?: continue
+          parseFnObject(part)
+        }
+      } else {
+        step.optJSONObject("content")?.let { parseFnObject(it) }
+      }
+    }
+    return byKey.values.toList()
   }
 
   private fun extractTextAndThoughtFromOutputs(outputs: JSONArray): Pair<String, String> {
@@ -1162,6 +1488,7 @@ class GeminiInteractionsClient {
     onTextDelta: suspend (String) -> Unit,
     onThoughtSummaryDelta: suspend (String) -> Unit,
     onThoughtSignature: (String) -> Unit,
+    onFunctionCallDelta: ((JSONObject) -> Unit)? = null,
     onStepStop: suspend (JSONObject) -> Unit,
     onStatusUpdate: suspend (String) -> Unit,
     onCompleted: suspend (String?, Int, Int, Int, JSONArray?, String, String?, String?) -> Unit,
@@ -1212,14 +1539,24 @@ class GeminiInteractionsClient {
         }
         "step.start",
         "content.start" -> {
+          val contentObj = json.optJSONObject("content")
           val step =
             json.optJSONObject("step")
-              ?: JSONObject().apply {
-                val stepType =
-                  json.optString("type").takeIf {
-                    it.isNotBlank() && !it.contains(".")
-                  } ?: "model_output"
-                put("type", stepType)
+              ?: if (
+                contentObj?.optString("type") == "function_call" ||
+                  contentObj?.optJSONObject("function_call") != null
+              ) {
+                JSONObject(contentObj.toString()).apply {
+                  if (optString("type").isBlank()) put("type", "function_call")
+                }
+              } else {
+                JSONObject().apply {
+                  val stepType =
+                    json.optString("type").takeIf {
+                      it.isNotBlank() && !it.contains(".")
+                    } ?: "model_output"
+                  put("type", stepType)
+                }
               }
           if (!step.has("content")) {
             step.put("content", JSONArray())
@@ -1261,6 +1598,9 @@ class GeminiInteractionsClient {
                 onThoughtSignature(sig)
               }
             }
+            "function_call" -> {
+              onFunctionCallDelta?.invoke(delta)
+            }
             else -> {
               val txt =
                 delta.optString("text").takeIf { it.isNotEmpty() }
@@ -1274,12 +1614,35 @@ class GeminiInteractionsClient {
               if (sig.isNotEmpty()) {
                 onThoughtSignature(sig)
               }
+              val contentSub = delta.optJSONObject("content")
+              if (
+                delta.has("arguments") ||
+                  delta.has("args") ||
+                  delta.optJSONObject("function_call") != null ||
+                  contentSub?.has("arguments") == true ||
+                  contentSub?.has("args") == true ||
+                  contentSub?.optJSONObject("function_call") != null
+              ) {
+                onFunctionCallDelta?.invoke(delta)
+              }
             }
           }
         }
         "step.stop",
         "content.stop" -> {
-          val stopStep = json.optJSONObject("step") ?: json
+          val contentObj = json.optJSONObject("content")
+          val stopStep =
+            json.optJSONObject("step")
+              ?: if (
+                contentObj?.optString("type") == "function_call" ||
+                  contentObj?.optJSONObject("function_call") != null ||
+                  contentObj?.has("arguments") == true ||
+                  contentObj?.has("args") == true
+              ) {
+                contentObj
+              } else {
+                json
+              }
           onStepStop(stopStep)
         }
         "interaction.status_update",
@@ -1425,11 +1788,85 @@ class GeminiInteractionsClient {
     }
   }
 
+  private fun appendFunctionCallDeltaToStep(
+    stepObj: JSONObject?,
+    delta: JSONObject,
+  ) {
+    if (stepObj == null) return
+    val contentSub = delta.optJSONObject("content")
+    val fnSub =
+      delta.optJSONObject("function_call")
+        ?: contentSub?.optJSONObject("function_call")
+        ?: contentSub?.takeIf {
+          it.optString("type") == "function_call" ||
+            it.has("arguments") ||
+            it.has("args") ||
+            it.has("name")
+        }
+        ?: delta
+
+    stepObj.put("type", "function_call")
+    val id = extractCanonicalCallId(fnSub).ifBlank { extractCanonicalCallId(delta) }
+    if (id.isNotBlank()) {
+      stepObj.put("id", id)
+    }
+    val name = extractFunctionCallName(fnSub).ifBlank { extractFunctionCallName(delta) }
+    if (name.isNotBlank()) {
+      stepObj.put("name", name)
+    }
+
+    val rawArgs =
+      fnSub.opt("arguments")
+        ?: fnSub.opt("args")
+        ?: delta.opt("arguments")
+        ?: delta.opt("args")
+
+    when (rawArgs) {
+      is JSONObject -> {
+        val currentArgs = parseArgumentsObject(stepObj.opt("arguments")) ?: JSONObject()
+        val iter = rawArgs.keys()
+        while (iter.hasNext()) {
+          val k = iter.next()
+          currentArgs.put(k, rawArgs.get(k))
+        }
+        stepObj.put("arguments", currentArgs)
+      }
+      is String -> {
+        if (rawArgs.isNotEmpty()) {
+          val parsedDirect = parseArgumentsObject(rawArgs)
+          if (parsedDirect != null && parsedDirect.length() > 0) {
+            val currentArgs = parseArgumentsObject(stepObj.opt("arguments")) ?: JSONObject()
+            val iter = parsedDirect.keys()
+            while (iter.hasNext()) {
+              val k = iter.next()
+              currentArgs.put(k, parsedDirect.get(k))
+            }
+            stepObj.put("arguments", currentArgs)
+          } else {
+            val buffered = stepObj.optString("_streamed_args_buffer", "") + rawArgs
+            stepObj.put("_streamed_args_buffer", buffered)
+            val parsedBuffered = parseArgumentsObject(buffered)
+            if (parsedBuffered != null && parsedBuffered.length() > 0) {
+              stepObj.put("arguments", parsedBuffered)
+            }
+          }
+        }
+      }
+    }
+  }
+
   private fun sanitizeStepObject(step: JSONObject): JSONObject {
     val clean = JSONObject(step.toString())
     clean.remove("event_type")
     clean.remove("event_id")
     clean.remove("index")
+    clean.remove("_streamed_args_buffer")
+    if (clean.optString("type") == "function_call" || clean.optJSONObject("function_call") != null) {
+      val parsedArgs = extractArgumentsFromFnStep(step)
+      if (parsedArgs.length() > 0) {
+        clean.put("arguments", parsedArgs)
+      }
+    }
     return clean
   }
 
@@ -1441,6 +1878,23 @@ class GeminiInteractionsClient {
       if (k == "event_type" || k == "event_id" || k == "index") continue
       if (!currentStep.has(k)) {
         currentStep.put(k, stopStep.get(k))
+      } else if (k == "arguments" || k == "args") {
+        val stopArgs = parseArgumentsObject(stopStep.opt(k))
+        if (stopArgs != null && stopArgs.length() > 0) {
+          currentStep.put("arguments", stopArgs)
+        }
+      } else if (k == "id" || k == "call_id" || k == "name") {
+        val stopStr = stopStep.optString(k, "").trim()
+        if (stopStr.isNotBlank() && currentStep.optString(k, "").isBlank()) {
+          currentStep.put(k, stopStr)
+        }
+      }
+    }
+    if (currentStep.optString("type") == "function_call" || stopStep.optString("type") == "function_call") {
+      val mergedArgs = extractArgumentsFromFnStep(stopStep).takeIf { it.length() > 0 }
+        ?: extractArgumentsFromFnStep(currentStep)
+      if (mergedArgs.length() > 0) {
+        currentStep.put("arguments", mergedArgs)
       }
     }
     return sanitizeStepObject(currentStep)

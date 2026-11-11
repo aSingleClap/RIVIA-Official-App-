@@ -12,6 +12,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -149,7 +151,7 @@ private fun buildFibonacciSphereParticles(count: Int): PrecomputedSphereParticle
   )
 }
 
-private fun isSystemRemoveAnimationsEnabled(context: Context): Boolean {
+internal fun isSystemRemoveAnimationsEnabled(context: Context): Boolean {
   return try {
     val scale =
       Settings.Global.getFloat(
@@ -177,8 +179,12 @@ private fun isSystemRemoveAnimationsEnabled(context: Context): Boolean {
 @Composable
 fun RiviaHomeParticleSphere(
   modifier: Modifier = Modifier,
+  sphereModifier: Modifier = Modifier,
+  devTuningModifier: Modifier = Modifier,
+  devTuningEnabled: Boolean = true,
   showDevTuning: Boolean = false,
   contentDesc: String = "Rivia Orb",
+  onSphereClick: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
   val prefs = remember(context) { context.getSharedPreferences(SPHERE_PREFS_NAME, Context.MODE_PRIVATE) }
@@ -248,12 +254,30 @@ fun RiviaHomeParticleSphere(
   ) {
     Box(
       modifier =
-        Modifier.size(300.dp)
+        sphereModifier
+          .size(300.dp)
+          .let { base ->
+            if (onSphereClick != null) {
+              base.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onSphereClick,
+              )
+            } else {
+              base
+            }
+          }
           .testTag("home_particle_sphere")
           .semantics { contentDescription = contentDesc },
       contentAlignment = Alignment.Center,
     ) {
-      Canvas(modifier = Modifier.fillMaxSize()) {
+      Canvas(
+        modifier =
+          Modifier.fillMaxSize()
+            .let { base ->
+              if (onSphereClick != null) base.testTag("live_mode_orb") else base
+            }
+      ) {
         val t = if (removeAnimations) 0f else elapsedSec
         val twoPi = (2.0 * Math.PI).toFloat()
 
@@ -411,7 +435,8 @@ fun RiviaHomeParticleSphere(
         border = BorderStroke(1.dp, RiviaBorder),
         shape = RoundedCornerShape(14.dp),
         modifier =
-          Modifier.widthIn(max = 320.dp)
+          devTuningModifier
+            .widthIn(max = 320.dp)
             .fillMaxWidth()
             .testTag("sphere_dev_tuning_card"),
       ) {
@@ -439,6 +464,7 @@ fun RiviaHomeParticleSphere(
           }
           Slider(
             value = particleCount.toFloat(),
+            enabled = devTuningEnabled,
             onValueChange = { raw ->
               val snapped = ((raw / 50f).roundToInt() * 50).coerceIn(200, 1000)
               if (snapped != particleCount) {
@@ -480,6 +506,7 @@ fun RiviaHomeParticleSphere(
           }
           Slider(
             value = rotationPeriodSec.toFloat(),
+            enabled = devTuningEnabled,
             onValueChange = { raw ->
               val snapped = ((raw / 5f).roundToInt() * 5).coerceIn(10, 90)
               if (snapped != rotationPeriodSec) {
@@ -506,6 +533,7 @@ fun RiviaHomeParticleSphere(
             horizontalArrangement = Arrangement.End,
           ) {
             TextButton(
+              enabled = devTuningEnabled,
               onClick = {
                 particleCount = DEFAULT_PARTICLE_COUNT
                 rotationPeriodSec = DEFAULT_ROTATION_PERIOD_SEC

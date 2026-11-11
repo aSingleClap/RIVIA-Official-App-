@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 
-const val PROMPT_ASSEMBLY_VERSION = 1
+const val PROMPT_ASSEMBLY_VERSION = 3
 
 @Serializable
 data class PersonaLayerConfig(

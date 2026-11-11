@@ -3,14 +3,26 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.view.HapticFeedbackConstants
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +42,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -49,10 +62,16 @@ import androidx.compose.material.icons.automirrored.outlined.ExitToApp
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
@@ -95,21 +114,43 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -129,6 +170,7 @@ import com.example.ui.components.RiviaOrb
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
 import com.example.ui.components.copyToClipboard
+import com.example.ui.components.isSystemRemoveAnimationsEnabled
 import com.example.ui.theme.AppUiMode
 import com.example.ui.theme.ChivoFontFamily
 import com.example.ui.theme.ChivoMonoFontFamily
@@ -154,11 +196,20 @@ import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.ui.theme.accentColorForMode
+import com.example.service.LiveSessionManager
+import com.example.service.LiveVoiceService
+import com.example.util.BotDetailsCardMeta
+import com.example.util.BotReplyVerifier
 import com.example.util.TextAudioTagProcessor
 import com.example.viewmodel.RiviaViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -171,6 +222,7 @@ fun ChatScreen(
   onOpenPipeline: () -> Unit = {},
   onOpenLayers: (focusLayer: String?) -> Unit = {},
   onOpenTests: () -> Unit = {},
+  onOpenBots: () -> Unit = {},
 ) {
   val appUiMode by viewModel.appUiMode.collectAsStateWithLifecycle()
   val chats by viewModel.chats.collectAsStateWithLifecycle()
@@ -212,6 +264,8 @@ fun ChatScreen(
   var presetToEdit by remember { mutableStateOf<ModePreset?>(null) }
   var showRiviaChatInfoDialog by remember { mutableStateOf(false) }
   var showDevLabsModeSheet by remember { mutableStateOf(false) }
+  var newChatResetToken by rememberSaveable { mutableStateOf(0) }
+  var isInLiveMode by rememberSaveable { mutableStateOf(false) }
 
   // Galaxy Z Fold6 Adaptive Layout:
   // Cover screen (compact width < 600.dp) -> one pane with a drawer.
@@ -242,11 +296,15 @@ fun ChatScreen(
             activeChatId = activeChat?.id,
             searchQuery = searchQuery,
             onSearchQueryChange = viewModel::setDrawerSearchQuery,
-            onNewChat = { viewModel.startNewChat() },
+            onNewChat = {
+              newChatResetToken++
+              viewModel.startNewChat()
+            },
             onSelectChat = { viewModel.selectChat(it.id) },
             onLongPressChat = { chatForContextMenu = it },
             onOpenTests = onOpenTests,
-            onOpenLiveMode = onOpenLiveMode,
+            onOpenBots = onOpenBots,
+            onOpenLiveMode = { isInLiveMode = true },
             onOpenPipeline = onOpenPipeline,
             onOpenLayers = { onOpenLayers(null) },
             onOpenGlobalSettings = onOpenGlobalSettings,
@@ -260,6 +318,8 @@ fun ChatScreen(
         // Right conversation pane
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
           ChatConversationPane(
+            activeChatId = activeChat?.id,
+            newChatResetToken = newChatResetToken,
             showDrawerButton = false,
             onOpenDrawer = {},
             appUiMode = appUiMode,
@@ -280,7 +340,16 @@ fun ChatScreen(
             onToggleAutoReadAloud = viewModel::toggleAutoReadAloud,
             onOpenRunSettings = onOpenRunSettings,
             onOpenGlobalSettings = onOpenGlobalSettings,
-            onOpenLiveMode = onOpenLiveMode,
+            isInLiveMode = isInLiveMode,
+            keepScreenOnInLive = voicePrefs.keepScreenOnInLive,
+            onOpenLiveMode = { isInLiveMode = true },
+            onEndLiveMode = {
+              if (messages.isNotEmpty()) {
+                newChatResetToken++
+                viewModel.startNewChat()
+              }
+              isInLiveMode = false
+            },
             missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
             statusBanner =
               (if (!isActiveChatLab) layersLoadError else null)
@@ -334,6 +403,7 @@ fun ChatScreen(
               searchQuery = searchQuery,
               onSearchQueryChange = viewModel::setDrawerSearchQuery,
               onNewChat = {
+                newChatResetToken++
                 viewModel.startNewChat()
                 scope.launch { drawerState.close() }
               },
@@ -346,9 +416,13 @@ fun ChatScreen(
                 scope.launch { drawerState.close() }
                 onOpenTests()
               },
+              onOpenBots = {
+                scope.launch { drawerState.close() }
+                onOpenBots()
+              },
               onOpenLiveMode = {
                 scope.launch { drawerState.close() }
-                onOpenLiveMode()
+                isInLiveMode = true
               },
               onOpenPipeline = {
                 scope.launch { drawerState.close() }
@@ -375,6 +449,8 @@ fun ChatScreen(
         },
       ) {
         ChatConversationPane(
+          activeChatId = activeChat?.id,
+          newChatResetToken = newChatResetToken,
           showDrawerButton = true,
           onOpenDrawer = { scope.launch { drawerState.open() } },
           appUiMode = appUiMode,
@@ -395,7 +471,16 @@ fun ChatScreen(
           onToggleAutoReadAloud = viewModel::toggleAutoReadAloud,
           onOpenRunSettings = onOpenRunSettings,
           onOpenGlobalSettings = onOpenGlobalSettings,
-          onOpenLiveMode = onOpenLiveMode,
+          isInLiveMode = isInLiveMode,
+          keepScreenOnInLive = voicePrefs.keepScreenOnInLive,
+          onOpenLiveMode = { isInLiveMode = true },
+          onEndLiveMode = {
+            if (messages.isNotEmpty()) {
+              newChatResetToken++
+              viewModel.startNewChat()
+            }
+            isInLiveMode = false
+          },
           missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
           statusBanner =
             (if (!isActiveChatLab) layersLoadError else null)
@@ -723,6 +808,7 @@ private fun ChatDrawerContent(
   onSelectChat: (ChatEntity) -> Unit,
   onLongPressChat: (ChatEntity) -> Unit,
   onOpenTests: () -> Unit,
+  onOpenBots: () -> Unit = {},
   onOpenLiveMode: () -> Unit,
   onOpenPipeline: () -> Unit,
   onOpenLayers: () -> Unit,
@@ -950,138 +1036,37 @@ private fun ChatDrawerContent(
       }
     }
 
-    // Pipeline item directly above Layers (opens Coming Soon screen in all 3 modes)
-    Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = RiviaSurface2,
-      border = BorderStroke(1.dp, RiviaBorder),
-      modifier =
-        Modifier.fillMaxWidth()
-          .minimumInteractiveComponentSize()
-          .clip(RoundedCornerShape(16.dp))
-          .clickable(onClick = onOpenPipeline)
-          .testTag("open_pipeline_button"),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
+    // Dev-only Bots drawer item (opens the Bots screen in Dev mode)
+    if (appUiMode == AppUiMode.DEV) {
+      Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = RiviaSurface2,
+        border = BorderStroke(1.dp, RiviaBorder),
+        modifier =
+          Modifier.fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onOpenBots)
+            .testTag("open_bots_button"),
       ) {
-        Icon(
-          imageVector = Icons.Outlined.AccountTree,
-          contentDescription = "Pipeline",
-          tint = RiviaIconDefault,
-          modifier = Modifier.size(18.dp),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = "Pipeline",
-          style = MaterialTheme.typography.labelLarge,
-          color = RiviaTextPrimary,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Surface(
-          shape = RoundedCornerShape(50),
-          color = RiviaSurface3,
-          border = BorderStroke(1.dp, RiviaBorder),
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.Center,
         ) {
+          Icon(
+            imageVector = Icons.Outlined.AccountTree,
+            contentDescription = "Bots",
+            tint = RiviaIconDefault,
+            modifier = Modifier.size(18.dp),
+          )
+          Spacer(modifier = Modifier.width(8.dp))
           Text(
-            text = "Soon",
-            color = RiviaTextSecondary,
-            fontFamily = ChivoMonoFontFamily,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+            text = "Bots",
+            style = MaterialTheme.typography.labelLarge,
+            color = RiviaTextPrimary,
           )
         }
-      }
-    }
-
-    // Layers item above Settings (visual Coming Soon in Rivia mode; full editor in Dev & Labs modes)
-    Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = RiviaSurface2,
-      border = BorderStroke(1.dp, RiviaBorder),
-      modifier =
-        Modifier.fillMaxWidth()
-          .minimumInteractiveComponentSize()
-          .clip(RoundedCornerShape(16.dp))
-          .clickable(onClick = onOpenLayers)
-          .testTag("open_layers_button"),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.Tune,
-          contentDescription = "Layers",
-          tint = RiviaIconDefault,
-          modifier = Modifier.size(18.dp),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = if (appUiMode == AppUiMode.LABS) "Layers (Labs)" else "Layers",
-          style = MaterialTheme.typography.labelLarge,
-          color = RiviaTextPrimary,
-        )
-        if (appUiMode == AppUiMode.RIVIA) {
-          Spacer(modifier = Modifier.width(8.dp))
-          Surface(
-            shape = RoundedCornerShape(50),
-            color = RiviaSurface3,
-            border = BorderStroke(1.dp, RiviaBorder),
-          ) {
-            Text(
-              text = "Soon",
-              color = RiviaTextSecondary,
-              fontFamily = ChivoMonoFontFamily,
-              fontSize = 9.sp,
-              fontWeight = FontWeight.SemiBold,
-              modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-            )
-          }
-        }
-      }
-    }
-
-    // Settings button
-    val settingsButtonLabel =
-      when (appUiMode) {
-        AppUiMode.RIVIA -> "Settings"
-        AppUiMode.DEV -> "Settings (Keys, Voice, Internals)"
-        AppUiMode.LABS -> "Settings (Labs Sandbox)"
-      }
-
-    Surface(
-      shape = RoundedCornerShape(16.dp),
-      color = RiviaSurface2,
-      border = BorderStroke(1.dp, RiviaBorder),
-      modifier =
-        Modifier.fillMaxWidth()
-          .minimumInteractiveComponentSize()
-          .clip(RoundedCornerShape(16.dp))
-          .clickable(onClick = onOpenGlobalSettings)
-          .testTag("open_settings_button"),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center,
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.Settings,
-          contentDescription = "Settings",
-          tint = RiviaIconDefault,
-          modifier = Modifier.size(18.dp),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = settingsButtonLabel,
-          style = MaterialTheme.typography.labelLarge,
-          color = RiviaTextPrimary,
-        )
       }
     }
 
@@ -1117,6 +1102,111 @@ private fun ChatDrawerContent(
             fontWeight = FontWeight.SemiBold,
           )
         }
+      }
+    }
+
+    // Pipeline, Layers, and Settings grouped together at the bottom of the drawer, above "Dev & Labs",
+    // with one thin #262626 divider line above them.
+    val settingsButtonLabel =
+      when (appUiMode) {
+        AppUiMode.RIVIA -> "Settings"
+        AppUiMode.DEV -> "Settings (Keys, Voice, Internals)"
+        AppUiMode.LABS -> "Settings (Labs Sandbox)"
+      }
+
+    HorizontalDivider(
+      color = Color(0xFF262626),
+      thickness = 1.dp,
+    )
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+      // Pipeline row
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(44.dp)
+            .clickable(onClick = onOpenPipeline)
+            .padding(horizontal = 8.dp)
+            .testTag("open_pipeline_button"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.AccountTree,
+          contentDescription = "Pipeline",
+          tint = Color(0xFFA3A3A3),
+          modifier = Modifier.size(17.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+          text = "Pipeline",
+          fontSize = 14.sp,
+          color = Color(0xFFEDEDED),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = "Soon",
+          color = Color(0xFF8F8F8F),
+          fontSize = 11.sp,
+        )
+      }
+
+      // Layers row
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(44.dp)
+            .clickable(onClick = onOpenLayers)
+            .padding(horizontal = 8.dp)
+            .testTag("open_layers_button"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Tune,
+          contentDescription = "Layers",
+          tint = Color(0xFFA3A3A3),
+          modifier = Modifier.size(17.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+          text = if (appUiMode == AppUiMode.LABS) "Layers (Labs)" else "Layers",
+          fontSize = 14.sp,
+          color = Color(0xFFEDEDED),
+        )
+        if (appUiMode == AppUiMode.RIVIA) {
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "Soon",
+            color = Color(0xFF8F8F8F),
+            fontSize = 11.sp,
+          )
+        }
+      }
+
+      // Settings row
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(44.dp)
+            .clickable(onClick = onOpenGlobalSettings)
+            .padding(horizontal = 8.dp)
+            .testTag("open_settings_button"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Settings,
+          contentDescription = "Settings",
+          tint = Color(0xFFA3A3A3),
+          modifier = Modifier.size(17.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+          text = settingsButtonLabel,
+          fontSize = 14.sp,
+          color = Color(0xFFEDEDED),
+        )
       }
     }
 
@@ -1296,6 +1386,8 @@ private fun DevLabsModeSheet(
 
 @Composable
 private fun ChatConversationPane(
+  activeChatId: String? = null,
+  newChatResetToken: Int = 0,
   showDrawerButton: Boolean,
   onOpenDrawer: () -> Unit,
   appUiMode: AppUiMode,
@@ -1316,7 +1408,10 @@ private fun ChatConversationPane(
   onToggleAutoReadAloud: () -> Unit,
   onOpenRunSettings: () -> Unit,
   onOpenGlobalSettings: () -> Unit,
+  isInLiveMode: Boolean = false,
+  keepScreenOnInLive: Boolean = true,
   onOpenLiveMode: () -> Unit,
+  onEndLiveMode: () -> Unit = {},
   missingKeys: Boolean,
   statusBanner: String?,
   isErrorBanner: Boolean,
@@ -1335,9 +1430,459 @@ private fun ChatConversationPane(
   onShowDetails: (MessageEntity) -> Unit,
   onEditUserMessage: (MessageEntity) -> Unit,
 ) {
+  val context = LocalContext.current
+  val view = LocalView.current
+  val density = LocalDensity.current
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val focusManager = LocalFocusManager.current
+  val liveState by LiveSessionManager.uiState.collectAsStateWithLifecycle()
+  var micPermissionDeniedReason by remember { mutableStateOf<String?>(null) }
+
   var showPresetMenu by remember { mutableStateOf(false) }
-  var composerText by rememberSaveable { mutableStateOf("") }
+  var composerText by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf("") }
+  var showComposerInEmptyChat by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var isInDictationPanel by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var focusComposerOnReveal by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var startDictationOnReveal by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var requestKeyboardFocusNow by remember { mutableStateOf(false) }
+  var sphereColumnTopPx by remember { mutableIntStateOf(0) }
   val listState = rememberLazyListState()
+
+  val isInTypedChat =
+    !isInLiveMode &&
+      !isInDictationPanel &&
+      (messages.isNotEmpty() || showComposerInEmptyChat || composerText.isNotEmpty())
+
+  val livePermissionsLauncher =
+    rememberLauncherForActivityResult(
+      ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+      val micGranted =
+        result[Manifest.permission.RECORD_AUDIO] == true ||
+          ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO,
+          ) == PackageManager.PERMISSION_GRANTED
+
+      if (micGranted) {
+        micPermissionDeniedReason = null
+        LiveVoiceService.start(context)
+      } else {
+        micPermissionDeniedReason =
+          "Microphone permission (RECORD_AUDIO) was denied. Live voice mode cannot start without microphone access to hear you."
+      }
+    }
+
+  LaunchedEffect(isInLiveMode) {
+    if (isInLiveMode) {
+      val hasMic =
+        ContextCompat.checkSelfPermission(
+          context,
+          Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+      val hasNotif =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+          ) == PackageManager.PERMISSION_GRANTED
+        } else {
+          true
+        }
+
+      if (hasMic && hasNotif) {
+        micPermissionDeniedReason = null
+        LiveVoiceService.start(context)
+      } else {
+        val perms = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        livePermissionsLauncher.launch(perms.toTypedArray())
+      }
+    } else {
+      micPermissionDeniedReason = null
+    }
+  }
+
+  // Keep screen on in Live setting (on by default)
+  DisposableEffect(isInLiveMode, keepScreenOnInLive) {
+    val prev = view.keepScreenOn
+    if (isInLiveMode && keepScreenOnInLive) {
+      view.keepScreenOn = true
+    }
+    onDispose { view.keepScreenOn = prev }
+  }
+
+  // Subtle haptics on Live state transitions
+  LaunchedEffect(isInLiveMode, liveState.orbState) {
+    if (isInLiveMode && liveState.isActive) {
+      view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+  }
+
+  val edgeGlowTransition = rememberInfiniteTransition(label = "edge_glow")
+  val edgeGlowAlpha by
+    edgeGlowTransition.animateFloat(
+      initialValue = 0.25f,
+      targetValue = 0.70f,
+      animationSpec =
+        infiniteRepeatable(
+          animation = tween(durationMillis = 800),
+          repeatMode = RepeatMode.Reverse,
+        ),
+      label = "edge_glow_alpha",
+    )
+  val isLiveSpeaking = liveState.orbState == OrbState.SPEAKING
+
+  // End Live cleanly on system Back and return to the sphere screen in reverse
+  BackHandler(enabled = isInLiveMode) {
+    LiveVoiceService.stop(context)
+    requestKeyboardFocusNow = false
+    focusComposerOnReveal = false
+    startDictationOnReveal = false
+    isInDictationPanel = false
+    composerText = ""
+    showComposerInEmptyChat = false
+    onEndLiveMode()
+  }
+
+  // Cancel dictation panel on system Back and return to the sphere screen in reverse
+  BackHandler(enabled = !isInLiveMode && isInDictationPanel) {
+    requestKeyboardFocusNow = false
+    focusComposerOnReveal = false
+    startDictationOnReveal = false
+    composerText = ""
+    showComposerInEmptyChat = false
+    isInDictationPanel = false
+  }
+
+  // Going back from the empty typed chat returns to the sphere screen and plays the animation in reverse
+  BackHandler(
+    enabled =
+      !isInLiveMode &&
+        !isInDictationPanel &&
+        messages.isEmpty() &&
+        (showComposerInEmptyChat || composerText.isNotEmpty())
+  ) {
+    keyboardController?.hide()
+    focusManager.clearFocus()
+    requestKeyboardFocusNow = false
+    focusComposerOnReveal = false
+    startDictationOnReveal = false
+    composerText = ""
+    showComposerInEmptyChat = false
+  }
+
+  val sphereProgress = remember { Animatable(if (isInTypedChat || isInDictationPanel) 1f else 0f) }
+  val sphereAlpha =
+    remember {
+      Animatable(
+        when {
+          isInTypedChat -> 0.12f
+          isInDictationPanel -> 0.22f
+          else -> 1f
+        }
+      )
+    }
+  val liveProgress = remember { Animatable(if (isInLiveMode) 1f else 0f) }
+  val buttonsAlpha =
+    remember {
+      Animatable(if (isInTypedChat || isInLiveMode || isInDictationPanel) 0f else 1f)
+    }
+  val composerAlpha = remember { Animatable(if (isInTypedChat) 1f else 0f) }
+  val liveUiAlpha = remember { Animatable(if (isInLiveMode) 1f else 0f) }
+  val dictationPanelProgress = remember { Animatable(if (isInDictationPanel) 1f else 0f) }
+  var isFirstTransitionPass by remember { mutableStateOf(true) }
+  var wasInDictationPanel by remember { mutableStateOf(isInDictationPanel) }
+
+  LaunchedEffect(isInTypedChat, isInLiveMode, isInDictationPanel) {
+    val skipAnim = isFirstTransitionPass || isSystemRemoveAnimationsEnabled(context)
+    val cameFromDictation = wasInDictationPanel && !isInDictationPanel
+    isFirstTransitionPass = false
+    wasInDictationPanel = isInDictationPanel
+    val easeOut = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
+
+    when {
+      isInLiveMode -> {
+        requestKeyboardFocusNow = false
+        keyboardController?.hide()
+        focusManager.clearFocus()
+        if (skipAnim) {
+          buttonsAlpha.snapTo(0f)
+          composerAlpha.snapTo(0f)
+          dictationPanelProgress.snapTo(0f)
+          sphereProgress.snapTo(0f)
+          sphereAlpha.snapTo(1f)
+          liveProgress.snapTo(1f)
+          liveUiAlpha.snapTo(1f)
+        } else {
+          coroutineScope {
+            launch {
+              buttonsAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              composerAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              dictationPanelProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+            launch {
+              sphereProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              sphereAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              liveProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              delay(500L)
+              liveUiAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+          }
+        }
+      }
+      isInDictationPanel -> {
+        requestKeyboardFocusNow = false
+        keyboardController?.hide()
+        focusManager.clearFocus()
+        if (skipAnim) {
+          buttonsAlpha.snapTo(0f)
+          composerAlpha.snapTo(0f)
+          liveUiAlpha.snapTo(0f)
+          liveProgress.snapTo(0f)
+          sphereProgress.snapTo(1f)
+          sphereAlpha.snapTo(0.22f)
+          dictationPanelProgress.snapTo(1f)
+        } else {
+          coroutineScope {
+            launch {
+              buttonsAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              composerAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              liveUiAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              liveProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              sphereProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              sphereAlpha.animateTo(
+                targetValue = 0.22f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              dictationPanelProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 450, easing = easeOut),
+              )
+            }
+          }
+        }
+      }
+      isInTypedChat -> {
+        if (skipAnim) {
+          buttonsAlpha.snapTo(0f)
+          liveUiAlpha.snapTo(0f)
+          dictationPanelProgress.snapTo(0f)
+          liveProgress.snapTo(0f)
+          sphereProgress.snapTo(1f)
+          sphereAlpha.snapTo(0.12f)
+          composerAlpha.snapTo(1f)
+          if (focusComposerOnReveal) {
+            focusComposerOnReveal = false
+            requestKeyboardFocusNow = true
+          }
+        } else if (cameFromDictation) {
+          // Done from dictation panel: lower the panel, settle sphere opacity to 12%, and show the message bar with keyboard
+          coroutineScope {
+            launch {
+              dictationPanelProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 300, easing = easeOut),
+              )
+            }
+            launch {
+              sphereProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 300, easing = easeOut),
+              )
+            }
+            launch {
+              sphereAlpha.animateTo(
+                targetValue = 0.12f,
+                animationSpec = tween(durationMillis = 400, easing = easeOut),
+              )
+            }
+            launch {
+              delay(150L)
+              if (focusComposerOnReveal) {
+                focusComposerOnReveal = false
+                requestKeyboardFocusNow = true
+              }
+              composerAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+          }
+        } else {
+          coroutineScope {
+            launch {
+              buttonsAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              liveUiAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+              )
+            }
+            launch {
+              dictationPanelProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+            launch {
+              liveProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              sphereProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              sphereAlpha.animateTo(
+                targetValue = 0.12f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              delay(600L)
+              if (focusComposerOnReveal) {
+                focusComposerOnReveal = false
+                requestKeyboardFocusNow = true
+              }
+              composerAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+          }
+        }
+      }
+      else -> {
+        requestKeyboardFocusNow = false
+        keyboardController?.hide()
+        focusManager.clearFocus()
+        if (skipAnim) {
+          composerAlpha.snapTo(0f)
+          liveUiAlpha.snapTo(0f)
+          dictationPanelProgress.snapTo(0f)
+          sphereProgress.snapTo(0f)
+          sphereAlpha.snapTo(1f)
+          liveProgress.snapTo(0f)
+          buttonsAlpha.snapTo(1f)
+        } else {
+          coroutineScope {
+            launch {
+              composerAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+            launch {
+              liveUiAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 250, easing = easeOut),
+              )
+            }
+            launch {
+              dictationPanelProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 300, easing = easeOut),
+              )
+            }
+            launch {
+              sphereProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              sphereAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              liveProgress.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+              )
+            }
+            launch {
+              delay(800L)
+              buttonsAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 200, easing = easeOut),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
 
   // Fix #12: Auto-scroll only when already at the bottom
   val isAtBottom by remember {
@@ -1379,7 +1924,29 @@ private fun ChatConversationPane(
     }
 
   Column(
-    modifier = Modifier.fillMaxSize().imePadding()
+    modifier =
+      Modifier.fillMaxSize()
+        .imePadding()
+        .drawBehind {
+          if (isInLiveMode && isLiveSpeaking) {
+            val strokePx = 14.dp.toPx()
+            drawRect(
+              brush =
+                Brush.radialGradient(
+                  colors =
+                    listOf(
+                      Color.Transparent,
+                      RiviaMint.copy(alpha = edgeGlowAlpha * 0.45f),
+                    ),
+                  radius = size.maxDimension * 0.72f,
+                )
+            )
+            drawRect(
+              color = RiviaMint.copy(alpha = edgeGlowAlpha),
+              style = Stroke(width = strokePx),
+            )
+          }
+        }
   ) {
     // Clean modern Top Bar with 3-Mode Segmented Pill (Rivia | Dev | Labs)
     Surface(
@@ -1836,82 +2403,998 @@ private fun ChatConversationPane(
       }
     }
 
-    // Message list or Empty state
-    if (messages.isEmpty()) {
+    // Main content + bottom controls container:
+    // Keeps a single rotating RiviaHomeParticleSphere mounted in the background for the entire chat
+    // and Live mode so it animates smoothly without remounting or jumping.
+    Box(
+      modifier = Modifier.weight(1f).fillMaxWidth()
+    ) {
+      // Background layer: single rotating sphere + empty-screen copy
       Box(
-        modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+        modifier =
+          Modifier.fillMaxSize()
+            .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 146.dp),
         contentAlignment = Alignment.Center,
       ) {
         Column(
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.spacedBy(14.dp),
+          modifier =
+            Modifier.onGloballyPositioned { coords ->
+              sphereColumnTopPx = coords.positionInParent().y.roundToInt()
+            },
         ) {
           RiviaHomeParticleSphere(
             showDevTuning = appUiMode == AppUiMode.DEV,
+            devTuningEnabled =
+              !isInTypedChat && !isInLiveMode && !isInDictationPanel && buttonsAlpha.value > 0.5f,
+            devTuningModifier =
+              Modifier.graphicsLayer {
+                alpha = buttonsAlpha.value
+              },
+            sphereModifier =
+              Modifier.graphicsLayer {
+                val chatP = sphereProgress.value
+                val liveP = liveProgress.value
+                translationY = ((-110f * chatP) + (-50f * liveP)).dp.toPx()
+                val s = 1f - (0.25f * chatP) + (0.05f * liveP)
+                scaleX = s
+                scaleY = s
+                alpha = sphereAlpha.value.coerceIn(0f, 1f)
+                compositingStrategy = CompositingStrategy.Offscreen
+              },
+            contentDesc =
+              if (isInLiveMode) "Tap orb to interrupt Rivia and start listening"
+              else "Rivia Orb",
+            onSphereClick =
+              if (isInLiveMode) {
+                {
+                  view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                  LiveSessionManager.onOrbTapped()
+                }
+              } else {
+                null
+              },
           )
           Text(
             text = "Rivia",
             style = MaterialTheme.typography.headlineMedium,
             color = RiviaTextPrimary,
+            modifier =
+              Modifier.graphicsLayer {
+                alpha = buttonsAlpha.value
+              },
           )
           Text(
             text = "Ask anything below, tap the mic to dictate, or start a hands-free Live voice session.",
             style = MaterialTheme.typography.bodyMedium,
             color = RiviaTextSecondary,
-            modifier = Modifier.widthIn(max = 360.dp),
+            modifier =
+              Modifier.widthIn(max = 360.dp)
+                .graphicsLayer {
+                  alpha = buttonsAlpha.value
+                },
           )
         }
       }
-    } else {
-      val lastAssistantId =
-        remember(messages) { messages.lastOrNull { it.role == "assistant" }?.id }
 
-      LazyColumn(
-        state = listState,
-        modifier = Modifier.weight(1f).fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-      ) {
-        itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
-          if (msg.role == "user") {
-            UserMessageBubble(
-              message = msg,
-              onEdit = { onEditUserMessage(msg) },
+      // Foreground layer: messages list (over the dimmed background sphere), Live state + captions, and bottom controls
+      Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+          if (messages.isNotEmpty() && !isInLiveMode && liveProgress.value == 0f) {
+            val lastAssistantId =
+              remember(messages) { messages.lastOrNull { it.role == "assistant" }?.id }
+
+            LazyColumn(
+              state = listState,
+              modifier = Modifier.fillMaxSize(),
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+              verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+              itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
+                if (msg.role == "user") {
+                  UserMessageBubble(
+                    message = msg,
+                    onEdit = { onEditUserMessage(msg) },
+                  )
+                } else {
+                  val isThisSpeaking = isSpeaking && speakingMessageId == msg.id
+                  val isThisStreaming =
+                    isStreaming && (msg.status == "streaming" || msg.status.startsWith("polling"))
+                  AssistantMessageBubble(
+                    message = msg,
+                    isLastAssistantReply = msg.id == lastAssistantId,
+                    isSpeaking = isThisSpeaking,
+                    isStreaming = isThisStreaming,
+                    onListen = { onListenMessage(msg) },
+                    onRegenerate = onRegenerateLast,
+                    onShowDetails = { onShowDetails(msg) },
+                  )
+                }
+              }
+            }
+          }
+
+          if (liveUiAlpha.value > 0f || isInLiveMode) {
+            val columnTopDp = with(density) { sphereColumnTopPx.toDp() }
+            val liveOverlayTopPadding = (columnTopDp + 288.dp).coerceAtLeast(260.dp)
+            Column(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .padding(top = liveOverlayTopPadding, start = 20.dp, end = 20.dp)
+                  .verticalScroll(androidx.compose.foundation.rememberScrollState())
+                  .graphicsLayer {
+                    alpha = liveUiAlpha.value
+                  },
+              horizontalAlignment = Alignment.CenterHorizontally,
+              verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+              // Live state line
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                StatusShape(
+                  status =
+                    when {
+                      micPermissionDeniedReason != null || liveState.errorCaption != null ->
+                        StatusType.ERROR
+                      liveState.isPaused || liveState.isMuted || liveState.pausedForPhoneCall ->
+                        StatusType.WARNING
+                      else -> StatusType.OK
+                    },
+                  size = 10.dp,
+                )
+                Text(
+                  text =
+                    when {
+                      micPermissionDeniedReason != null -> "Permission Required"
+                      liveState.pausedForPhoneCall -> "Paused (Phone Call Active)"
+                      liveState.stoppedAfterThreeErrors -> "Paused (Tap Orb to Resume)"
+                      liveState.isPaused -> "Paused"
+                      liveState.isMuted -> "Muted"
+                      liveState.orbState == OrbState.SPEAKING -> "Rivia Speaking"
+                      liveState.orbState == OrbState.THINKING -> "Rivia Thinking..."
+                      liveState.orbState == OrbState.LISTENING -> "Listening..."
+                      else -> "Live"
+                    },
+                  style = MaterialTheme.typography.titleMedium,
+                  color = RiviaText,
+                )
+              }
+
+              if (micPermissionDeniedReason != null) {
+                Surface(
+                  shape = RoundedCornerShape(14.dp),
+                  color = RiviaRaisedSurface,
+                  border = BorderStroke(1.dp, RiviaErrorRed),
+                  modifier = Modifier.widthIn(max = 420.dp),
+                ) {
+                  Column(
+                    modifier = Modifier.padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                  ) {
+                    StatusShape(status = StatusType.ERROR, size = 14.dp)
+                    Text(
+                      text = micPermissionDeniedReason!!,
+                      style = MaterialTheme.typography.bodyMedium,
+                      color = RiviaErrorRed,
+                      textAlign = TextAlign.Center,
+                    )
+                    Button(
+                      enabled = isInLiveMode && liveUiAlpha.value > 0.5f,
+                      onClick = {
+                        livePermissionsLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                      },
+                      colors =
+                        ButtonDefaults.buttonColors(
+                          containerColor = RiviaMint,
+                          contentColor = RiviaOnAccent,
+                        ),
+                    ) {
+                      Text("Grant Microphone Permission")
+                    }
+                  }
+                }
+              } else {
+                Text(
+                  text =
+                    if (isLiveSpeaking) "Tap the orb to interrupt and speak"
+                    else if (liveState.stoppedAfterThreeErrors) "Tap the orb to resume listening"
+                    else "Hands-free Live Voice",
+                  style = MaterialTheme.typography.labelMedium,
+                  color = RiviaMutedText,
+                )
+
+                // Live Captions of my words and hers
+                Column(
+                  modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+                  verticalArrangement = Arrangement.spacedBy(12.dp),
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                  if (liveState.userCaption.isNotBlank()) {
+                    Surface(
+                      shape = RoundedCornerShape(12.dp),
+                      color = RiviaSurface3,
+                      border = BorderStroke(1.dp, RiviaBorder),
+                      modifier = Modifier.fillMaxWidth(),
+                    ) {
+                      Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                      ) {
+                        Text(
+                          text = "YOU",
+                          style = MaterialTheme.typography.labelSmall,
+                          fontFamily = ChivoMonoFontFamily,
+                          color = RiviaTextTertiary,
+                        )
+                        Text(
+                          text = liveState.userCaption,
+                          style = MaterialTheme.typography.bodyLarge,
+                          color = RiviaText,
+                        )
+                      }
+                    }
+                  }
+
+                  if (liveState.riviaCaption.isNotBlank()) {
+                    Surface(
+                      shape = RoundedCornerShape(12.dp),
+                      color = RiviaSurface2,
+                      border = BorderStroke(1.dp, RiviaBorder),
+                      modifier = Modifier.fillMaxWidth(),
+                    ) {
+                      Column(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                      ) {
+                        Text(
+                          text = "RIVIA",
+                          style = MaterialTheme.typography.labelSmall,
+                          fontFamily = ChivoMonoFontFamily,
+                          color = RiviaTextSecondary,
+                        )
+                        Text(
+                          text = liveState.riviaCaption,
+                          style = MaterialTheme.typography.bodyLarge,
+                          color = RiviaText,
+                        )
+                      }
+                    }
+                  }
+
+                  if (!liveState.noticeCaption.isNullOrBlank()) {
+                    Surface(
+                      shape = RoundedCornerShape(12.dp),
+                      color = RiviaRaisedSurface,
+                      border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.6f)),
+                      modifier = Modifier.fillMaxWidth(),
+                    ) {
+                      Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                      ) {
+                        StatusShape(status = StatusType.WARNING, size = 10.dp)
+                        Text(
+                          text = liveState.noticeCaption!!,
+                          style = MaterialTheme.typography.bodySmall,
+                          color = RiviaWarningAmber,
+                        )
+                      }
+                    }
+                  }
+
+                  if (!liveState.errorCaption.isNullOrBlank()) {
+                    Surface(
+                      shape = RoundedCornerShape(12.dp),
+                      color = RiviaRaisedSurface,
+                      border = BorderStroke(1.dp, RiviaErrorRed),
+                      modifier = Modifier.fillMaxWidth(),
+                    ) {
+                      Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                      ) {
+                        StatusShape(status = StatusType.ERROR, size = 10.dp)
+                        Text(
+                          text = liveState.errorCaption!!,
+                          style = MaterialTheme.typography.bodySmall,
+                          color = RiviaErrorRed,
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        Box(
+          modifier = Modifier.fillMaxWidth(),
+          contentAlignment = Alignment.BottomCenter,
+        ) {
+          if (buttonsAlpha.value > 0f) {
+            EmptyChatBottomActionButtons(
+              modifier =
+                Modifier.graphicsLayer {
+                  alpha = buttonsAlpha.value
+                },
+              enabled =
+                !isInTypedChat &&
+                  !isInLiveMode &&
+                  !isInDictationPanel &&
+                  buttonsAlpha.value > 0.5f,
+              onChatClick = {
+                showComposerInEmptyChat = true
+                focusComposerOnReveal = true
+              },
+              onLiveClick = onOpenLiveMode,
+              onDictateClick = {
+                isInDictationPanel = true
+              },
             )
-          } else {
-            val isThisSpeaking = isSpeaking && speakingMessageId == msg.id
-            val isThisStreaming =
-              isStreaming && (msg.status == "streaming" || msg.status.startsWith("polling"))
-            AssistantMessageBubble(
-              message = msg,
-              isLastAssistantReply = msg.id == lastAssistantId,
-              isSpeaking = isThisSpeaking,
-              isStreaming = isThisStreaming,
-              onListen = { onListenMessage(msg) },
-              onRegenerate = onRegenerateLast,
-              onShowDetails = { onShowDetails(msg) },
+          }
+
+          if (dictationPanelProgress.value > 0f || isInDictationPanel) {
+            SphereDictationPanel(
+              modifier =
+                Modifier.graphicsLayer {
+                  val p = dictationPanelProgress.value
+                  translationY = (1f - p) * 200.dp.toPx()
+                  alpha = p
+                },
+              isActive = isInDictationPanel,
+              buttonsEnabled = isInDictationPanel && dictationPanelProgress.value > 0.5f,
+              sttLanguage = sttLanguage,
+              preferOnDeviceStt = preferOnDeviceStt,
+              onDictationError = onDictationError,
+              onCancel = {
+                requestKeyboardFocusNow = false
+                focusComposerOnReveal = false
+                startDictationOnReveal = false
+                composerText = ""
+                showComposerInEmptyChat = false
+                isInDictationPanel = false
+              },
+              onDone = { finalDictatedText ->
+                composerText = finalDictatedText
+                showComposerInEmptyChat = true
+                focusComposerOnReveal = true
+                isInDictationPanel = false
+              },
             )
+          }
+
+          if (composerAlpha.value > 0f || isInTypedChat) {
+            ChatComposerBar(
+              modifier =
+                Modifier.graphicsLayer {
+                  alpha = composerAlpha.value
+                },
+              text = composerText,
+              onTextChange = { composerText = it },
+              isStreaming = isStreaming,
+              sttLanguage = sttLanguage,
+              preferOnDeviceStt = preferOnDeviceStt,
+              onSend = {
+                val toSend = composerText
+                composerText = ""
+                onSendMessage(toSend)
+              },
+              onStop = onStopStreaming,
+              onOpenLive = onOpenLiveMode,
+              onDictationError = onDictationError,
+              focusOnLaunch = requestKeyboardFocusNow,
+              onFocusConsumed = { requestKeyboardFocusNow = false },
+              startDictationOnLaunch = startDictationOnReveal,
+              onStartDictationConsumed = { startDictationOnReveal = false },
+            )
+          }
+
+          if (liveUiAlpha.value > 0f || isInLiveMode) {
+            val liveButtonsEnabled = isInLiveMode && liveUiAlpha.value > 0.5f
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .padding(horizontal = 20.dp, vertical = 18.dp)
+                  .graphicsLayer {
+                    alpha = liveUiAlpha.value
+                  },
+              horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              // Mute Button
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(
+                  enabled = liveButtonsEnabled,
+                  onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    LiveSessionManager.toggleMute()
+                  },
+                  modifier =
+                    Modifier.size(60.dp)
+                      .clip(CircleShape)
+                      .background(if (liveState.isMuted) RiviaWarningAmber else RiviaSurface2)
+                      .border(1.dp, RiviaBorder, CircleShape)
+                      .testTag("live_mute_button"),
+                ) {
+                  Icon(
+                    imageVector =
+                      if (liveState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                    contentDescription =
+                      if (liveState.isMuted) "Unmute microphone" else "Mute microphone",
+                    tint = if (liveState.isMuted) RiviaOnAccent else RiviaIconDefault,
+                  )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                  text = if (liveState.isMuted) "Unmute" else "Mute",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = RiviaMutedText,
+                )
+              }
+
+              // Pause Button
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(
+                  enabled = liveButtonsEnabled,
+                  onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    LiveSessionManager.togglePause()
+                  },
+                  modifier =
+                    Modifier.size(60.dp)
+                      .clip(CircleShape)
+                      .background(if (liveState.isPaused) RiviaSurface3 else RiviaSurface2)
+                      .border(1.dp, RiviaBorder, CircleShape)
+                      .testTag("live_pause_button"),
+                ) {
+                  Icon(
+                    imageVector =
+                      if (liveState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                    contentDescription =
+                      if (liveState.isPaused) "Resume Live session" else "Pause Live session",
+                    tint = if (liveState.isPaused) RiviaIconActive else RiviaIconDefault,
+                  )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                  text = if (liveState.isPaused) "Resume" else "Pause",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = RiviaMutedText,
+                )
+              }
+
+              // End Button
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(
+                  enabled = liveButtonsEnabled,
+                  onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    LiveVoiceService.stop(context)
+                    requestKeyboardFocusNow = false
+                    focusComposerOnReveal = false
+                    startDictationOnReveal = false
+                    isInDictationPanel = false
+                    composerText = ""
+                    showComposerInEmptyChat = false
+                    onEndLiveMode()
+                  },
+                  modifier =
+                    Modifier.size(60.dp)
+                      .clip(CircleShape)
+                      .background(RiviaErrorRed)
+                      .testTag("live_end_button"),
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.CallEnd,
+                    contentDescription = "End Live voice mode",
+                    tint = RiviaOnAccent,
+                  )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                  text = "End",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = RiviaErrorRed,
+                  fontWeight = FontWeight.SemiBold,
+                )
+              }
+            }
           }
         }
       }
     }
+  }
+}
 
-    // Unified Floating Pill Composer Bar
-    ChatComposerBar(
-      text = composerText,
-      onTextChange = { composerText = it },
-      isStreaming = isStreaming,
-      sttLanguage = sttLanguage,
-      preferOnDeviceStt = preferOnDeviceStt,
-      onSend = {
-        val toSend = composerText
-        composerText = ""
-        onSendMessage(toSend)
-      },
-      onStop = onStopStreaming,
-      onOpenLive = onOpenLiveMode,
-      onDictationError = onDictationError,
-    )
+@Composable
+private fun SphereDictationPanel(
+  modifier: Modifier = Modifier,
+  isActive: Boolean,
+  buttonsEnabled: Boolean,
+  sttLanguage: String,
+  preferOnDeviceStt: Boolean,
+  onDictationError: (String) -> Unit,
+  onCancel: () -> Unit,
+  onDone: (String) -> Unit,
+) {
+  val context = LocalContext.current
+  val removeAnimations = isSystemRemoveAnimationsEnabled(context)
+  var dictatedText by remember { mutableStateOf("") }
+  var baseTextBeforeDictation by remember { mutableStateOf("") }
+  var voiceLevel by remember { mutableFloatStateOf(0f) }
+  var elapsedSeconds by remember { mutableIntStateOf(0) }
+  var cursorVisible by remember { mutableStateOf(true) }
+  var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+
+  DisposableEffect(Unit) {
+    onDispose {
+      speechRecognizer?.destroy()
+      speechRecognizer = null
+    }
+  }
+
+  fun speechErrorDescription(code: Int): String =
+    when (code) {
+      SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+      SpeechRecognizer.ERROR_CLIENT -> "Client speech error"
+      SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient microphone permissions"
+      SpeechRecognizer.ERROR_NETWORK -> "Network error"
+      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+      SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
+      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
+      SpeechRecognizer.ERROR_SERVER -> "Speech server error"
+      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard"
+      else -> "Speech error"
+    }
+
+  fun startDictation() {
+    if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+      onDictationError(
+        "Speech recognition service is not available on this device."
+      )
+      return
+    }
+    try {
+      speechRecognizer?.destroy()
+      val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+      speechRecognizer = recognizer
+      baseTextBeforeDictation = if (dictatedText.isBlank()) "" else "$dictatedText "
+
+      recognizer.setRecognitionListener(
+        object : RecognitionListener {
+          override fun onReadyForSpeech(params: Bundle?) {}
+
+          override fun onBeginningOfSpeech() {}
+
+          override fun onRmsChanged(rmsdB: Float) {
+            val normalized = ((rmsdB + 2f) / 10f).coerceIn(0f, 1f)
+            voiceLevel = voiceLevel * 0.45f + normalized * 0.55f
+          }
+
+          override fun onBufferReceived(buffer: ByteArray?) {}
+
+          override fun onEndOfSpeech() {
+            voiceLevel = 0f
+          }
+
+          override fun onError(error: Int) {
+            voiceLevel = 0f
+            onDictationError(
+              "Dictation failed: ${speechErrorDescription(error)} (code $error)"
+            )
+          }
+
+          override fun onPartialResults(partialResults: Bundle?) {
+            val partial =
+              partialResults
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                .orEmpty()
+            if (partial.isNotBlank()) {
+              dictatedText = baseTextBeforeDictation + partial
+            }
+          }
+
+          override fun onResults(results: Bundle?) {
+            val finalSpoken =
+              results
+                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                ?.firstOrNull()
+                .orEmpty()
+            if (finalSpoken.isNotBlank()) {
+              dictatedText = baseTextBeforeDictation + finalSpoken
+            }
+            voiceLevel = 0f
+          }
+
+          override fun onEvent(eventType: Int, params: Bundle?) {}
+        }
+      )
+
+      val intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+          putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+          )
+          putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+          putExtra(RecognizerIntent.EXTRA_LANGUAGE, sttLanguage)
+          if (preferOnDeviceStt) {
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+          }
+        }
+      recognizer.startListening(intent)
+    } catch (e: Exception) {
+      voiceLevel = 0f
+      onDictationError(
+        "Could not start speech recognition: ${e.message ?: e.javaClass.simpleName}"
+      )
+    }
+  }
+
+  val micPermissionLauncher =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) {
+        if (isActive) {
+          startDictation()
+        }
+      } else {
+        onDictationError("Microphone permission (RECORD_AUDIO) was denied for dictation.")
+      }
+    }
+
+  LaunchedEffect(isActive) {
+    if (isActive) {
+      dictatedText = ""
+      baseTextBeforeDictation = ""
+      elapsedSeconds = 0
+      voiceLevel = 0f
+      val hasPerm =
+        ContextCompat.checkSelfPermission(
+          context,
+          Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+      if (hasPerm) {
+        startDictation()
+      } else {
+        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+      }
+    } else {
+      voiceLevel = 0f
+      try {
+        speechRecognizer?.stopListening()
+        speechRecognizer?.destroy()
+      } catch (_: Exception) {}
+      speechRecognizer = null
+    }
+  }
+
+  // Elapsed time counter ("Listening · 0:06")
+  LaunchedEffect(isActive) {
+    if (!isActive) return@LaunchedEffect
+    while (true) {
+      delay(1000L)
+      elapsedSeconds += 1
+    }
+  }
+
+  // Blinking cursor timer
+  LaunchedEffect(isActive, removeAnimations) {
+    if (!isActive || removeAnimations) {
+      cursorVisible = true
+      return@LaunchedEffect
+    }
+    while (true) {
+      delay(530L)
+      cursorVisible = !cursorVisible
+    }
+  }
+
+  // Continuous wave phase for voice-level dots
+  var wavePhase by remember { mutableFloatStateOf(0f) }
+  var smoothedLevel by remember { mutableFloatStateOf(0f) }
+  LaunchedEffect(isActive, removeAnimations) {
+    if (!isActive || removeAnimations) {
+      smoothedLevel = voiceLevel
+      return@LaunchedEffect
+    }
+    var lastNanos = -1L
+    while (true) {
+      withFrameNanos { nanos ->
+        if (lastNanos >= 0L) {
+          val dt = ((nanos - lastNanos).coerceAtLeast(0L)) / 1_000_000_000f
+          wavePhase += dt * 7.5f
+          smoothedLevel += (voiceLevel - smoothedLevel) * (dt * 12f).coerceIn(0f, 1f)
+          // Decay gently if onRmsChanged hasn't fired recently
+          voiceLevel = (voiceLevel - dt * 0.9f).coerceAtLeast(0f)
+        }
+        lastNanos = nanos
+      }
+    }
+  }
+
+  Box(
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .padding(horizontal = 12.dp, vertical = 8.dp),
+  ) {
+    Surface(
+      shape = RoundedCornerShape(26.dp),
+      color = Color(0xFF121212),
+      border = BorderStroke(1.dp, RiviaBorder),
+      modifier =
+        Modifier.fillMaxWidth()
+          .heightIn(min = 180.dp)
+          .testTag("sphere_dictation_panel"),
+    ) {
+      Column(
+        modifier =
+          Modifier.fillMaxWidth()
+            .heightIn(min = 180.dp)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.SpaceBetween,
+      ) {
+        // 1. Incoming words in 16sp #F5F5F5 with a blinking cursor
+        Box(
+          modifier =
+            Modifier.fillMaxWidth()
+              .heightIn(min = 52.dp, max = 88.dp)
+              .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+        ) {
+          Text(
+            text =
+              buildAnnotatedString {
+                withStyle(SpanStyle(color = Color(0xFFF5F5F5), fontSize = 16.sp)) {
+                  append(dictatedText)
+                }
+                withStyle(
+                  SpanStyle(
+                    color = Color(0xFFF5F5F5).copy(alpha = if (cursorVisible) 1f else 0f),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Light,
+                  )
+                ) {
+                  append("│")
+                }
+              },
+            fontSize = 16.sp,
+            lineHeight = 22.sp,
+            color = Color(0xFFF5F5F5),
+            modifier = Modifier.fillMaxWidth().testTag("dictation_panel_text"),
+          )
+        }
+
+        // 2. Row of small white dots across the panel that move with voice level
+        Canvas(
+          modifier =
+            Modifier.fillMaxWidth()
+              .height(28.dp)
+              .testTag("dictation_voice_dots"),
+        ) {
+          val dotCount = 28
+          val horizontalPadding = 6.dp.toPx()
+          val usableWidth = (size.width - horizontalPadding * 2f).coerceAtLeast(1f)
+          val stepX = usableWidth / (dotCount - 1).coerceAtLeast(1)
+          val centerY = size.height / 2f
+          val baseRadius = 1.6.dp.toPx()
+          val maxDisplacementY = 8.5.dp.toPx()
+          val activeLevel = if (removeAnimations) voiceLevel else smoothedLevel
+
+          for (i in 0 until dotCount) {
+            val u = i.toFloat() / (dotCount - 1).toFloat()
+            val edgeEnvelope = sin(u * PI.toFloat()).coerceIn(0.15f, 1f)
+            val wave =
+              if (removeAnimations) 0f
+              else sin(wavePhase + i * 0.52f)
+            val dy = wave * maxDisplacementY * edgeEnvelope * activeLevel
+            val radius = baseRadius * (1f + 0.45f * edgeEnvelope * activeLevel)
+            val alpha = (0.45f + 0.55f * edgeEnvelope * (0.35f + 0.65f * activeLevel)).coerceIn(0.35f, 1f)
+
+            drawCircle(
+              color = Color.White.copy(alpha = alpha),
+              radius = radius,
+              center = Offset(horizontalPadding + i * stepX, centerY + dy),
+            )
+          }
+        }
+
+        // 3. Cancel (X) on the left, "Listening · 0:06" in 12sp #8F8F8F in the center, and Done on the right
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Surface(
+            onClick = {
+              try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+              } catch (_: Exception) {}
+              speechRecognizer = null
+              onCancel()
+            },
+            enabled = buttonsEnabled,
+            shape = CircleShape,
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier =
+              Modifier.size(40.dp)
+                .minimumInteractiveComponentSize()
+                .testTag("dictation_cancel_button"),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Cancel dictation",
+                tint = RiviaTextPrimary,
+                modifier = Modifier.size(18.dp),
+              )
+            }
+          }
+
+          val mins = elapsedSeconds / 60
+          val secs = elapsedSeconds % 60
+          Text(
+            text = String.format(Locale.US, "Listening \u00B7 %d:%02d", mins, secs),
+            fontSize = 12.sp,
+            color = Color(0xFF8F8F8F),
+            modifier = Modifier.testTag("dictation_elapsed_label"),
+          )
+
+          Surface(
+            onClick = {
+              val captured = dictatedText
+              try {
+                speechRecognizer?.stopListening()
+                speechRecognizer?.destroy()
+              } catch (_: Exception) {}
+              speechRecognizer = null
+              onDone(captured)
+            },
+            enabled = buttonsEnabled,
+            shape = RoundedCornerShape(20.dp),
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier =
+              Modifier.height(40.dp)
+                .minimumInteractiveComponentSize()
+                .testTag("dictation_done_button"),
+          ) {
+            Box(
+              contentAlignment = Alignment.Center,
+              modifier = Modifier.padding(horizontal = 18.dp),
+            ) {
+              Text(
+                text = "Done",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = RiviaTextPrimary,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun EmptyChatBottomActionButtons(
+  modifier: Modifier = Modifier,
+  enabled: Boolean = true,
+  onChatClick: () -> Unit,
+  onLiveClick: () -> Unit,
+  onDictateClick: () -> Unit,
+) {
+  Row(
+    modifier =
+      modifier
+        .fillMaxWidth()
+        .padding(horizontal = 24.dp, vertical = 18.dp),
+    horizontalArrangement = Arrangement.spacedBy(32.dp, Alignment.CenterHorizontally),
+    verticalAlignment = Alignment.Bottom,
+  ) {
+    // Left: Chat. 58dp circle, chat-bubble icon, label "Chat".
+    Column(
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Surface(
+        onClick = onChatClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = RiviaSurface2,
+        modifier =
+          Modifier.size(58.dp)
+            .minimumInteractiveComponentSize()
+            .testTag("empty_chat_button"),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.Outlined.ChatBubbleOutline,
+            contentDescription = "Chat",
+            tint = RiviaTextPrimary,
+            modifier = Modifier.size(24.dp),
+          )
+        }
+      }
+      Text(
+        text = "Chat",
+        fontSize = 12.sp,
+        color = RiviaTextSecondary,
+      )
+    }
+
+    // Center: Live. 84dp circle, waveform icon, label "Live", sitting slightly higher than the other two.
+    Column(
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+      modifier = Modifier.padding(bottom = 14.dp),
+    ) {
+      Surface(
+        onClick = onLiveClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = RiviaSurface2,
+        modifier =
+          Modifier.size(84.dp)
+            .minimumInteractiveComponentSize()
+            .testTag("empty_live_button"),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.Default.GraphicEq,
+            contentDescription = "Live",
+            tint = RiviaTextPrimary,
+            modifier = Modifier.size(34.dp),
+          )
+        }
+      }
+      Text(
+        text = "Live",
+        fontSize = 12.sp,
+        color = RiviaTextPrimary,
+      )
+    }
+
+    // Right: Dictate. 58dp circle, mic icon, label "Dictate".
+    Column(
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Surface(
+        onClick = onDictateClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = RiviaSurface2,
+        modifier =
+          Modifier.size(58.dp)
+            .minimumInteractiveComponentSize()
+            .testTag("empty_dictate_button"),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          Icon(
+            imageVector = Icons.Default.Mic,
+            contentDescription = "Dictate",
+            tint = RiviaTextPrimary,
+            modifier = Modifier.size(24.dp),
+          )
+        }
+      }
+      Text(
+        text = "Dictate",
+        fontSize = 12.sp,
+        color = RiviaTextSecondary,
+      )
+    }
   }
 }
 
@@ -2006,6 +3489,11 @@ internal fun AssistantMessageBubble(
 ) {
   val context = LocalContext.current
   var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+  var botDetailsExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
+  val botDetails: BotDetailsCardMeta? =
+    remember(message.ruleEventsSummary) {
+      BotReplyVerifier.decodeBotDetailsCard(message.ruleEventsSummary)
+    }
 
   val orbState =
     when {
@@ -2106,12 +3594,109 @@ internal fun AssistantMessageBubble(
         }
       }
 
-      // Borderless full-width assistant markdown prose
+      // Borderless full-width assistant markdown prose (never rendered when content is empty)
       if (message.content.isNotBlank()) {
         MarkdownText(
           rawText = message.content,
           modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         )
+      }
+
+      // Collapsed "Details" card for bot answers (tap to see bot name, ticket, seconds, and raw JSON)
+      if (botDetails != null) {
+        if (botDetails.ticket.isNotBlank() || botDetails.rawJson.isNotBlank()) {
+          Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier =
+              Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { botDetailsExpanded = !botDetailsExpanded }
+                .testTag("bot_details_card"),
+          ) {
+            Column(
+              modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+              verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Text(
+                  text = "Details",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = RiviaTextSecondary,
+                )
+                Icon(
+                  imageVector =
+                    if (botDetailsExpanded) Icons.Outlined.ExpandLess
+                    else Icons.Outlined.ExpandMore,
+                  contentDescription =
+                    if (botDetailsExpanded) "Collapse Details" else "Expand Details",
+                  tint = RiviaIconDefault,
+                  modifier = Modifier.size(18.dp),
+                )
+              }
+              AnimatedVisibility(visible = botDetailsExpanded) {
+                Column(
+                  modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                  verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  if (botDetails.bot.isNotBlank()) {
+                    DetailMonoRow("Bot", botDetails.bot)
+                  }
+                  if (botDetails.ticket.isNotBlank()) {
+                    DetailMonoRow("Ticket", botDetails.ticket)
+                  }
+                  DetailMonoRow(
+                    "Seconds",
+                    String.format(Locale.US, "%.1fs", botDetails.seconds),
+                  )
+                  if (botDetails.rawJson.isNotBlank()) {
+                    Surface(
+                      color = RiviaSurface1,
+                      border = BorderStroke(1.dp, RiviaBorder),
+                      shape = RoundedCornerShape(8.dp),
+                      modifier = Modifier.fillMaxWidth(),
+                    ) {
+                      androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                          text = botDetails.rawJson,
+                          fontFamily = ChivoMonoFontFamily,
+                          fontSize = 10.sp,
+                          color = RiviaTextPrimary,
+                          modifier = Modifier.padding(8.dp),
+                        )
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Failed check name or error code shown underneath (never spoken)
+        if (!botDetails.failedCheck.isNullOrBlank()) {
+          Text(
+            text = botDetails.failedCheck,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = ChivoMonoFontFamily,
+            color = RiviaWarningAmber,
+            modifier = Modifier.testTag("bot_failed_check_label"),
+          )
+        }
+        if (!botDetails.errorCode.isNullOrBlank()) {
+          Text(
+            text = botDetails.errorCode,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = ChivoMonoFontFamily,
+            color = RiviaErrorRed,
+            modifier = Modifier.testTag("bot_error_code_label"),
+          )
+        }
       }
 
       // Plain API Error / H9 "No reply" Notice Display
@@ -2145,116 +3730,118 @@ internal fun AssistantMessageBubble(
         }
       }
 
-      // Quiet action row below Rivia's reply
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-      ) {
-        IconButton(
-          onClick = onListen,
-          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+      // Quiet action row below Rivia's reply (hidden when message content is empty on a Details-only card)
+      if (message.content.isNotBlank() || botDetails == null) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-          Icon(
-            imageVector =
-              if (isSpeaking) Icons.Default.Stop
-              else Icons.AutoMirrored.Outlined.VolumeUp,
-            contentDescription =
-              if (isSpeaking) "Stop read-aloud" else "Listen with ElevenLabs",
-            tint = if (isSpeaking) RiviaIconActive else RiviaIconDefault,
-            modifier = Modifier.size(18.dp),
-          )
-        }
-
-        IconButton(
-          onClick = {
-            copyToClipboard(
-              context,
-              "Rivia reply",
-              TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
-            )
-          },
-          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.ContentCopy,
-            contentDescription = "Copy reply",
-            tint = RiviaIconDefault,
-            modifier = Modifier.size(16.dp),
-          )
-        }
-
-        IconButton(
-          onClick = {
-            val sendIntent =
-              Intent(Intent.ACTION_SEND).apply {
-                putExtra(
-                  Intent.EXTRA_TEXT,
-                  TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
-                )
-                type = "text/plain"
-              }
-            context.startActivity(Intent.createChooser(sendIntent, "Share Rivia's reply"))
-          },
-          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.Share,
-            contentDescription = "Share reply",
-            tint = RiviaIconDefault,
-            modifier = Modifier.size(16.dp),
-          )
-        }
-
-        if (isLastAssistantReply && !isStreaming) {
           IconButton(
-            onClick = onRegenerate,
+            onClick = onListen,
             modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
           ) {
             Icon(
-              imageVector = Icons.Outlined.Refresh,
-              contentDescription = "Regenerate last reply",
-              tint = RiviaIconDefault,
+              imageVector =
+                if (isSpeaking) Icons.Default.Stop
+                else Icons.AutoMirrored.Outlined.VolumeUp,
+              contentDescription =
+                if (isSpeaking) "Stop read-aloud" else "Listen with ElevenLabs",
+              tint = if (isSpeaking) RiviaIconActive else RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
           }
-        }
 
-        IconButton(
-          onClick = onShowDetails,
-          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.Info,
-            contentDescription = "Reply details",
-            tint = RiviaTextTertiary,
-            modifier = Modifier.size(16.dp),
-          )
-        }
-
-        Text(
-          text = message.requestId,
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = ChivoMonoFontFamily,
-          color = RiviaTextTertiary,
-          modifier = Modifier.padding(start = 6.dp),
-        )
-
-        if (message.h7TrimmedFrom != null && message.h7TrimmedTo != null) {
-          Spacer(modifier = Modifier.width(6.dp))
-          Surface(
-            shape = RoundedCornerShape(50),
-            color = RiviaWarningAmber.copy(alpha = 0.16f),
-            border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.55f)),
-            modifier = Modifier.testTag("h7_trimmed_chip"),
+          IconButton(
+            onClick = {
+              copyToClipboard(
+                context,
+                "Rivia reply",
+                TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
+              )
+            },
+            modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
           ) {
-            Text(
-              text = "trimmed",
-              color = RiviaWarningAmber,
-              fontFamily = ChivoMonoFontFamily,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.SemiBold,
-              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            Icon(
+              imageVector = Icons.Outlined.ContentCopy,
+              contentDescription = "Copy reply",
+              tint = RiviaIconDefault,
+              modifier = Modifier.size(16.dp),
             )
+          }
+
+          IconButton(
+            onClick = {
+              val sendIntent =
+                Intent(Intent.ACTION_SEND).apply {
+                  putExtra(
+                    Intent.EXTRA_TEXT,
+                    TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
+                  )
+                  type = "text/plain"
+                }
+              context.startActivity(Intent.createChooser(sendIntent, "Share Rivia's reply"))
+            },
+            modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Share,
+              contentDescription = "Share reply",
+              tint = RiviaIconDefault,
+              modifier = Modifier.size(16.dp),
+            )
+          }
+
+          if (isLastAssistantReply && !isStreaming) {
+            IconButton(
+              onClick = onRegenerate,
+              modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.Refresh,
+                contentDescription = "Regenerate last reply",
+                tint = RiviaIconDefault,
+                modifier = Modifier.size(18.dp),
+              )
+            }
+          }
+
+          IconButton(
+            onClick = onShowDetails,
+            modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+          ) {
+            Icon(
+              imageVector = Icons.Outlined.Info,
+              contentDescription = "Reply details",
+              tint = RiviaTextTertiary,
+              modifier = Modifier.size(16.dp),
+            )
+          }
+
+          Text(
+            text = message.requestId,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = ChivoMonoFontFamily,
+            color = RiviaTextTertiary,
+            modifier = Modifier.padding(start = 6.dp),
+          )
+
+          if (message.h7TrimmedFrom != null && message.h7TrimmedTo != null) {
+            Spacer(modifier = Modifier.width(6.dp))
+            Surface(
+              shape = RoundedCornerShape(50),
+              color = RiviaWarningAmber.copy(alpha = 0.16f),
+              border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.55f)),
+              modifier = Modifier.testTag("h7_trimmed_chip"),
+            ) {
+              Text(
+                text = "trimmed",
+                color = RiviaWarningAmber,
+                fontFamily = ChivoMonoFontFamily,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+              )
+            }
           }
         }
       }
@@ -2450,7 +4037,11 @@ private fun MessageDetailsDialog(
             "H7: trimmed ${message.h7TrimmedFrom} → ${message.h7TrimmedTo}",
           )
         }
-        if (!message.ruleEventsSummary.isNullOrBlank()) {
+        if (
+          !message.ruleEventsSummary.isNullOrBlank() &&
+            message.chatKind != "Lab" &&
+            !BotReplyVerifier.isBotDetailsJson(message.ruleEventsSummary)
+        ) {
           DetailMonoRow("Rule Events", message.ruleEventsSummary)
         }
 
@@ -2580,6 +4171,7 @@ private fun DetailMonoRow(label: String, value: String) {
 
 @Composable
 private fun ChatComposerBar(
+  modifier: Modifier = Modifier,
   text: String,
   onTextChange: (String) -> Unit,
   isStreaming: Boolean,
@@ -2589,8 +4181,14 @@ private fun ChatComposerBar(
   onStop: () -> Unit,
   onOpenLive: () -> Unit,
   onDictationError: (String) -> Unit,
+  focusOnLaunch: Boolean = false,
+  onFocusConsumed: () -> Unit = {},
+  startDictationOnLaunch: Boolean = false,
+  onStartDictationConsumed: () -> Unit = {},
 ) {
   val context = LocalContext.current
+  val focusRequester = remember { FocusRequester() }
+  val keyboardController = LocalSoftwareKeyboardController.current
   var isDictating by remember { mutableStateOf(false) }
   var baseTextBeforeDictation by remember { mutableStateOf("") }
   var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
@@ -2708,11 +4306,35 @@ private fun ChatComposerBar(
       }
     }
 
+  LaunchedEffect(focusOnLaunch) {
+    if (focusOnLaunch) {
+      onFocusConsumed()
+      focusRequester.requestFocus()
+      keyboardController?.show()
+    }
+  }
+
+  LaunchedEffect(startDictationOnLaunch) {
+    if (startDictationOnLaunch) {
+      onStartDictationConsumed()
+      val hasPerm =
+        ContextCompat.checkSelfPermission(
+          context,
+          Manifest.permission.RECORD_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+      if (hasPerm) {
+        startDictation()
+      } else {
+        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+      }
+    }
+  }
+
   // Single Unified Floating Pill Composer Bar
   Box(
     modifier =
-      Modifier.fillMaxWidth()
-        .background(RiviaBackground)
+      modifier
+        .fillMaxWidth()
         .padding(horizontal = 12.dp, vertical = 8.dp),
   ) {
     Surface(
@@ -2732,7 +4354,10 @@ private fun ChatComposerBar(
           value = text,
           onValueChange = onTextChange,
           placeholder = { Text("Message Rivia...", color = RiviaTextTertiary) },
-          modifier = Modifier.weight(1f).testTag("message_rivia_input"),
+          modifier =
+            Modifier.weight(1f)
+              .focusRequester(focusRequester)
+              .testTag("message_rivia_input"),
           maxLines = 5,
           shape = RoundedCornerShape(24.dp),
           colors =

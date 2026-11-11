@@ -261,6 +261,20 @@ object LiveSessionManager {
   private var activeTurnJob: Job? = null
   private var callMonitorJob: Job? = null
   private var usingEarbudCommDevice: Boolean = false
+  @Volatile private var userSpeechStartedInTurn: Boolean = false
+  @Volatile private var userTurnFinalizingOrExecuting: Boolean = false
+
+  private fun isLivePlaybackOrGateActive(): Boolean {
+    return audioPlayerManager?.isSpeaking?.value == true ||
+      MicSharingRecorder.shouldDropLiveMicFrames()
+  }
+
+  private fun isUserMidSentenceOrTurnActive(): Boolean {
+    if (!_uiState.value.isActive) return false
+    return userSpeechStartedInTurn ||
+      MicSharingRecorder.isUserSpeechActiveInCurrentTurn() ||
+      userTurnFinalizingOrExecuting
+  }
 
   fun attachDependencies(
     context: Context,
@@ -309,6 +323,70 @@ object LiveSessionManager {
     onLiveTurnPlaybackDone = liveTurnPlaybackDoneHandler
     onMicCaptureCompleted = micCaptureCompletedHandler
     onSendLiveTurn = liveTurnHandler
+
+    playerManager.shouldHoldLiveQueuedLineProvider = { isUserMidSentenceOrTurnActive() }
+    playerManager.onLiveTurnStreamSentencesCompleted = {
+      userTurnFinalizingOrExecuting = false
+    }
+    playerManager.onLiveQueuedLineStarted = { rawMarkdown ->
+      scope.launch {
+        if (_uiState.value.isActive && !_uiState.value.isPaused) {
+          val h7Limit = getH7SpokenMaxSentences?.invoke()
+          val visibleRaw =
+            if (h7Limit != null) {
+              val sentences = TextAudioTagProcessor.splitIntoSentences(rawMarkdown)
+              if (sentences.size > h7Limit) {
+                sentences.take(h7Limit).joinToString(" ")
+              } else {
+                rawMarkdown
+              }
+            } else {
+              rawMarkdown
+            }
+          val cleanCaption = TextAudioTagProcessor.stripAudioTagsForScreen(visibleRaw)
+          _uiState.value =
+            _uiState.value.copy(
+              riviaCaption = cleanCaption,
+              orbState = OrbState.SPEAKING,
+            )
+        }
+      }
+    }
+    playerManager.onAllLivePlaybackDrained = {
+      scope.launch {
+        val s = _uiState.value
+        if (
+          s.isActive &&
+            !s.isMuted &&
+            !s.isPaused &&
+            !s.pausedForPhoneCall &&
+            !s.stoppedAfterThreeErrors &&
+            activeTurnJob?.isActive != true &&
+            !userTurnFinalizingOrExecuting
+        ) {
+          if (speechRecognizer != null && s.orbState == OrbState.SPEAKING) {
+            _uiState.value = s.copy(orbState = OrbState.LISTENING)
+          } else if (speechRecognizer == null) {
+            while (isLivePlaybackOrGateActive() && _uiState.value.isActive) {
+              delay(40L)
+            }
+            val afterGate = _uiState.value
+            if (
+              afterGate.isActive &&
+                !afterGate.isMuted &&
+                !afterGate.isPaused &&
+                !afterGate.pausedForPhoneCall &&
+                !afterGate.stoppedAfterThreeErrors &&
+                activeTurnJob?.isActive != true &&
+                !userTurnFinalizingOrExecuting &&
+                speechRecognizer == null
+            ) {
+              startListening()
+            }
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -447,6 +525,9 @@ object LiveSessionManager {
     val ctx = appContext ?: return
     val player = audioPlayerManager ?: return
 
+    userSpeechStartedInTurn = false
+    userTurnFinalizingOrExecuting = false
+    MicSharingRecorder.clearLivePlaybackGateImmediate()
     player.acquireLiveSessionAudioFocus()
     _uiState.value =
       LiveUiState(
@@ -488,6 +569,9 @@ object LiveSessionManager {
     activeTurnJob = null
     callMonitorJob?.cancel()
     callMonitorJob = null
+    userSpeechStartedInTurn = false
+    userTurnFinalizingOrExecuting = false
+    MicSharingRecorder.clearLivePlaybackGateImmediate()
     closeMic()
     appContext?.let { clearEarbudMicRouting(it) }
     audioPlayerManager?.releaseLiveSessionAudioFocus()
@@ -502,6 +586,7 @@ object LiveSessionManager {
     if (nextMuted) {
       vadFallbackTimerJob?.cancel()
       vadFallbackTimerJob = null
+      userSpeechStartedInTurn = false
       closeMic()
       if (_uiState.value.orbState == OrbState.LISTENING) {
         _uiState.value = _uiState.value.copy(orbState = OrbState.IDLE)
@@ -520,6 +605,9 @@ object LiveSessionManager {
       vadFallbackTimerJob?.cancel()
       vadFallbackTimerJob = null
       activeTurnJob?.cancel()
+      userSpeechStartedInTurn = false
+      userTurnFinalizingOrExecuting = false
+      MicSharingRecorder.clearLivePlaybackGateImmediate()
       closeMic()
       audioPlayerManager?.stopPlayback()
       _uiState.value = _uiState.value.copy(orbState = OrbState.IDLE)
@@ -536,6 +624,9 @@ object LiveSessionManager {
     vadFallbackTimerJob = null
     activeTurnJob?.cancel()
     activeTurnJob = null
+    userSpeechStartedInTurn = false
+    userTurnFinalizingOrExecuting = false
+    MicSharingRecorder.clearLivePlaybackGateImmediate()
     audioPlayerManager?.stopPlayback()
 
     _uiState.value =
@@ -566,6 +657,8 @@ object LiveSessionManager {
               _uiState.value.copy(pausedForPhoneCall = true, orbState = OrbState.IDLE)
             vadFallbackTimerJob?.cancel()
             vadFallbackTimerJob = null
+            userSpeechStartedInTurn = false
+            userTurnFinalizingOrExecuting = false
             closeMic()
             audioPlayerManager?.stopPlayback()
           } else if (!inPhoneCall && wasPausedForCall) {
@@ -611,11 +704,8 @@ object LiveSessionManager {
       return
     }
 
-    if (audioPlayerManager?.isSpeaking?.value == true) {
-      return
-    }
-
     closeMic()
+    userSpeechStartedInTurn = false
     if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
       handleNonSilenceError("Speech recognition service is not available on this device.")
       return
@@ -644,6 +734,7 @@ object LiveSessionManager {
         val pipeClosedByVad = AtomicBoolean(false)
         val pipeCloseAtMs = AtomicLong(0L)
         val partialResultsCount = AtomicInteger(0)
+        val gateSeenWhileIdleInTurn = AtomicBoolean(isLivePlaybackOrGateActive())
         var lastPartialText = ""
         var finalTextFromRecognizer = ""
         var finalTextSource = "" // "onResults" or "onSegmentResults"
@@ -744,6 +835,8 @@ object LiveSessionManager {
 
           // Send the transcript to Gemini as a Live turn
           if (cleanTranscript.isNotEmpty()) {
+            userSpeechStartedInTurn = false
+            userTurnFinalizingOrExecuting = true
             val elapsedSec =
               ((System.currentTimeMillis() - turnListenStartMs) / 1000L).coerceAtLeast(1L)
             val mins = elapsedSec / 60L
@@ -858,6 +951,7 @@ object LiveSessionManager {
                     _uiState.value.isPaused ||
                     _uiState.value.isMuted
                 ) {
+                  userTurnFinalizingOrExecuting = false
                   return@launch
                 }
                 processUserSpokenTurn(cleanTranscript, voiceLabel, turnReqId)
@@ -899,6 +993,11 @@ object LiveSessionManager {
             }
           } else {
             // No transcript produced
+            userSpeechStartedInTurn = false
+            userTurnFinalizingOrExecuting = false
+            val endedDuringGate = gateSeenWhileIdleInTurn.get() || isLivePlaybackOrGateActive()
+            audioPlayerManager?.drainHeldLiveQueuedLinesIfReady()
+
             if (wasCapturing) {
               bgCaptureScope.launch {
                 runCatching {
@@ -907,7 +1006,7 @@ object LiveSessionManager {
                       context = ctx,
                       recognizerHeardSpeech = false,
                     )
-                  if (capture.mode == "B") {
+                  if (capture.mode == "B" && !endedDuringGate) {
                     MicSharingRecorder.noteModeBOutcome(
                       recognizerOk = recognizerOk,
                       errorCode = effectiveErrCode,
@@ -916,12 +1015,13 @@ object LiveSessionManager {
                     )
                   }
                   val shouldLog =
-                    effectiveErrCode != SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                      capture.rms >= 0.005f ||
-                      capture.mode == "B" ||
-                      capture.vadSpeechDetected ||
-                      capture.captureError != null ||
-                      diagnostics.partialResultsCount > 0
+                    !endedDuringGate &&
+                      (effectiveErrCode != SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                        capture.rms >= 0.005f ||
+                        capture.mode == "B" ||
+                        capture.vadSpeechDetected ||
+                        capture.captureError != null ||
+                        diagnostics.partialResultsCount > 0)
 
                   if (shouldLog) {
                     onMicCaptureCompleted?.invoke(
@@ -940,7 +1040,28 @@ object LiveSessionManager {
               }
             }
 
-            if (
+            if (endedDuringGate) {
+              // If SpeechRecognizer ends or errors while the gate is active, start a fresh listening
+              // turn when the gate lifts and do not count it toward the three-errors-in-a-row stop.
+              scope.launch {
+                while (isLivePlaybackOrGateActive() && _uiState.value.isActive) {
+                  delay(40L)
+                }
+                val afterGate = _uiState.value
+                if (
+                  afterGate.isActive &&
+                    !afterGate.isMuted &&
+                    !afterGate.isPaused &&
+                    !afterGate.pausedForPhoneCall &&
+                    !afterGate.stoppedAfterThreeErrors &&
+                    activeTurnJob?.isActive != true &&
+                    !userTurnFinalizingOrExecuting &&
+                    speechRecognizer == null
+                ) {
+                  startListening()
+                }
+              }
+            } else if (
               effectiveErrCode == null ||
                 effectiveErrCode == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
                 effectiveErrCode == SpeechRecognizer.ERROR_NO_MATCH
@@ -965,18 +1086,30 @@ object LiveSessionManager {
 
         _uiState.value =
           _uiState.value.copy(
-            orbState = OrbState.LISTENING,
+            orbState =
+              if (audioPlayerManager?.isSpeaking?.value == true) OrbState.SPEAKING
+              else OrbState.LISTENING,
             userCaption = "",
           )
 
         recognizer.setRecognitionListener(
           object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+              }
               turnListenStartMs = System.currentTimeMillis()
               recordCallbackEvent("onReadyForSpeech")
             }
 
             override fun onBeginningOfSpeech() {
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+                return
+              }
+              if (!recordAlongside || requestedMicMode == "A") {
+                userSpeechStartedInTurn = true
+              }
               turnListenStartMs = System.currentTimeMillis()
               recordCallbackEvent("onBeginningOfSpeech")
             }
@@ -986,15 +1119,24 @@ object LiveSessionManager {
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+                return
+              }
               recordCallbackEvent("onEndOfSpeech")
             }
 
             override fun onPartialResults(partialResults: Bundle?) {
               if (activeListenTurnSeq.get() != turnSeq || turnFinalized.get()) return
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+                return
+              }
               val matches =
                 partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
               val partial = matches?.firstOrNull()?.trim().orEmpty()
               if (partial.isNotEmpty()) {
+                userSpeechStartedInTurn = true
                 val count = partialResultsCount.incrementAndGet()
                 lastPartialText = partial
                 recordCallbackEvent("onPartialResults#$count")
@@ -1005,11 +1147,16 @@ object LiveSessionManager {
 
             override fun onSegmentResults(segmentResults: Bundle) {
               if (activeListenTurnSeq.get() != turnSeq || turnFinalized.get()) return
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+                return
+              }
               recordCallbackEvent("onSegmentResults")
               val matches =
                 segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
               val segText = matches?.firstOrNull()?.trim().orEmpty()
               if (segText.isNotEmpty()) {
+                userSpeechStartedInTurn = true
                 segmentResultsList.add(segText)
                 MicSharingRecorder.notifyRecognizerHeardSpeech()
                 val combined =
@@ -1033,6 +1180,9 @@ object LiveSessionManager {
 
             override fun onEndOfSegmentedSession() {
               if (activeListenTurnSeq.get() != turnSeq || turnFinalized.get()) return
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+              }
               recordCallbackEvent("onEndOfSegmentedSession")
               val combinedSegments =
                 synchronized(segmentResultsList) { segmentResultsList.joinToString(" ").trim() }
@@ -1059,14 +1209,27 @@ object LiveSessionManager {
                   recognizerOk = res.recognizerOk,
                   explicitErrorCode = null,
                 )
+              } else if (gateSeenWhileIdleInTurn.get() || isLivePlaybackOrGateActive()) {
+                finalizeListeningTurn(
+                  finalSpoken = "",
+                  usedPartial = false,
+                  chosenSource = "none",
+                  recognizerOk = false,
+                  explicitErrorCode = null,
+                )
               }
             }
 
             override fun onResults(results: Bundle?) {
               if (activeListenTurnSeq.get() != turnSeq || turnFinalized.get()) return
+              val gatedWhileIdle = isLivePlaybackOrGateActive() && !userSpeechStartedInTurn
+              if (gatedWhileIdle) {
+                gateSeenWhileIdleInTurn.set(true)
+              }
               recordCallbackEvent("onResults")
               val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-              val directResult = matches?.firstOrNull()?.trim().orEmpty()
+              val directResult =
+                if (gatedWhileIdle) "" else matches?.firstOrNull()?.trim().orEmpty()
               val combinedSegments =
                 synchronized(segmentResultsList) { segmentResultsList.joinToString(" ").trim() }
 
@@ -1098,6 +1261,9 @@ object LiveSessionManager {
 
             override fun onError(error: Int) {
               if (activeListenTurnSeq.get() != turnSeq || turnFinalized.get()) return
+              if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
+                gateSeenWhileIdleInTurn.set(true)
+              }
               recordCallbackEvent("onError($error)")
               lastErrorCode = error
 
@@ -1167,6 +1333,7 @@ object LiveSessionManager {
                 // and let the pipe EOF finish recognition naturally.
                 // Any terminal callback (onResults / onError / onSegmentResults) ends the wait immediately.
                 // The 3 s timer is kept strictly as a last-resort safety net if no callback fires at all.
+                userTurnFinalizingOrExecuting = true
                 scope.launch {
                   if (activeListenTurnSeq.get() != turnSeq || turnFinalized.get()) return@launch
                   pipeCloseAtMs.compareAndSet(0L, closedAtMs)
@@ -1269,6 +1436,7 @@ object LiveSessionManager {
 
         player.startLiveTurnStream(
           onTurnPlaybackFinished = {
+            userTurnFinalizingOrExecuting = false
             onLiveTurnPlaybackDone?.invoke(turnRequestId, System.currentTimeMillis())
             scope.launch {
               if (
@@ -1289,6 +1457,7 @@ object LiveSessionManager {
           },
           onError = { ttsErr ->
             turnHadError = true
+            userTurnFinalizingOrExecuting = false
             handleNonSilenceError(ttsErr)
           },
           onFirstAudioStarted = {
@@ -1389,6 +1558,7 @@ object LiveSessionManager {
             },
             /* onTurnError = */ { apiErr, speakH9Fallback ->
               turnHadError = true
+              userTurnFinalizingOrExecuting = false
               player.stopPlayback()
               handleNonSilenceError(
                 errorMessage = apiErr,
@@ -1397,9 +1567,11 @@ object LiveSessionManager {
             },
           )
         } catch (e: CancellationException) {
+          userTurnFinalizingOrExecuting = false
           throw e
         } catch (e: Throwable) {
           turnHadError = true
+          userTurnFinalizingOrExecuting = false
           player.stopPlayback()
           handleNonSilenceError(e.message ?: "Live turn failed")
         }
@@ -1411,6 +1583,8 @@ object LiveSessionManager {
     speakFixedLineInVoice: String? = null,
   ) {
     scope.launch {
+      userSpeechStartedInTurn = false
+      userTurnFinalizingOrExecuting = false
       closeMic()
       val newCount = _uiState.value.consecutiveErrors + 1
       val stopAfterThree = newCount >= 3

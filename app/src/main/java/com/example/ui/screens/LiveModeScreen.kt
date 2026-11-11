@@ -71,10 +71,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.graphics.graphicsLayer
 import com.example.service.LiveSessionManager
 import com.example.service.LiveVoiceService
 import com.example.ui.components.OrbState
-import com.example.ui.components.RiviaOrb
+import com.example.ui.components.RiviaHomeParticleSphere
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
 import com.example.ui.theme.ChivoMonoFontFamily
@@ -311,26 +312,19 @@ fun LiveModeScreen(
           }
         }
       } else {
-        // Tapping the orb while she speaks stops her and starts listening
-        Box(
-          contentAlignment = Alignment.Center,
-          modifier =
-            Modifier.size(210.dp)
-              .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-              ) {
-                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                LiveSessionManager.onOrbTapped()
-              }
-              .testTag("live_mode_orb"),
-        ) {
-          RiviaOrb(
-            state = liveState.orbState,
-            size = 190.dp,
-            contentDesc = "Tap orb to interrupt Rivia and start listening",
-          )
-        }
+        // Tapping the sphere while she speaks stops her and starts listening
+        RiviaHomeParticleSphere(
+          sphereModifier =
+            Modifier.graphicsLayer {
+              scaleX = 1.05f
+              scaleY = 1.05f
+            },
+          contentDesc = "Tap orb to interrupt Rivia and start listening",
+          onSphereClick = {
+            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+            LiveSessionManager.onOrbTapped()
+          },
+        )
 
         Text(
           text =

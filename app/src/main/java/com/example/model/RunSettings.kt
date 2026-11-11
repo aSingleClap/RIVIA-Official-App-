@@ -77,6 +77,7 @@ data class RunSettings(
   val googleMapsLongitude: String = "",
   val fileSearchEnabled: Boolean = false,
   val fileSearchStoreNames: List<String> = emptyList(),
+  val tabletToolsEnabled: Boolean = false,
   val toolChoice: String = "auto", // auto, any, none, validated
   // Structured output
   val structuredOutputEnabled: Boolean = false,
@@ -124,6 +125,7 @@ data class RunSettings(
     obj.put("googleMapsLongitude", googleMapsLongitude)
     obj.put("fileSearchEnabled", fileSearchEnabled)
     obj.put("fileSearchStoreNames", JSONArray(fileSearchStoreNames))
+    obj.put("tabletToolsEnabled", tabletToolsEnabled)
     obj.put("toolChoice", toolChoice)
 
     obj.put("structuredOutputEnabled", structuredOutputEnabled)
@@ -284,6 +286,7 @@ data class RunSettings(
           googleMapsLongitude = obj.optString("googleMapsLongitude", ""),
           fileSearchEnabled = obj.optBoolean("fileSearchEnabled", false),
           fileSearchStoreNames = storeNames,
+          tabletToolsEnabled = obj.optBoolean("tabletToolsEnabled", false),
           toolChoice = obj.optString("toolChoice", "auto"),
           structuredOutputEnabled = obj.optBoolean("structuredOutputEnabled", false),
           structuredOutputSchema =
@@ -313,7 +316,8 @@ data class RunSettings(
       urlContextEnabled ||
       codeExecutionEnabled ||
       googleMapsEnabled ||
-      fileSearchEnabled
+      fileSearchEnabled ||
+      tabletToolsEnabled
 }
 
 data class SchemaValidationResult(

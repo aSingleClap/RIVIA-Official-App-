@@ -50,10 +50,28 @@ data class LabMicTestPreferences(
   val callStopListeningOnPipeClose: Boolean = false, // Fix 1: default false = skip stopListening() and let pipe EOF finish
 )
 
+data class PendingBotTicket(
+  val ticket: String,
+  val bot: String,
+  val chatId: String,
+  val requestText: String,
+  val startedAt: Long,
+)
+
 class SecureKeyRepository(private val context: Context) {
   companion object {
+    const val DEFAULT_TABLET_SERVER_URL = "https://mcp.rivia.observer/app/mcp"
+
+    fun normalizeNoWhitespace(raw: String): String {
+      return raw.replace("\r", "").replace("\n", "").trim()
+    }
+
     private val ENC_GEMINI_KEY = stringPreferencesKey("enc_gemini_api_key")
     private val ENC_ELEVEN_KEY = stringPreferencesKey("enc_elevenlabs_api_key")
+    private val TABLET_SERVER_URL = stringPreferencesKey("tablet_server_url")
+    private val ENC_TABLET_APP_TOKEN = stringPreferencesKey("enc_tablet_app_token")
+    private val ENC_PENDING_BOT_TICKETS = stringPreferencesKey("enc_pending_bot_tickets_json")
+    private val ENC_UNSENT_BOT_LINES = stringPreferencesKey("enc_unsent_bot_lines_json")
 
     private val ACTIVE_UI_MODE = stringPreferencesKey("active_ui_mode")
 
@@ -135,13 +153,21 @@ class SecureKeyRepository(private val context: Context) {
     private val LABS_SANDBOX_CALL_STOP_LISTENING_ON_PIPE_CLOSE =
       booleanPreferencesKey("labs_sandbox_call_stop_listening_on_pipe_close")
 
-    fun redactText(input: String, geminiKey: String, elevenKey: String): String {
+    fun redactText(
+      input: String,
+      geminiKey: String,
+      elevenKey: String,
+      tabletToken: String = "",
+    ): String {
       var result = input
       if (geminiKey.isNotBlank() && geminiKey.length >= 4) {
         result = result.replace(geminiKey, "[REDACTED_GEMINI_KEY]")
       }
       if (elevenKey.isNotBlank() && elevenKey.length >= 4) {
         result = result.replace(elevenKey, "[REDACTED_ELEVENLABS_KEY]")
+      }
+      if (tabletToken.isNotBlank() && tabletToken.length >= 4) {
+        result = result.replace(tabletToken, "[REDACTED_TABLET_TOKEN]")
       }
       // Also redact any header representations if present
       result =
@@ -153,6 +179,16 @@ class SecureKeyRepository(private val context: Context) {
         result.replace(
           Regex("""("xi-api-key"\s*:\s*")([^"]+)(")""", RegexOption.IGNORE_CASE),
           "$1[REDACTED]$3",
+        )
+      result =
+        result.replace(
+          Regex("""("authorization"\s*:\s*"Bearer\s+)([^"]+)(")""", RegexOption.IGNORE_CASE),
+          "$1[REDACTED]$3",
+        )
+      result =
+        result.replace(
+          Regex("""(Bearer\s+)([0-9A-Za-z\-_.~+/=]{6,})""", RegexOption.IGNORE_CASE),
+          "$1[REDACTED]",
         )
       result =
         result.replace(
@@ -190,6 +226,17 @@ class SecureKeyRepository(private val context: Context) {
   val elevenLabsKeyFlow: Flow<String> =
     context.secureKeyDataStore.data.map { prefs ->
       val enc = prefs[ENC_ELEVEN_KEY].orEmpty()
+      KeystoreCrypto.decrypt(enc)
+    }
+
+  val tabletServerUrlFlow: Flow<String> =
+    context.secureKeyDataStore.data.map { prefs ->
+      prefs[TABLET_SERVER_URL]?.takeIf { it.isNotBlank() } ?: DEFAULT_TABLET_SERVER_URL
+    }
+
+  val tabletAppTokenFlow: Flow<String> =
+    context.secureKeyDataStore.data.map { prefs ->
+      val enc = prefs[ENC_TABLET_APP_TOKEN].orEmpty()
       KeystoreCrypto.decrypt(enc)
     }
 
@@ -344,14 +391,161 @@ class SecureKeyRepository(private val context: Context) {
     context.secureKeyDataStore.edit { prefs -> prefs[ENC_ELEVEN_KEY] = encrypted }
   }
 
+  suspend fun saveTabletServerUrl(rawUrl: String): Result<String> {
+    val clean = rawUrl.replace("\r", "").replace("\n", "").trim()
+    val effective = if (clean.isEmpty()) DEFAULT_TABLET_SERVER_URL else clean
+    if (!effective.startsWith("https://") || !effective.endsWith("/app/mcp") || effective.length <= "https:///app/mcp".length) {
+      return Result.failure(
+        IllegalArgumentException("Server URL must start with https:// and end in /app/mcp")
+      )
+    }
+    context.secureKeyDataStore.edit { prefs -> prefs[TABLET_SERVER_URL] = effective }
+    return Result.success(effective)
+  }
+
+  suspend fun saveTabletAppToken(rawToken: String) {
+    val clean = rawToken.replace("\r", "").replace("\n", "").trim()
+    val encrypted = if (clean.isEmpty()) "" else KeystoreCrypto.encrypt(clean)
+    context.secureKeyDataStore.edit { prefs -> prefs[ENC_TABLET_APP_TOKEN] = encrypted }
+  }
+
   suspend fun getGeminiKey(): String = geminiKeyFlow.first()
 
   suspend fun getElevenLabsKey(): String = elevenLabsKeyFlow.first()
 
+  suspend fun getTabletServerUrl(): String = tabletServerUrlFlow.first()
+
+  suspend fun getTabletAppToken(): String = tabletAppTokenFlow.first()
+
   suspend fun redact(text: String): String {
     val gKey = getGeminiKey()
     val eKey = getElevenLabsKey()
-    return redactText(text, gKey, eKey)
+    val tToken = getTabletAppToken()
+    return redactText(text, gKey, eKey, tToken)
+  }
+
+  val pendingBotTicketsFlow: Flow<List<PendingBotTicket>> =
+    context.secureKeyDataStore.data.map { prefs ->
+      val enc = prefs[ENC_PENDING_BOT_TICKETS].orEmpty()
+      val jsonStr = if (enc.isBlank()) "" else KeystoreCrypto.decrypt(enc)
+      parsePendingBotTicketsJson(jsonStr)
+    }
+
+  suspend fun getPendingBotTickets(): List<PendingBotTicket> = pendingBotTicketsFlow.first()
+
+  suspend fun savePendingBotTickets(tickets: List<PendingBotTicket>) {
+    val arr = org.json.JSONArray()
+    for (t in tickets) {
+      arr.put(
+        org.json.JSONObject().apply {
+          put("ticket", t.ticket)
+          put("bot", t.bot)
+          put("chatId", t.chatId)
+          put("requestText", t.requestText)
+          put("startedAt", t.startedAt)
+        }
+      )
+    }
+    val encrypted =
+      if (tickets.isEmpty()) "" else KeystoreCrypto.encrypt(arr.toString())
+    context.secureKeyDataStore.edit { prefs -> prefs[ENC_PENDING_BOT_TICKETS] = encrypted }
+  }
+
+  private fun parsePendingBotTicketsJson(jsonStr: String): List<PendingBotTicket> {
+    if (jsonStr.isBlank()) return emptyList()
+    return try {
+      val arr = org.json.JSONArray(jsonStr)
+      val list = mutableListOf<PendingBotTicket>()
+      for (i in 0 until arr.length()) {
+        val obj = arr.optJSONObject(i) ?: continue
+        val ticket = obj.optString("ticket", "").trim()
+        if (ticket.isBlank()) continue
+        list.add(
+          PendingBotTicket(
+            ticket = ticket,
+            bot = obj.optString("bot", "ard"),
+            chatId = obj.optString("chatId", ""),
+            requestText = obj.optString("requestText", ""),
+            startedAt = obj.optLong("startedAt", 0L),
+          )
+        )
+      }
+      list
+    } catch (_: Exception) {
+      emptyList()
+    }
+  }
+
+  /**
+   * Encrypted per-chat list of lines added by the app without Gemini
+   * ("I couldn't finish that.", "I couldn't do that.", and any fallback_text that was spoken),
+   * capped at most 3 per chat (oldest dropped first).
+   */
+  suspend fun getUnsentBotLinesForChat(chatId: String): List<String> {
+    if (chatId.isBlank()) return emptyList()
+    val map = getAllUnsentBotLinesMap()
+    return map[chatId].orEmpty().takeLast(3)
+  }
+
+  suspend fun appendUnsentBotLineForChat(chatId: String, line: String) {
+    val cleanLine = line.trim()
+    if (chatId.isBlank() || cleanLine.isBlank()) return
+    val map = getAllUnsentBotLinesMap().toMutableMap()
+    val updated = (map[chatId].orEmpty() + cleanLine).takeLast(3)
+    map[chatId] = updated
+    saveAllUnsentBotLinesMap(map)
+  }
+
+  suspend fun clearUnsentBotLinesForChat(chatId: String) {
+    if (chatId.isBlank()) return
+    val map = getAllUnsentBotLinesMap().toMutableMap()
+    if (map.remove(chatId) != null) {
+      saveAllUnsentBotLinesMap(map)
+    }
+  }
+
+  private suspend fun getAllUnsentBotLinesMap(): Map<String, List<String>> {
+    val prefs = context.secureKeyDataStore.data.first()
+    val enc = prefs[ENC_UNSENT_BOT_LINES].orEmpty()
+    if (enc.isBlank()) return emptyMap()
+    val jsonStr = KeystoreCrypto.decrypt(enc)
+    if (jsonStr.isBlank()) return emptyMap()
+    return try {
+      val root = org.json.JSONObject(jsonStr)
+      val map = mutableMapOf<String, List<String>>()
+      val keys = root.keys()
+      while (keys.hasNext()) {
+        val k = keys.next()
+        val arr = root.optJSONArray(k) ?: continue
+        val list = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+          val s = arr.optString(i, "").trim()
+          if (s.isNotBlank()) list.add(s)
+        }
+        if (list.isNotEmpty()) {
+          map[k] = list.takeLast(3)
+        }
+      }
+      map
+    } catch (_: Exception) {
+      emptyMap()
+    }
+  }
+
+  private suspend fun saveAllUnsentBotLinesMap(map: Map<String, List<String>>) {
+    if (map.isEmpty()) {
+      context.secureKeyDataStore.edit { prefs -> prefs[ENC_UNSENT_BOT_LINES] = "" }
+      return
+    }
+    val root = org.json.JSONObject()
+    for ((k, list) in map) {
+      val trimmed = list.map { it.trim() }.filter { it.isNotEmpty() }.takeLast(3)
+      if (trimmed.isNotEmpty()) {
+        root.put(k, org.json.JSONArray(trimmed))
+      }
+    }
+    val encrypted = KeystoreCrypto.encrypt(root.toString())
+    context.secureKeyDataStore.edit { prefs -> prefs[ENC_UNSENT_BOT_LINES] = encrypted }
   }
 
   suspend fun updateVoicePreferences(transform: (VoicePreferences) -> VoicePreferences) {

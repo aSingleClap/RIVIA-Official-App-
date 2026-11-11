@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.screens.BotsScreen
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.ComingSoonScreen
 import com.example.ui.screens.LayersScreen
@@ -30,6 +31,7 @@ enum class RiviaDestination {
   LAYERS_COMING_SOON,
   LAYERS,
   TESTS,
+  BOTS,
   RUN_SETTINGS_CHAT,
   RUN_SETTINGS_DEFAULT,
   SETTINGS,
@@ -84,6 +86,7 @@ fun RiviaAppRoot(viewModel: RiviaViewModel) {
             }
           },
           onOpenTests = { currentDestination = RiviaDestination.TESTS },
+          onOpenBots = { currentDestination = RiviaDestination.BOTS },
         )
       }
       RiviaDestination.PIPELINE_COMING_SOON -> {
@@ -113,6 +116,12 @@ fun RiviaAppRoot(viewModel: RiviaViewModel) {
             currentDestination = RiviaDestination.LIVE_MODE
           },
           onOpenLabSettings = { currentDestination = RiviaDestination.SETTINGS },
+          onBack = { currentDestination = RiviaDestination.CHAT },
+        )
+      }
+      RiviaDestination.BOTS -> {
+        BotsScreen(
+          viewModel = viewModel,
           onBack = { currentDestination = RiviaDestination.CHAT },
         )
       }

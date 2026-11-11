@@ -981,5 +981,112 @@ class Pass1LayersTest {
       )
     }
   }
+
+  // 11. Bots Pass 1: 5-Point Spoken-Line Verifier, Whole-Word Check 5, Answer Prompt, and Earlier-Told Note
+  @Test
+  fun botReplyVerifier_enforcesAllFiveChecksAndWholeWordForbiddenMatch() {
+    val sampleReplyJson =
+      """
+      {
+        "v": 1,
+        "kind": "arrival",
+        "ok": true,
+        "ref": "t-GZUR8umpT55Qf2cv",
+        "message": {
+          "situation": "gym_late_cut",
+          "facts": {
+            "place": { "id": "gym", "name": "the gym" },
+            "leave_for_work_at": { "epoch": 1794246300, "local": "12:45 PM", "spoken": "12:45", "iso": "2026-11-09T12:45:00-05:00" },
+            "due_at_work": { "epoch": 1794246600, "local": "12:50 PM", "spoken": "12:50", "iso": "2026-11-09T12:50:00-05:00" },
+            "late_minutes": 25,
+            "prework_minutes": 15,
+            "workout_minutes": 110,
+            "day": "Tue Nov 10",
+            "problems": ["Not enough morning: up at 7:10 but leaving at 7:55 leaves under 60 minutes to get ready."]
+          },
+          "must_say": ["late_minutes", "prework_minutes", "workout_minutes", "leave_for_work_at"],
+          "decisions_for_jordan": [],
+          "delivery": { "say": true, "urgency": "normal", "hold_ok": true, "max_spoken_sentences": 2 },
+          "emotion": { "tone": "concerned", "intensity": 0.5, "note": "He is behind but it is recoverable." }
+        },
+        "data": {},
+        "fallback_text": "You're 25 minutes behind at the gym. Leave for work by 12:45."
+      }
+      """.trimIndent()
+
+    val envelope = com.example.util.BotReplyVerifier.parseReplyEnvelope(sampleReplyJson)
+    assertNotNull(envelope)
+    val msg = envelope!!.message!!
+
+    // Exact word-for-word answer-turn prompt
+    val prompt = com.example.util.BotReplyVerifier.buildAnswerTurnPrompt(msg)
+    assertTrue(
+      prompt.startsWith(
+        "The job Jordan asked for earlier is done. Tell him the result as yourself, in first person; never mention bots, Ard, tickets or tools. Write one spoken line from this message only. Use only the facts given. Say every must_say fact. Say times exactly as their spoken value. Never compute a time. Say a day in full, like Wednesday, November 11. Respect max_spoken_sentences. Offer decisions_for_jordan; never choose one. Use a plain, even tone. No audio tags and no square brackets. Message: "
+      )
+    )
+
+    // Valid line passes all 5 checks — and words "hard", "card", "regard" pass Check 5 whole-word match
+    val validLine =
+      "[sighs] You're 25 minutes behind, so with a hard 110 minute workout and 15 minutes of prework, regard 12:45 as your cutoff and bring your card."
+    val passResult = com.example.util.BotReplyVerifier.verifySpokenLine(validLine, msg)
+    assertTrue("Expected valid line to pass, got ${passResult.failedCheck}: ${passResult.detail}", passResult.passed)
+
+    // Empty line check
+    val emptyRes = com.example.util.BotReplyVerifier.verifySpokenLine("  [sighs]  ", msg)
+    assertFalse(emptyRes.passed)
+    assertEquals("empty_line", emptyRes.failedCheck)
+
+    // Check 1: clock time (\d{1,2}:\d{2}) must equal spoken value of some time fact in message.facts
+    val badClockRes =
+      com.example.util.BotReplyVerifier.verifySpokenLine(
+        "You're 25 minutes behind with 110 workout and 15 prework, so leave at 12:30.",
+        msg,
+      )
+    assertFalse(badClockRes.passed)
+    assertTrue(badClockRes.failedCheck!!.startsWith("check_1_clock_time"))
+
+    // Check 2: missing must_say fact (missing 110 workout_minutes)
+    val missingMustSayRes =
+      com.example.util.BotReplyVerifier.verifySpokenLine(
+        "You're 25 minutes behind with 15 minutes prework, so leave by 12:45.",
+        msg,
+      )
+    assertFalse(missingMustSayRes.passed)
+    assertTrue(missingMustSayRes.failedCheck!!.startsWith("check_2_must_say"))
+
+    // Check 3: ungrounded duration number (99 minutes not in facts)
+    val ungroundedRes =
+      com.example.util.BotReplyVerifier.verifySpokenLine(
+        "You're 25 minutes behind with 110 workout and 15 prework, so leave at 12:45 or 99 minutes.",
+        msg,
+      )
+    assertFalse(ungroundedRes.passed)
+    assertTrue(ungroundedRes.failedCheck!!.startsWith("check_3_ungrounded_duration"))
+
+    // Check 4: max_spoken_sentences (max_spoken_sentences = 2)
+    val threeSentences =
+      "You're 25 minutes late. Your workout is 110 minutes with 15 minutes prework. Leave at 12:45."
+    val capRes = com.example.util.BotReplyVerifier.verifySpokenLine(threeSentences, msg)
+    assertFalse(capRes.passed)
+    assertTrue(capRes.failedCheck!!.startsWith("check_4_max_sentences"))
+
+    // Check 5: whole words only ("bot", "bots", "ticket", "tickets", "ard")
+    for (forbidden in listOf("bot", "Bots", "ticket", "TICKETS", "Ard")) {
+      val lineWithForbidden =
+        "You're 25 minutes behind ($forbidden) with 110 workout and 15 prework, leave by 12:45."
+      val check5Res = com.example.util.BotReplyVerifier.verifySpokenLine(lineWithForbidden, msg)
+      assertFalse("Expected '$forbidden' to fail Check 5", check5Res.passed)
+      assertTrue(check5Res.failedCheck!!.startsWith("check_5_forbidden_word"))
+    }
+
+    // Earlier-told note formatting
+    assertEquals(
+      """(Earlier you told Jordan: "I couldn't finish that." "I couldn't do that.")""",
+      com.example.util.BotReplyVerifier.formatEarlierToldNote(
+        listOf("I couldn't finish that.", "I couldn't do that.")
+      ),
+    )
+  }
 }
 

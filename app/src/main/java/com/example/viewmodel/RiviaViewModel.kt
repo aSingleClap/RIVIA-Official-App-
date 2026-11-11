@@ -42,24 +42,33 @@ import com.example.network.ElevenLabsModel
 import com.example.network.ElevenLabsVoice
 import com.example.network.GeminiInteractionsClient
 import com.example.network.GeminiStreamEvent
+import com.example.network.TabletCallOutcome
+import com.example.network.TabletMcpClient
+import com.example.network.TabletToolDef
 import com.example.plugin.PluginRegistry
 import com.example.plugin.RiviaBridgeHolder
 import com.example.plugin.RiviaChannel
 import com.example.plugin.RiviaInternalBridge
 import com.example.security.LabMicTestPreferences
+import com.example.security.PendingBotTicket
 import com.example.security.SecureKeyRepository
 import com.example.security.VoicePreferences
 import com.example.service.LiveSessionManager
 import com.example.service.TurnRecognizerDiagnostics
 import com.example.ui.theme.AppUiMode
+import com.example.util.BotDetailsCardMeta
+import com.example.util.BotReplyVerifier
 import com.example.util.TextAudioTagProcessor
+import kotlinx.serialization.encodeToString
 import com.example.util.TurnAcousticData
 import com.example.util.TurnPayloadBuilder
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -70,10 +79,35 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import org.json.JSONArray
 import org.json.JSONObject
+
+data class TabletCallRecord(
+  val id: String = UUID.randomUUID().toString(),
+  val timestamp: Long,
+  val tool: String,
+  val ticket: String?,
+  val ok: Boolean,
+  val status: String,
+  val latencyMs: Long,
+  val errorCode: String?,
+)
+
+data class RoundTripTestUiState(
+  val isRunning: Boolean = false,
+  val statusText: String = "",
+  val ticket: String? = null,
+  val secondsTaken: Double? = null,
+  val replySummary: String = "",
+  val rawJson: String = "",
+  val errorText: String? = null,
+)
 
 data class EmotionBaselineSummary(
   val eligibleCount: Int = 0,
@@ -1151,6 +1185,63 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   private var streamingJob: Job? = null
   private var activeTurnCompletionJob: Job? = null
 
+  // Per-chat mutex so typed turns, Live voice turns, and bot answer turns in the same chat never overlap or fork lastInteractionId
+  private val chatTurnMutexes = ConcurrentHashMap<String, Mutex>()
+  private fun getChatTurnMutex(chatId: String): Mutex =
+    chatTurnMutexes.getOrPut(chatId) { Mutex() }
+
+  // Bots Pass 1: Standalone Tablet MCP Client (outside PluginRegistry)
+  val tabletMcpClient = TabletMcpClient()
+
+  val tabletServerUrl: StateFlow<String> =
+    keyRepository.tabletServerUrlFlow.stateIn(
+      viewModelScope,
+      SharingStarted.WhileSubscribed(5000),
+      SecureKeyRepository.DEFAULT_TABLET_SERVER_URL,
+    )
+
+  val tabletAppToken: StateFlow<String> =
+    keyRepository.tabletAppTokenFlow.stateIn(
+      viewModelScope,
+      SharingStarted.WhileSubscribed(5000),
+      "",
+    )
+
+  val pendingBotTickets: StateFlow<List<PendingBotTicket>> =
+    keyRepository.pendingBotTicketsFlow.stateIn(
+      viewModelScope,
+      SharingStarted.WhileSubscribed(5000),
+      emptyList(),
+    )
+
+  private val _tabletTestRunning = MutableStateFlow(false)
+  val tabletTestRunning: StateFlow<Boolean> = _tabletTestRunning.asStateFlow()
+
+  private val _tabletTestResultText = MutableStateFlow<String?>(null)
+  val tabletTestResultText: StateFlow<String?> = _tabletTestResultText.asStateFlow()
+
+  private val _tabletTestIsError = MutableStateFlow(false)
+  val tabletTestIsError: StateFlow<Boolean> = _tabletTestIsError.asStateFlow()
+
+  // Session cache of ask_bot and get_tablet_battery schemas from tools/list
+  private val _tabletToolsCache = MutableStateFlow<List<TabletToolDef>>(emptyList())
+  val tabletToolsCache: StateFlow<List<TabletToolDef>> = _tabletToolsCache.asStateFlow()
+
+  // Shown under the "Tablet tools" toggle if tools/list fails when a Labs chat opens
+  private val _tabletToolsUnavailable = MutableStateFlow(false)
+  val tabletToolsUnavailable: StateFlow<Boolean> = _tabletToolsUnavailable.asStateFlow()
+
+  // Last 20 tablet call results in memory for Dev -> Bots screen
+  private val _last20TabletResults = MutableStateFlow<List<TabletCallRecord>>(emptyList())
+  val last20TabletResults: StateFlow<List<TabletCallRecord>> = _last20TabletResults.asStateFlow()
+
+  // Round-trip test state for Dev -> Bots screen
+  private val _roundTripTestState = MutableStateFlow(RoundTripTestUiState())
+  val roundTripTestState: StateFlow<RoundTripTestUiState> = _roundTripTestState.asStateFlow()
+
+  private var pendingTicketPollerJob: Job? = null
+  private val ticketLastPollEpochMs = ConcurrentHashMap<String, Long>()
+
   // ElevenLabs voices & models state for Settings > Voice
   private val _personalVoices = MutableStateFlow<List<ElevenLabsVoice>>(emptyList())
   val personalVoices: StateFlow<List<ElevenLabsVoice>> = _personalVoices.asStateFlow()
@@ -1276,6 +1367,23 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       if (existing.isNotEmpty() && _activeChatId.value == null) {
         _activeChatId.value = existing.first().id
       }
+    }
+
+    // 5. Resume polling any persisted pending bot tickets on launch
+    startOrWakePendingTicketPoller()
+
+    // 6. When a Labs chat opens with Tablet tools enabled, fetch tools/list once and cache schemas
+    viewModelScope.launch(Dispatchers.IO) {
+      combine(isActiveChatLab, currentRunSettings, _activeChatId) { isLab, settings, chatId ->
+          Triple(isLab, settings.tabletToolsEnabled, chatId)
+        }
+        .collect { (isLab, tabletEnabled, _) ->
+          if (isLab && tabletEnabled) {
+            ensureTabletToolsLoaded()
+          } else if (!tabletEnabled) {
+            _tabletToolsUnavailable.value = false
+          }
+        }
     }
   }
 
@@ -1927,61 +2035,65 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch {
         activeTurnCompletionJob?.join()
         val settings = currentRunSettings.value
-        val chat = ensureActiveChatForFirstMessage(trimmed, settings)
-        val priorMessages = dao.getMessagesForChat(chat.id)
+        val initialChat = ensureActiveChatForFirstMessage(trimmed, settings)
 
-        // Interaction ID before this turn
-        val prevInteractionId =
-          priorMessages
-            .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
-            ?.interactionId
-            ?: chat.lastInteractionId
+        getChatTurnMutex(initialChat.id).withLock {
+          val chat = dao.getChatById(initialChat.id) ?: initialChat
+          val priorMessages = dao.getMessagesForChat(chat.id)
 
-        val reqId = TextAudioTagProcessor.generateRequestId()
-        val now = System.currentTimeMillis()
-        val isRivia = !chat.isLabChat
-        val bundle = _loadedLayersBundle.value
-        val effectiveRiviaProfile =
-          if (_appUiMode.value == AppUiMode.RIVIA) "live" else chat.riviaProfile
-        val normProf = LayerConfigManager.normalizeProfileKey(effectiveRiviaProfile)
-        val userModel =
-          if (isRivia && bundle != null) {
-            bundle.engine.profiles[normProf]?.model ?: settings.model
-          } else {
-            settings.model
-          }
-        val userTier =
-          if (isRivia && bundle != null) bundle.engine.service_tier else settings.serviceTier
+          // Interaction ID before this turn
+          val prevInteractionId =
+            chat.lastInteractionId
+              ?: priorMessages
+                .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
+                ?.interactionId
 
-        val userMsg =
-          MessageEntity(
-            id = UUID.randomUUID().toString(),
-            chatId = chat.id,
-            role = "user",
-            content = trimmed,
-            requestId = reqId,
+          val reqId = TextAudioTagProcessor.generateRequestId()
+          val now = System.currentTimeMillis()
+          val isRivia = !chat.isLabChat
+          val bundle = _loadedLayersBundle.value
+          val effectiveRiviaProfile =
+            if (_appUiMode.value == AppUiMode.RIVIA) "live" else chat.riviaProfile
+          val normProf = LayerConfigManager.normalizeProfileKey(effectiveRiviaProfile)
+          val userModel =
+            if (isRivia && bundle != null) {
+              bundle.engine.profiles[normProf]?.model ?: settings.model
+            } else {
+              settings.model
+            }
+          val userTier =
+            if (isRivia && bundle != null) bundle.engine.service_tier else settings.serviceTier
+
+          val userMsg =
+            MessageEntity(
+              id = UUID.randomUUID().toString(),
+              chatId = chat.id,
+              role = "user",
+              content = trimmed,
+              requestId = reqId,
+              previousInteractionId = prevInteractionId,
+              model = userModel,
+              serviceTier = userTier,
+              status = "completed",
+              createdAt = now,
+              chatKind = if (isRivia) "Rivia" else "Lab",
+              profile = if (isRivia) normProf else "",
+              channel =
+                if (isRivia) LayerConfigManager.channelForProfile(effectiveRiviaProfile) else "text",
+              fingerprint = if (isRivia) (_profileFingerprints.value[normProf] ?: "") else "",
+            )
+          dao.insertMessage(userMsg)
+
+          executeAssistantTurn(
+            chat = chat,
+            settings = settings,
+            channel = RiviaChannel.TYPED_CHAT,
+            priorMessagesBeforeUserTurn = priorMessages,
+            userText = trimmed,
             previousInteractionId = prevInteractionId,
-            model = userModel,
-            serviceTier = userTier,
-            status = "completed",
-            createdAt = now,
-            chatKind = if (isRivia) "Rivia" else "Lab",
-            profile = if (isRivia) normProf else "",
-            channel =
-              if (isRivia) LayerConfigManager.channelForProfile(effectiveRiviaProfile) else "text",
-            fingerprint = if (isRivia) (_profileFingerprints.value[normProf] ?: "") else "",
+            requestId = reqId,
           )
-        dao.insertMessage(userMsg)
-
-        executeAssistantTurn(
-          chat = chat,
-          settings = settings,
-          channel = RiviaChannel.TYPED_CHAT,
-          priorMessagesBeforeUserTurn = priorMessages,
-          userText = trimmed,
-          previousInteractionId = prevInteractionId,
-          requestId = reqId,
-        )
+        }
       }
   }
 
@@ -1997,90 +2109,94 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope.launch {
         activeTurnCompletionJob?.join()
         val targetMsg = dao.getMessageById(messageId) ?: return@launch
-        val chat = dao.getChatById(targetMsg.chatId) ?: return@launch
-        if (!chat.isLabChat && _layersLoadError.value != null) {
+        val initialChat = dao.getChatById(targetMsg.chatId) ?: return@launch
+        if (!initialChat.isLabChat && _layersLoadError.value != null) {
           showError(_layersLoadError.value!!)
           return@launch
         }
-        val settings = RunSettings.fromJsonString(chat.runSettingsJson)
 
-        val allMessages = dao.getMessagesForChat(chat.id)
-        val targetIdx = allMessages.indexOfFirst { it.id == messageId }
-        if (targetIdx < 0) return@launch
+        getChatTurnMutex(initialChat.id).withLock {
+          val chat = dao.getChatById(initialChat.id) ?: initialChat
+          val settings = RunSettings.fromJsonString(chat.runSettingsJson)
 
-        // Messages strictly before the edited user turn
-        val messagesBeforeEditedTurn = allMessages.subList(0, targetIdx)
-        // Branch interaction ID is the interaction strictly before this turn!
-        val branchPreviousInteractionId =
-          targetMsg.previousInteractionId
-            ?: messagesBeforeEditedTurn
-              .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
-              ?.interactionId
+          val allMessages = dao.getMessagesForChat(chat.id)
+          val targetIdx = allMessages.indexOfFirst { it.id == messageId }
+          if (targetIdx < 0) return@withLock
 
-        // Delete the edited message and all subsequent turns
-        dao.deleteMessagesFromTimestamp(chat.id, targetMsg.createdAt)
+          // Messages strictly before the edited user turn
+          val messagesBeforeEditedTurn = allMessages.subList(0, targetIdx)
+          // Branch interaction ID is the interaction strictly before this turn!
+          val branchPreviousInteractionId =
+            targetMsg.previousInteractionId
+              ?: messagesBeforeEditedTurn
+                .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
+                ?.interactionId
 
-        // Update chat title if editing the very first message
-        val updatedChat =
-          if (messagesBeforeEditedTurn.isEmpty()) {
-            chat.copy(
-              title = TextAudioTagProcessor.computeChatTitle(trimmed),
-              lastInteractionId = branchPreviousInteractionId,
-              updatedAt = System.currentTimeMillis(),
+          // Delete the edited message and all subsequent turns
+          dao.deleteMessagesFromTimestamp(chat.id, targetMsg.createdAt)
+
+          // Update chat title if editing the very first message
+          val updatedChat =
+            if (messagesBeforeEditedTurn.isEmpty()) {
+              chat.copy(
+                title = TextAudioTagProcessor.computeChatTitle(trimmed),
+                lastInteractionId = branchPreviousInteractionId,
+                updatedAt = System.currentTimeMillis(),
+              )
+            } else {
+              chat.copy(
+                lastInteractionId = branchPreviousInteractionId,
+                updatedAt = System.currentTimeMillis(),
+              )
+            }
+          dao.updateChat(updatedChat)
+
+          val reqId = TextAudioTagProcessor.generateRequestId()
+          val isRivia = !updatedChat.isLabChat
+          val bundle = _loadedLayersBundle.value
+          val effectiveRiviaProfile =
+            if (_appUiMode.value == AppUiMode.RIVIA) "live" else updatedChat.riviaProfile
+          val normProf = LayerConfigManager.normalizeProfileKey(effectiveRiviaProfile)
+          val userModel =
+            if (isRivia && bundle != null) {
+              bundle.engine.profiles[normProf]?.model ?: settings.model
+            } else {
+              settings.model
+            }
+          val userTier =
+            if (isRivia && bundle != null) bundle.engine.service_tier else settings.serviceTier
+
+          val newUserMsg =
+            MessageEntity(
+              id = UUID.randomUUID().toString(),
+              chatId = chat.id,
+              role = "user",
+              content = trimmed,
+              requestId = reqId,
+              previousInteractionId = branchPreviousInteractionId,
+              model = userModel,
+              serviceTier = userTier,
+              status = "completed",
+              createdAt = System.currentTimeMillis(),
+              chatKind = if (isRivia) "Rivia" else "Lab",
+              profile = if (isRivia) normProf else "",
+              channel =
+                if (isRivia) LayerConfigManager.channelForProfile(effectiveRiviaProfile)
+                else "text",
+              fingerprint = if (isRivia) (_profileFingerprints.value[normProf] ?: "") else "",
             )
-          } else {
-            chat.copy(
-              lastInteractionId = branchPreviousInteractionId,
-              updatedAt = System.currentTimeMillis(),
-            )
-          }
-        dao.updateChat(updatedChat)
+          dao.insertMessage(newUserMsg)
 
-        val reqId = TextAudioTagProcessor.generateRequestId()
-        val isRivia = !updatedChat.isLabChat
-        val bundle = _loadedLayersBundle.value
-        val effectiveRiviaProfile =
-          if (_appUiMode.value == AppUiMode.RIVIA) "live" else updatedChat.riviaProfile
-        val normProf = LayerConfigManager.normalizeProfileKey(effectiveRiviaProfile)
-        val userModel =
-          if (isRivia && bundle != null) {
-            bundle.engine.profiles[normProf]?.model ?: settings.model
-          } else {
-            settings.model
-          }
-        val userTier =
-          if (isRivia && bundle != null) bundle.engine.service_tier else settings.serviceTier
-
-        val newUserMsg =
-          MessageEntity(
-            id = UUID.randomUUID().toString(),
-            chatId = chat.id,
-            role = "user",
-            content = trimmed,
-            requestId = reqId,
+          executeAssistantTurn(
+            chat = updatedChat,
+            settings = settings,
+            channel = RiviaChannel.TYPED_CHAT,
+            priorMessagesBeforeUserTurn = messagesBeforeEditedTurn,
+            userText = trimmed,
             previousInteractionId = branchPreviousInteractionId,
-            model = userModel,
-            serviceTier = userTier,
-            status = "completed",
-            createdAt = System.currentTimeMillis(),
-            chatKind = if (isRivia) "Rivia" else "Lab",
-            profile = if (isRivia) normProf else "",
-            channel =
-              if (isRivia) LayerConfigManager.channelForProfile(effectiveRiviaProfile)
-              else "text",
-            fingerprint = if (isRivia) (_profileFingerprints.value[normProf] ?: "") else "",
+            requestId = reqId,
           )
-        dao.insertMessage(newUserMsg)
-
-        executeAssistantTurn(
-          chat = updatedChat,
-          settings = settings,
-          channel = RiviaChannel.TYPED_CHAT,
-          priorMessagesBeforeUserTurn = messagesBeforeEditedTurn,
-          userText = trimmed,
-          previousInteractionId = branchPreviousInteractionId,
-          requestId = reqId,
-        )
+        }
       }
   }
 
@@ -2094,47 +2210,51 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     streamingJob =
       viewModelScope.launch {
         activeTurnCompletionJob?.join()
-        val chat = dao.getChatById(chatId) ?: return@launch
-        if (!chat.isLabChat && _layersLoadError.value != null) {
+        val initialChat = dao.getChatById(chatId) ?: return@launch
+        if (!initialChat.isLabChat && _layersLoadError.value != null) {
           showError(_layersLoadError.value!!)
           return@launch
         }
-        val settings = RunSettings.fromJsonString(chat.runSettingsJson)
-        val allMessages = dao.getMessagesForChat(chatId)
-        val lastAssistantIdx = allMessages.indexOfLast { it.role == "assistant" }
-        if (lastAssistantIdx < 0) return@launch
 
-        val lastAssistantMsg = allMessages[lastAssistantIdx]
-        val precedingUserIdx =
-          allMessages.subList(0, lastAssistantIdx).indexOfLast { it.role == "user" }
-        if (precedingUserIdx < 0) return@launch
+        getChatTurnMutex(chatId).withLock {
+          val chat = dao.getChatById(chatId) ?: return@withLock
+          val settings = RunSettings.fromJsonString(chat.runSettingsJson)
+          val allMessages = dao.getMessagesForChat(chatId)
+          val lastAssistantIdx = allMessages.indexOfLast { it.role == "assistant" }
+          if (lastAssistantIdx < 0) return@withLock
 
-        val userMsg = allMessages[precedingUserIdx]
-        val priorMessagesBeforeUserTurn = allMessages.subList(0, precedingUserIdx)
+          val lastAssistantMsg = allMessages[lastAssistantIdx]
+          val precedingUserIdx =
+            allMessages.subList(0, lastAssistantIdx).indexOfLast { it.role == "user" }
+          if (precedingUserIdx < 0) return@withLock
 
-        // Branch from the interaction BEFORE the replaced turn, never the latest one!
-        val branchPreviousInteractionId =
-          lastAssistantMsg.previousInteractionId
-            ?: userMsg.previousInteractionId
-            ?: priorMessagesBeforeUserTurn
-              .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
-              ?.interactionId
+          val userMsg = allMessages[precedingUserIdx]
+          val priorMessagesBeforeUserTurn = allMessages.subList(0, precedingUserIdx)
 
-        // Delete the last assistant reply
-        dao.deleteMessagesFromTimestamp(chatId, lastAssistantMsg.createdAt)
-        val updatedChat = chat.copy(lastInteractionId = branchPreviousInteractionId)
-        dao.updateChat(updatedChat)
+          // Branch from the interaction BEFORE the replaced turn, never the latest one!
+          val branchPreviousInteractionId =
+            lastAssistantMsg.previousInteractionId
+              ?: userMsg.previousInteractionId
+              ?: priorMessagesBeforeUserTurn
+                .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
+                ?.interactionId
 
-        val newReqId = TextAudioTagProcessor.generateRequestId()
-        executeAssistantTurn(
-          chat = updatedChat,
-          settings = settings,
-          channel = RiviaChannel.TYPED_CHAT,
-          priorMessagesBeforeUserTurn = priorMessagesBeforeUserTurn,
-          userText = userMsg.content,
-          previousInteractionId = branchPreviousInteractionId,
-          requestId = newReqId,
-        )
+          // Delete the last assistant reply
+          dao.deleteMessagesFromTimestamp(chatId, lastAssistantMsg.createdAt)
+          val updatedChat = chat.copy(lastInteractionId = branchPreviousInteractionId)
+          dao.updateChat(updatedChat)
+
+          val newReqId = TextAudioTagProcessor.generateRequestId()
+          executeAssistantTurn(
+            chat = updatedChat,
+            settings = settings,
+            channel = RiviaChannel.TYPED_CHAT,
+            priorMessagesBeforeUserTurn = priorMessagesBeforeUserTurn,
+            userText = userMsg.content,
+            previousInteractionId = branchPreviousInteractionId,
+            requestId = newReqId,
+          )
+        }
       }
   }
 
@@ -2331,210 +2451,527 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         settings
       }
 
+    // Bots Pass 1: Load tablet tools if enabled in this Labs chat
+    val tabletToolsForTurn: List<TabletToolDef>? =
+      if (!isRivia && effectiveSettings.tabletToolsEnabled) {
+        withContext(Dispatchers.IO) { ensureTabletToolsLoaded() }
+      } else {
+        null
+      }
+    val includeTabletTools = !tabletToolsForTurn.isNullOrEmpty()
+
+    // App-added bot lines ("I couldn't finish that.", "I couldn't do that.", fallback_text)
+    // to prepend when chaining with previous_interaction_id
+    val unsentBotLines =
+      if (!isRivia) keyRepository.getUnsentBotLinesForChat(chat.id) else emptyList()
+    val earlierToldPrefix = BotReplyVerifier.formatEarlierToldNote(unsentBotLines)
+    val effectiveUseStore =
+      if (isRivia && bundle != null) bundle.engine.store else effectiveSettings.store
+
+    var currentPrevId: String? = previousInteractionId
+    var currentOverrideInputSteps: JSONArray? = null
+    var fnCallRound = 0
+    var continueFnLoop = true
+    val accumulatedRawSteps = JSONArray()
+
     try {
-      geminiClient.sendTurn(
-        apiKey = apiKey,
-        settings = effectiveSettings,
-        channel = channel,
-        priorMessages = priorMessagesBeforeUserTurn,
-        newUserText = userText,
-        previousInteractionId = previousInteractionId,
-        customBodyBuilder = customBodyBuilder,
-        customStore = if (isRivia && bundle != null) bundle.engine.store else null,
-        customServiceTier = if (isRivia && bundle != null) bundle.engine.service_tier else null,
-      ) { event ->
-        when (event) {
-          is GeminiStreamEvent.RequestDispatched -> {
-            if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
-              updateTurnDispatchTimings(
-                requestId = requestId,
-                requestSentMs = event.requestSentEpochMs,
-                systemInstructionChars = event.systemInstructionChars,
-              )
-            }
+      while (continueFnLoop && fnCallRound <= 3) {
+        continueFnLoop = false
+        val prefixForThisRound =
+          if (fnCallRound == 0 && effectiveUseStore && !currentPrevId.isNullOrBlank()) {
+            earlierToldPrefix.takeIf { it.isNotBlank() }
+          } else {
+            null
           }
-          is GeminiStreamEvent.FirstByteReceived -> {
-            if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
-              updateTurnDispatchTimings(
-                requestId = requestId,
-                firstByteMs = event.firstByteEpochMs,
-              )
-            }
-          }
-          is GeminiStreamEvent.InteractionCreated -> {
-            // Clarification #4: Clear pendingH7Notice only after the next turn's interaction.created arrives,
-            // not when it's sent, so a failed send keeps it.
-            if (isRivia && !pendingH7NoticeToSend.isNullOrBlank()) {
-              val curChat = dao.getChatById(chat.id)
-              if (curChat != null && curChat.pendingH7Notice != null) {
-                dao.updateChat(curChat.copy(pendingH7Notice = null))
-              }
-            }
 
-            assistantMsg =
-              assistantMsg.copy(
-                interactionId = event.interactionId,
-                serviceTier = event.serviceTierHeader ?: assistantMsg.serviceTier,
-              )
-            _streamingMessageOverlay.value = assistantMsg
-            dao.updateStreamingProgress(
-              id = assistantMsg.id,
-              content = assistantMsg.content,
-              thoughtSummary = assistantMsg.thoughtSummary,
-              interactionId = assistantMsg.interactionId,
-              serviceTier = assistantMsg.serviceTier,
-              ttftMs = assistantMsg.ttftMs,
-              status = assistantMsg.status,
-            )
-            lastDbWriteMs = System.currentTimeMillis()
-          }
-          is GeminiStreamEvent.TextDelta -> {
-            val now = System.currentTimeMillis()
-            if (firstTokenTimeMs == null) {
-              firstTokenTimeMs = now - startTimeMs
-              if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
-                updateTurnDispatchTimings(requestId, replyFirstTokenMs = now)
-              }
-            }
-            assistantMsg =
-              assistantMsg.copy(
-                content = assistantMsg.content + event.text,
-                ttftMs = firstTokenTimeMs ?: 0L,
-              )
-            _streamingMessageOverlay.value = assistantMsg
-            if (now - lastDbWriteMs >= 300L) {
-              dao.updateStreamingProgress(
-                id = assistantMsg.id,
-                content = assistantMsg.content,
-                thoughtSummary = assistantMsg.thoughtSummary,
-                interactionId = assistantMsg.interactionId,
-                serviceTier = assistantMsg.serviceTier,
-                ttftMs = assistantMsg.ttftMs,
-                status = assistantMsg.status,
-              )
-              lastDbWriteMs = now
-            }
-            onDeltaCallback?.invoke(event.text)
-          }
-          is GeminiStreamEvent.ThoughtSummaryDelta -> {
-            val now = System.currentTimeMillis()
-            if (firstTokenTimeMs == null) {
-              firstTokenTimeMs = now - startTimeMs
-            }
-            assistantMsg =
-              assistantMsg.copy(
-                thoughtSummary = assistantMsg.thoughtSummary + event.thoughtText,
-                ttftMs = firstTokenTimeMs ?: 0L,
-              )
-            _streamingMessageOverlay.value = assistantMsg
-            if (now - lastDbWriteMs >= 300L) {
-              dao.updateStreamingProgress(
-                id = assistantMsg.id,
-                content = assistantMsg.content,
-                thoughtSummary = assistantMsg.thoughtSummary,
-                interactionId = assistantMsg.interactionId,
-                serviceTier = assistantMsg.serviceTier,
-                ttftMs = assistantMsg.ttftMs,
-                status = assistantMsg.status,
-              )
-              lastDbWriteMs = now
-            }
-          }
-          is GeminiStreamEvent.ReplaceReplyText -> {
-            val now = System.currentTimeMillis()
-            if (firstTokenTimeMs == null) {
-              firstTokenTimeMs = now - startTimeMs
-              if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
-                updateTurnDispatchTimings(requestId, replyFirstTokenMs = now)
-              }
-            }
-            assistantMsg =
-              assistantMsg.copy(
-                content = event.fullText,
-                thoughtSummary =
-                  event.fullThought.ifBlank { assistantMsg.thoughtSummary },
-                ttftMs = firstTokenTimeMs ?: 0L,
-              )
-            _streamingMessageOverlay.value = assistantMsg
-            dao.updateStreamingProgress(
-              id = assistantMsg.id,
-              content = assistantMsg.content,
-              thoughtSummary = assistantMsg.thoughtSummary,
-              interactionId = assistantMsg.interactionId,
-              serviceTier = assistantMsg.serviceTier,
-              ttftMs = assistantMsg.ttftMs,
-              status = assistantMsg.status,
-            )
-            lastDbWriteMs = now
-          }
-          is GeminiStreamEvent.StatusUpdate -> {
-            assistantMsg = assistantMsg.copy(status = "polling (${event.status})")
-            _streamingMessageOverlay.value = assistantMsg
-            val now = System.currentTimeMillis()
-            if (now - lastDbWriteMs >= 300L) {
-              dao.updateStreamingProgress(
-                id = assistantMsg.id,
-                content = assistantMsg.content,
-                thoughtSummary = assistantMsg.thoughtSummary,
-                interactionId = assistantMsg.interactionId,
-                serviceTier = assistantMsg.serviceTier,
-                ttftMs = assistantMsg.ttftMs,
-                status = assistantMsg.status,
-              )
-              lastDbWriteMs = now
-            }
-          }
-          is GeminiStreamEvent.StepCompleted -> {
-            // Raw steps are saved in Completed
-          }
-          is GeminiStreamEvent.Completed -> {
-            val totalMs = System.currentTimeMillis() - startTimeMs
-            val finalInteractionId = event.interactionId ?: assistantMsg.interactionId
-            val fullUntrimmedReply = assistantMsg.content
-            val ruleEventsList = mutableListOf<String>()
-
-            // Section 6: H9 (no silent failure) on every user-started turn (Rivia and Lab)
-            val isReplyEmpty =
-              fullUntrimmedReply.isBlank() ||
-                (event.completionStatus.equals("incomplete", ignoreCase = true) &&
-                  fullUntrimmedReply.isBlank())
-
-            if (isReplyEmpty) {
-              val configuredMaxTokens =
-                if (isRivia && bundle != null) bundle.engine.max_output_tokens
-                else settings.maxOutputTokens
-              val h9Notice =
-                LayerConfigManager.formatH9EmptyReplyReason(
-                  finishReason = event.finishReason,
-                  safetyBlockReason = event.safetyBlockReason,
-                  completionStatus = event.completionStatus,
-                  thoughtTokens = event.thoughtTokens,
-                  outputTokens = event.outputTokens,
-                  configuredMaxOutputTokens = configuredMaxTokens,
+        geminiClient.sendTurn(
+          apiKey = apiKey,
+          settings = effectiveSettings,
+          channel = channel,
+          priorMessages = priorMessagesBeforeUserTurn,
+          newUserText = userText,
+          previousInteractionId = currentPrevId,
+          customBodyBuilder = customBodyBuilder,
+          customStore = if (isRivia && bundle != null) bundle.engine.store else null,
+          customServiceTier = if (isRivia && bundle != null) bundle.engine.service_tier else null,
+          overrideInputSteps = currentOverrideInputSteps,
+          tabletToolDefs = tabletToolsForTurn,
+          includeToolsOnTurn = includeTabletTools,
+          earlierToldPrefixWhenChained = prefixForThisRound,
+        ) { event ->
+          when (event) {
+            is GeminiStreamEvent.RequestDispatched -> {
+              if (isRivia && channel == RiviaChannel.LIVE_VOICE && fnCallRound == 0) {
+                updateTurnDispatchTimings(
+                  requestId = requestId,
+                  requestSentMs = event.requestSentEpochMs,
+                  systemInstructionChars = event.systemInstructionChars,
                 )
-              val h9Active =
-                isRivia &&
-                  (bundle?.hardRules?.rules?.any { it.id == "H9" && it.active } ?: false)
+              }
+            }
+            is GeminiStreamEvent.FirstByteReceived -> {
+              if (isRivia && channel == RiviaChannel.LIVE_VOICE && fnCallRound == 0) {
+                updateTurnDispatchTimings(
+                  requestId = requestId,
+                  firstByteMs = event.firstByteEpochMs,
+                )
+              }
+            }
+            is GeminiStreamEvent.InteractionCreated -> {
+              // Clarification #4: Clear pendingH7Notice only after the next turn's interaction.created arrives,
+              // not when it's sent, so a failed send keeps it.
+              if (isRivia && !pendingH7NoticeToSend.isNullOrBlank()) {
+                val curChat = dao.getChatById(chat.id)
+                if (curChat != null && curChat.pendingH7Notice != null) {
+                  dao.updateChat(curChat.copy(pendingH7Notice = null))
+                }
+              }
 
-              if (h9Active) {
-                ruleEventsList.add("H9: $h9Notice")
-                dao.insertRuleEvent(
-                  RuleEventEntity(
-                    chatId = chat.id,
-                    requestId = requestId,
-                    ruleId = "H9",
-                    eventType = layerChannel,
-                    detail = h9Notice,
+              assistantMsg =
+                assistantMsg.copy(
+                  interactionId = event.interactionId,
+                  serviceTier = event.serviceTierHeader ?: assistantMsg.serviceTier,
+                )
+              _streamingMessageOverlay.value = assistantMsg
+              dao.updateStreamingProgress(
+                id = assistantMsg.id,
+                content = assistantMsg.content,
+                thoughtSummary = assistantMsg.thoughtSummary,
+                interactionId = assistantMsg.interactionId,
+                serviceTier = assistantMsg.serviceTier,
+                ttftMs = assistantMsg.ttftMs,
+                status = assistantMsg.status,
+              )
+              lastDbWriteMs = System.currentTimeMillis()
+            }
+            is GeminiStreamEvent.TextDelta -> {
+              val now = System.currentTimeMillis()
+              if (firstTokenTimeMs == null) {
+                firstTokenTimeMs = now - startTimeMs
+                if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
+                  updateTurnDispatchTimings(requestId, replyFirstTokenMs = now)
+                }
+              }
+              assistantMsg =
+                assistantMsg.copy(
+                  content = assistantMsg.content + event.text,
+                  ttftMs = firstTokenTimeMs ?: 0L,
+                )
+              _streamingMessageOverlay.value = assistantMsg
+              if (now - lastDbWriteMs >= 300L) {
+                dao.updateStreamingProgress(
+                  id = assistantMsg.id,
+                  content = assistantMsg.content,
+                  thoughtSummary = assistantMsg.thoughtSummary,
+                  interactionId = assistantMsg.interactionId,
+                  serviceTier = assistantMsg.serviceTier,
+                  ttftMs = assistantMsg.ttftMs,
+                  status = assistantMsg.status,
+                )
+                lastDbWriteMs = now
+              }
+              onDeltaCallback?.invoke(event.text)
+            }
+            is GeminiStreamEvent.ThoughtSummaryDelta -> {
+              val now = System.currentTimeMillis()
+              if (firstTokenTimeMs == null) {
+                firstTokenTimeMs = now - startTimeMs
+              }
+              assistantMsg =
+                assistantMsg.copy(
+                  thoughtSummary = assistantMsg.thoughtSummary + event.thoughtText,
+                  ttftMs = firstTokenTimeMs ?: 0L,
+                )
+              _streamingMessageOverlay.value = assistantMsg
+              if (now - lastDbWriteMs >= 300L) {
+                dao.updateStreamingProgress(
+                  id = assistantMsg.id,
+                  content = assistantMsg.content,
+                  thoughtSummary = assistantMsg.thoughtSummary,
+                  interactionId = assistantMsg.interactionId,
+                  serviceTier = assistantMsg.serviceTier,
+                  ttftMs = assistantMsg.ttftMs,
+                  status = assistantMsg.status,
+                )
+                lastDbWriteMs = now
+              }
+            }
+            is GeminiStreamEvent.ReplaceReplyText -> {
+              val now = System.currentTimeMillis()
+              if (firstTokenTimeMs == null) {
+                firstTokenTimeMs = now - startTimeMs
+                if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
+                  updateTurnDispatchTimings(requestId, replyFirstTokenMs = now)
+                }
+              }
+              assistantMsg =
+                assistantMsg.copy(
+                  content = event.fullText,
+                  thoughtSummary =
+                    event.fullThought.ifBlank { assistantMsg.thoughtSummary },
+                  ttftMs = firstTokenTimeMs ?: 0L,
+                )
+              _streamingMessageOverlay.value = assistantMsg
+              dao.updateStreamingProgress(
+                id = assistantMsg.id,
+                content = assistantMsg.content,
+                thoughtSummary = assistantMsg.thoughtSummary,
+                interactionId = assistantMsg.interactionId,
+                serviceTier = assistantMsg.serviceTier,
+                ttftMs = assistantMsg.ttftMs,
+                status = assistantMsg.status,
+              )
+              lastDbWriteMs = now
+            }
+            is GeminiStreamEvent.StatusUpdate -> {
+              assistantMsg = assistantMsg.copy(status = "polling (${event.status})")
+              _streamingMessageOverlay.value = assistantMsg
+              val now = System.currentTimeMillis()
+              if (now - lastDbWriteMs >= 300L) {
+                dao.updateStreamingProgress(
+                  id = assistantMsg.id,
+                  content = assistantMsg.content,
+                  thoughtSummary = assistantMsg.thoughtSummary,
+                  interactionId = assistantMsg.interactionId,
+                  serviceTier = assistantMsg.serviceTier,
+                  ttftMs = assistantMsg.ttftMs,
+                  status = assistantMsg.status,
+                )
+                lastDbWriteMs = now
+              }
+            }
+            is GeminiStreamEvent.StepCompleted -> {
+              // Raw steps are saved in Completed
+            }
+            is GeminiStreamEvent.Completed -> {
+              for (i in 0 until event.rawSteps.length()) {
+                event.rawSteps.optJSONObject(i)?.let { accumulatedRawSteps.put(it) }
+              }
+              val totalMs = System.currentTimeMillis() - startTimeMs
+              val finalInteractionId = event.interactionId ?: assistantMsg.interactionId
+
+              // Bots Pass 1 Section 4: Handle requires_action function_call in Labs chats
+              if (
+                !isRivia &&
+                  includeTabletTools &&
+                  event.completionStatus.equals("requires_action", ignoreCase = true) &&
+                  event.functionCalls.isNotEmpty() &&
+                  fnCallRound < 3
+              ) {
+                if (!prefixForThisRound.isNullOrBlank()) {
+                  keyRepository.clearUnsentBotLinesForChat(chat.id)
+                }
+                val latestChatMidTurn = dao.getChatById(chat.id)
+                if (latestChatMidTurn != null && !finalInteractionId.isNullOrBlank()) {
+                  dao.updateChat(
+                    latestChatMidTurn.copy(
+                      lastInteractionId = finalInteractionId,
+                      updatedAt = System.currentTimeMillis(),
+                    )
+                  )
+                }
+
+                dao.logRequestAndPrune(
+                  RequestLogEntity(
                     timestamp = System.currentTimeMillis(),
+                    requestId = requestId,
+                    model = chosenModel,
+                    status = "requires_action",
+                    serviceTier = event.serviceTier,
+                    inputTokens = event.inputTokens,
+                    outputTokens = event.outputTokens,
+                    thoughtTokens = event.thoughtTokens,
+                    latencyMs = totalMs,
+                    error = null,
+                    chatKind = "Lab",
+                    profile = "",
+                    channel = if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text",
+                    fingerprint = "",
+                    ruleEvents = "",
                   )
                 )
+
+                val fnCall = event.functionCalls.first()
+                assistantMsg = assistantMsg.copy(status = "calling ${fnCall.name}...")
+                _streamingMessageOverlay.value = assistantMsg
+
+                val resolvedArgs =
+                  GeminiInteractionsClient.parseArgumentsObject(fnCall.arguments)
+                    ?: fnCall.arguments
+                val askBotMissingRequired =
+                  fnCall.name == "ask_bot" &&
+                    (resolvedArgs.optString("bot", "").trim().isBlank() ||
+                      resolvedArgs.optString("request", "").trim().isBlank())
+
+                val toolResultJsonString =
+                  if (askBotMissingRequired) {
+                    JSONObject()
+                      .apply {
+                        put("ok", false)
+                        put(
+                          "error",
+                          JSONObject().apply {
+                            put("code", "bad_arguments")
+                            put("msg", "ask_bot needs bot and request")
+                          },
+                        )
+                      }
+                      .toString()
+                  } else {
+                    val serverUrl = keyRepository.getTabletServerUrl()
+                    val appToken = keyRepository.getTabletAppToken()
+                    val outcome =
+                      withContext(Dispatchers.IO) {
+                        tabletMcpClient.callTool(
+                          serverUrl = serverUrl,
+                          appToken = appToken,
+                          toolName = fnCall.name,
+                          arguments = resolvedArgs,
+                        )
+                      }
+                    logTabletCallOutcome(tool = fnCall.name, outcome = outcome)
+
+                    when (outcome) {
+                      is TabletCallOutcome.Success -> {
+                        // Fix #2: Only add to pending list on ask_bot ok:true with non-blank ticket
+                        if (
+                          fnCall.name == "ask_bot" &&
+                            outcome.ok &&
+                            !outcome.ticket.isNullOrBlank()
+                        ) {
+                          val botName =
+                            outcome.value
+                              .optString("bot")
+                              .takeIf { it.isNotBlank() && it != "null" }
+                              ?: resolvedArgs.optString("bot", "ard").ifBlank { "ard" }
+                          val reqText = resolvedArgs.optString("request", "")
+                          addPendingTicket(
+                            PendingBotTicket(
+                              ticket = outcome.ticket,
+                              bot = botName,
+                              chatId = chat.id,
+                              requestText = reqText,
+                              startedAt = System.currentTimeMillis(),
+                            )
+                          )
+                          startOrWakePendingTicketPoller()
+                        }
+                        outcome.value.toString()
+                      }
+                      is TabletCallOutcome.Failure -> {
+                        // Section 4: If the tablet call fails (no connection, timeout, 401/403, 5xx),
+                        // send Gemini a function_result with {"ok":false,"error":{"code":"tablet_unreachable","msg":...}}
+                        JSONObject()
+                          .apply {
+                            put("ok", false)
+                            put(
+                              "error",
+                              JSONObject().apply {
+                                put("code", "tablet_unreachable")
+                                put("msg", outcome.message)
+                              },
+                            )
+                          }
+                          .toString()
+                      }
+                    }
+                  }
+
+                currentOverrideInputSteps =
+                  geminiClient.buildFunctionResultInput(
+                    toolName = fnCall.name,
+                    callId = fnCall.id,
+                    resultJsonString = toolResultJsonString,
+                  )
+                currentPrevId = finalInteractionId
+                assistantMsg =
+                  assistantMsg.copy(
+                    content = "",
+                    interactionId = finalInteractionId,
+                    status = if (isBackground) "polling" else "streaming",
+                  )
+                _streamingMessageOverlay.value = assistantMsg
+                fnCallRound++
+                continueFnLoop = true
+                return@sendTurn
+              }
+
+              val fullUntrimmedReply = assistantMsg.content
+              val ruleEventsList = mutableListOf<String>()
+
+              // Section 6: H9 (no silent failure) on every user-started turn (Rivia and Lab)
+              val isReplyEmpty =
+                fullUntrimmedReply.isBlank() ||
+                  (event.completionStatus.equals("incomplete", ignoreCase = true) &&
+                    fullUntrimmedReply.isBlank())
+
+              if (isReplyEmpty) {
+                val configuredMaxTokens =
+                  if (isRivia && bundle != null) bundle.engine.max_output_tokens
+                  else settings.maxOutputTokens
+                val h9Notice =
+                  LayerConfigManager.formatH9EmptyReplyReason(
+                    finishReason = event.finishReason,
+                    safetyBlockReason = event.safetyBlockReason,
+                    completionStatus = event.completionStatus,
+                    thoughtTokens = event.thoughtTokens,
+                    outputTokens = event.outputTokens,
+                    configuredMaxOutputTokens = configuredMaxTokens,
+                  )
+                val h9Active =
+                  isRivia &&
+                    (bundle?.hardRules?.rules?.any { it.id == "H9" && it.active } ?: false)
+
+                if (h9Active) {
+                  ruleEventsList.add("H9: $h9Notice")
+                  dao.insertRuleEvent(
+                    RuleEventEntity(
+                      chatId = chat.id,
+                      requestId = requestId,
+                      ruleId = "H9",
+                      eventType = layerChannel,
+                      detail = h9Notice,
+                      timestamp = System.currentTimeMillis(),
+                    )
+                  )
+                }
+
+                val ruleEventsSummary =
+                  ruleEventsList.takeIf { it.isNotEmpty() }?.joinToString(" · ") ?: ""
+
+                assistantMsg =
+                  assistantMsg.copy(
+                    interactionId = finalInteractionId,
+                    serviceTier = event.serviceTier,
+                    inputTokens = event.inputTokens,
+                    outputTokens = event.outputTokens,
+                    thoughtTokens = event.thoughtTokens,
+                    ttftMs = firstTokenTimeMs ?: totalMs,
+                    totalTimeMs = totalMs,
+                    status = "error",
+                    errorMessage = h9Notice,
+                    rawStepsJson = accumulatedRawSteps.toString(),
+                    ruleEventsSummary = ruleEventsSummary,
+                  )
+                dao.updateMessage(assistantMsg)
+                _streamingMessageOverlay.value = null
+
+                if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
+                  updateTurnDispatchCompletion(
+                    requestId = requestId,
+                    replyText = null,
+                    status = "error",
+                    error = h9Notice,
+                  )
+                }
+
+                dao.logRequestAndPrune(
+                  RequestLogEntity(
+                    timestamp = System.currentTimeMillis(),
+                    requestId = requestId,
+                    model = chosenModel,
+                    status = "empty",
+                    serviceTier = event.serviceTier,
+                    inputTokens = event.inputTokens,
+                    outputTokens = event.outputTokens,
+                    thoughtTokens = event.thoughtTokens,
+                    latencyMs = totalMs,
+                    error = h9Notice,
+                    chatKind = if (isRivia) "Rivia" else "Lab",
+                    profile = if (isRivia) normalizedProfile else "",
+                    channel = if (isRivia) layerChannel else (if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text"),
+                    fingerprint = turnFingerprint,
+                    ruleEvents = ruleEventsSummary,
+                  )
+                )
+                onErrorCallback?.invoke(h9Notice, h9Active)
+                return@sendTurn
+              }
+
+              // Clear unsent bot lines now that a chained turn succeeded
+              if (!prefixForThisRound.isNullOrBlank()) {
+                keyRepository.clearUnsentBotLinesForChat(chat.id)
+              }
+
+              // Section 6: H7 spoken sentence limit enforcement on Rivia voice channel (Live and Live (typed))
+              var displayedContent = fullUntrimmedReply
+              var trimmedFrom: Int? = null
+              var trimmedTo: Int? = null
+              var newPendingH7Notice: String? = null
+
+              val h7Active =
+                isRivia &&
+                  layerChannel == "voice" &&
+                  (bundle?.hardRules?.rules?.any { it.id == "H7" && it.active } ?: false)
+
+              if (h7Active) {
+                val limit = _spokenMaxSentences.value
+                val sentences = TextAudioTagProcessor.splitIntoSentences(fullUntrimmedReply)
+                if (sentences.size > limit) {
+                  val keptText = sentences.take(limit).joinToString(" ")
+                  displayedContent = keptText
+                  trimmedFrom = sentences.size
+                  trimmedTo = limit
+                  val h7Detail = "H7: trimmed ${sentences.size} → $limit"
+                  ruleEventsList.add(h7Detail)
+                  newPendingH7Notice =
+                    "Your last spoken reply was cut after $limit sentences. Jordan heard only: «$keptText»"
+                  dao.insertRuleEvent(
+                    RuleEventEntity(
+                      chatId = chat.id,
+                      requestId = requestId,
+                      ruleId = "H7",
+                      eventType = "voice",
+                      detail = "trimmed ${sentences.size} → $limit",
+                      timestamp = System.currentTimeMillis(),
+                    )
+                  )
+                }
+              }
+
+              // Section 6: H11 watch words audit on Rivia replies
+              val h11Active =
+                isRivia &&
+                  (bundle?.hardRules?.rules?.any { it.id == "H11" && it.active } ?: false)
+              if (h11Active && _h11WatchWords.value.isNotEmpty()) {
+                val matched =
+                  _h11WatchWords.value.filter { word ->
+                    fullUntrimmedReply.contains(word, ignoreCase = true)
+                  }
+                if (matched.isNotEmpty()) {
+                  ruleEventsList.add("H11 review")
+                  dao.insertRuleEvent(
+                    RuleEventEntity(
+                      chatId = chat.id,
+                      requestId = requestId,
+                      ruleId = "H11 review",
+                      eventType = layerChannel,
+                      detail = "Matched watch words: ${matched.joinToString(", ")}",
+                      timestamp = System.currentTimeMillis(),
+                    )
+                  )
+                }
               }
 
               val ruleEventsSummary =
                 ruleEventsList.takeIf { it.isNotEmpty() }?.joinToString(" · ") ?: ""
 
+              // Preserve full untrimmed reply inside rawStepsJson so Details > Raw Steps always has the full reply
+              if (trimmedFrom != null) {
+                accumulatedRawSteps.put(
+                  JSONObject().apply {
+                    put("type", "h7_full_untrimmed_reply")
+                    put("full_text", fullUntrimmedReply)
+                    put("displayed_text", displayedContent)
+                    put("trimmed_from_sentences", trimmedFrom)
+                    put("trimmed_to_sentences", trimmedTo)
+                  }
+                )
+              }
+
               assistantMsg =
                 assistantMsg.copy(
+                  content = displayedContent,
                   interactionId = finalInteractionId,
                   serviceTier = event.serviceTier,
                   inputTokens = event.inputTokens,
@@ -2542,9 +2979,95 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   thoughtTokens = event.thoughtTokens,
                   ttftMs = firstTokenTimeMs ?: totalMs,
                   totalTimeMs = totalMs,
+                  status = "completed",
+                  rawStepsJson = accumulatedRawSteps.toString(),
+                  ruleEventsSummary = ruleEventsSummary,
+                  h7TrimmedFrom = trimmedFrom,
+                  h7TrimmedTo = trimmedTo,
+                )
+              dao.updateMessage(assistantMsg)
+              _streamingMessageOverlay.value = null
+
+              if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
+                updateTurnDispatchCompletion(
+                  requestId = requestId,
+                  replyText = displayedContent,
+                  status = "completed",
+                  error = null,
+                )
+              }
+
+              val latestChat = dao.getChatById(chat.id)
+              if (latestChat != null) {
+                dao.updateChat(
+                  latestChat.copy(
+                    lastInteractionId = finalInteractionId,
+                    updatedAt = System.currentTimeMillis(),
+                    pendingH7Notice = newPendingH7Notice ?: latestChat.pendingH7Notice,
+                  )
+                )
+              }
+
+              // Log request to Request Log
+              dao.logRequestAndPrune(
+                RequestLogEntity(
+                  timestamp = System.currentTimeMillis(),
+                  requestId = requestId,
+                  model = chosenModel,
+                  status = "ok",
+                  serviceTier = event.serviceTier,
+                  inputTokens = event.inputTokens,
+                  outputTokens = event.outputTokens,
+                  thoughtTokens = event.thoughtTokens,
+                  latencyMs = totalMs,
+                  error = null,
+                  chatKind = if (isRivia) "Rivia" else "Lab",
+                  profile = if (isRivia) normalizedProfile else "",
+                  channel = if (isRivia) layerChannel else (if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text"),
+                  fingerprint = turnFingerprint,
+                  ruleEvents = ruleEventsSummary,
+                )
+              )
+
+              // If auto read-aloud is enabled in typed chat, speak the reply
+              if (
+                channel == RiviaChannel.TYPED_CHAT &&
+                  settings.autoReadAloud &&
+                  assistantMsg.content.isNotBlank()
+              ) {
+                audioPlayerManager.speakMarkdownMessage(
+                  messageId = assistantMsg.id,
+                  rawMarkdown = assistantMsg.content,
+                  isLiveChannel = rawSelectedProfile == "live_typed",
+                )
+              }
+              onCompleteCallback?.invoke()
+            }
+            is GeminiStreamEvent.Error -> {
+              val totalMs = System.currentTimeMillis() - startTimeMs
+              val redactedErr = keyRepository.redact(event.message)
+              val h9Active =
+                isRivia &&
+                  (bundle?.hardRules?.rules?.any { it.id == "H9" && it.active } ?: false)
+              val ruleEventsSummary = if (h9Active) "H9" else ""
+              if (h9Active) {
+                dao.insertRuleEvent(
+                  RuleEventEntity(
+                    chatId = chat.id,
+                    requestId = requestId,
+                    ruleId = "H9",
+                    eventType = layerChannel,
+                    detail = redactedErr,
+                    timestamp = System.currentTimeMillis(),
+                  )
+                )
+              }
+
+              assistantMsg =
+                assistantMsg.copy(
                   status = "error",
-                  errorMessage = h9Notice,
-                  rawStepsJson = event.rawSteps.toString(),
+                  errorMessage = redactedErr,
+                  totalTimeMs = totalMs,
                   ruleEventsSummary = ruleEventsSummary,
                 )
               dao.updateMessage(assistantMsg)
@@ -2555,7 +3078,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   requestId = requestId,
                   replyText = null,
                   status = "error",
-                  error = h9Notice,
+                  error = redactedErr,
                 )
               }
 
@@ -2564,13 +3087,13 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   timestamp = System.currentTimeMillis(),
                   requestId = requestId,
                   model = chosenModel,
-                  status = "empty",
-                  serviceTier = event.serviceTier,
-                  inputTokens = event.inputTokens,
-                  outputTokens = event.outputTokens,
-                  thoughtTokens = event.thoughtTokens,
+                  status = "error",
+                  serviceTier = assistantMsg.serviceTier,
+                  inputTokens = assistantMsg.inputTokens,
+                  outputTokens = assistantMsg.outputTokens,
+                  thoughtTokens = assistantMsg.thoughtTokens,
                   latencyMs = totalMs,
-                  error = h9Notice,
+                  error = redactedErr,
                   chatKind = if (isRivia) "Rivia" else "Lab",
                   profile = if (isRivia) normalizedProfile else "",
                   channel = if (isRivia) layerChannel else (if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text"),
@@ -2578,220 +3101,8 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   ruleEvents = ruleEventsSummary,
                 )
               )
-              onErrorCallback?.invoke(h9Notice, h9Active)
-              return@sendTurn
+              onErrorCallback?.invoke(redactedErr, h9Active)
             }
-
-            // Section 6: H7 spoken sentence limit enforcement on Rivia voice channel (Live and Live (typed))
-            var displayedContent = fullUntrimmedReply
-            var trimmedFrom: Int? = null
-            var trimmedTo: Int? = null
-            var newPendingH7Notice: String? = null
-
-            val h7Active =
-              isRivia &&
-                layerChannel == "voice" &&
-                (bundle?.hardRules?.rules?.any { it.id == "H7" && it.active } ?: false)
-
-            if (h7Active) {
-              val limit = _spokenMaxSentences.value
-              val sentences = TextAudioTagProcessor.splitIntoSentences(fullUntrimmedReply)
-              if (sentences.size > limit) {
-                val keptText = sentences.take(limit).joinToString(" ")
-                displayedContent = keptText
-                trimmedFrom = sentences.size
-                trimmedTo = limit
-                val h7Detail = "H7: trimmed ${sentences.size} → $limit"
-                ruleEventsList.add(h7Detail)
-                newPendingH7Notice =
-                  "Your last spoken reply was cut after $limit sentences. Jordan heard only: «$keptText»"
-                dao.insertRuleEvent(
-                  RuleEventEntity(
-                    chatId = chat.id,
-                    requestId = requestId,
-                    ruleId = "H7",
-                    eventType = "voice",
-                    detail = "trimmed ${sentences.size} → $limit",
-                    timestamp = System.currentTimeMillis(),
-                  )
-                )
-              }
-            }
-
-            // Section 6: H11 watch words audit on Rivia replies
-            val h11Active =
-              isRivia &&
-                (bundle?.hardRules?.rules?.any { it.id == "H11" && it.active } ?: false)
-            if (h11Active && _h11WatchWords.value.isNotEmpty()) {
-              val matched =
-                _h11WatchWords.value.filter { word ->
-                  fullUntrimmedReply.contains(word, ignoreCase = true)
-                }
-              if (matched.isNotEmpty()) {
-                ruleEventsList.add("H11 review")
-                dao.insertRuleEvent(
-                  RuleEventEntity(
-                    chatId = chat.id,
-                    requestId = requestId,
-                    ruleId = "H11 review",
-                    eventType = layerChannel,
-                    detail = "Matched watch words: ${matched.joinToString(", ")}",
-                    timestamp = System.currentTimeMillis(),
-                  )
-                )
-              }
-            }
-
-            val ruleEventsSummary =
-              ruleEventsList.takeIf { it.isNotEmpty() }?.joinToString(" · ") ?: ""
-
-            // Preserve full untrimmed reply inside rawStepsJson so Details > Raw Steps always has the full reply
-            val rawStepsArr = event.rawSteps
-            if (trimmedFrom != null) {
-              rawStepsArr.put(
-                JSONObject().apply {
-                  put("type", "h7_full_untrimmed_reply")
-                  put("full_text", fullUntrimmedReply)
-                  put("displayed_text", displayedContent)
-                  put("trimmed_from_sentences", trimmedFrom)
-                  put("trimmed_to_sentences", trimmedTo)
-                }
-              )
-            }
-
-            assistantMsg =
-              assistantMsg.copy(
-                content = displayedContent,
-                interactionId = finalInteractionId,
-                serviceTier = event.serviceTier,
-                inputTokens = event.inputTokens,
-                outputTokens = event.outputTokens,
-                thoughtTokens = event.thoughtTokens,
-                ttftMs = firstTokenTimeMs ?: totalMs,
-                totalTimeMs = totalMs,
-                status = "completed",
-                rawStepsJson = rawStepsArr.toString(),
-                ruleEventsSummary = ruleEventsSummary,
-                h7TrimmedFrom = trimmedFrom,
-                h7TrimmedTo = trimmedTo,
-              )
-            dao.updateMessage(assistantMsg)
-            _streamingMessageOverlay.value = null
-
-            if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
-              updateTurnDispatchCompletion(
-                requestId = requestId,
-                replyText = displayedContent,
-                status = "completed",
-                error = null,
-              )
-            }
-
-            val latestChat = dao.getChatById(chat.id)
-            if (latestChat != null) {
-              dao.updateChat(
-                latestChat.copy(
-                  lastInteractionId = finalInteractionId,
-                  updatedAt = System.currentTimeMillis(),
-                  pendingH7Notice = newPendingH7Notice ?: latestChat.pendingH7Notice,
-                )
-              )
-            }
-
-            // Log request to Request Log
-            dao.logRequestAndPrune(
-              RequestLogEntity(
-                timestamp = System.currentTimeMillis(),
-                requestId = requestId,
-                model = chosenModel,
-                status = "ok",
-                serviceTier = event.serviceTier,
-                inputTokens = event.inputTokens,
-                outputTokens = event.outputTokens,
-                thoughtTokens = event.thoughtTokens,
-                latencyMs = totalMs,
-                error = null,
-                chatKind = if (isRivia) "Rivia" else "Lab",
-                profile = if (isRivia) normalizedProfile else "",
-                channel = if (isRivia) layerChannel else (if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text"),
-                fingerprint = turnFingerprint,
-                ruleEvents = ruleEventsSummary,
-              )
-            )
-
-            // If auto read-aloud is enabled in typed chat, speak the reply
-            if (
-              channel == RiviaChannel.TYPED_CHAT &&
-                settings.autoReadAloud &&
-                assistantMsg.content.isNotBlank()
-            ) {
-              audioPlayerManager.speakMarkdownMessage(
-                messageId = assistantMsg.id,
-                rawMarkdown = assistantMsg.content,
-                isLiveChannel = rawSelectedProfile == "live_typed",
-              )
-            }
-            onCompleteCallback?.invoke()
-          }
-          is GeminiStreamEvent.Error -> {
-            val totalMs = System.currentTimeMillis() - startTimeMs
-            val redactedErr = keyRepository.redact(event.message)
-            val h9Active =
-              isRivia &&
-                (bundle?.hardRules?.rules?.any { it.id == "H9" && it.active } ?: false)
-            val ruleEventsSummary = if (h9Active) "H9" else ""
-            if (h9Active) {
-              dao.insertRuleEvent(
-                RuleEventEntity(
-                  chatId = chat.id,
-                  requestId = requestId,
-                  ruleId = "H9",
-                  eventType = layerChannel,
-                  detail = redactedErr,
-                  timestamp = System.currentTimeMillis(),
-                )
-              )
-            }
-
-            assistantMsg =
-              assistantMsg.copy(
-                status = "error",
-                errorMessage = redactedErr,
-                totalTimeMs = totalMs,
-                ruleEventsSummary = ruleEventsSummary,
-              )
-            dao.updateMessage(assistantMsg)
-            _streamingMessageOverlay.value = null
-
-            if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
-              updateTurnDispatchCompletion(
-                requestId = requestId,
-                replyText = null,
-                status = "error",
-                error = redactedErr,
-              )
-            }
-
-            dao.logRequestAndPrune(
-              RequestLogEntity(
-                timestamp = System.currentTimeMillis(),
-                requestId = requestId,
-                model = chosenModel,
-                status = "error",
-                serviceTier = assistantMsg.serviceTier,
-                inputTokens = assistantMsg.inputTokens,
-                outputTokens = assistantMsg.outputTokens,
-                thoughtTokens = assistantMsg.thoughtTokens,
-                latencyMs = totalMs,
-                error = redactedErr,
-                chatKind = if (isRivia) "Rivia" else "Lab",
-                profile = if (isRivia) normalizedProfile else "",
-                channel = if (isRivia) layerChannel else (if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text"),
-                fingerprint = turnFingerprint,
-                ruleEvents = ruleEventsSummary,
-              )
-            )
-            onErrorCallback?.invoke(redactedErr, h9Active)
           }
         }
       }
@@ -3007,8 +3318,8 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   ) {
     activeTurnCompletionJob?.join()
     val settings = currentRunSettings.value
-    val chat = ensureActiveChatForFirstMessage(userText, settings)
-    val isRivia = !chat.isLabChat
+    val initialChat = ensureActiveChatForFirstMessage(userText, settings)
+    val isRivia = !initialChat.isLabChat
     val bundle = _loadedLayersBundle.value
     if (isRivia && (bundle == null || _layersLoadError.value != null)) {
       val err = _layersLoadError.value ?: "Layers didn't load"
@@ -3016,137 +3327,140 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       return
     }
 
-    val priorMessages = dao.getMessagesForChat(chat.id)
-    val prevInteractionId =
-      priorMessages
-        .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
-        ?.interactionId
-        ?: chat.lastInteractionId
+    getChatTurnMutex(initialChat.id).withLock {
+      val chat = dao.getChatById(initialChat.id) ?: initialChat
+      val priorMessages = dao.getMessagesForChat(chat.id)
+      val prevInteractionId =
+        chat.lastInteractionId
+          ?: priorMessages
+            .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
+            ?.interactionId
 
-    val reqId = turnRequestId.ifBlank { TextAudioTagProcessor.generateRequestId() }
-    val turnCreatedAtMs = System.currentTimeMillis()
-    val liveModel =
-      if (isRivia && bundle != null) {
-        bundle.engine.profiles["live"]?.model ?: settings.liveModel
-      } else {
-        settings.liveModel
-      }
-    val liveTier =
-      if (isRivia && bundle != null) bundle.engine.service_tier else settings.serviceTier
+      val reqId = turnRequestId.ifBlank { TextAudioTagProcessor.generateRequestId() }
+      val turnCreatedAtMs = System.currentTimeMillis()
+      val liveModel =
+        if (isRivia && bundle != null) {
+          bundle.engine.profiles["live"]?.model ?: settings.liveModel
+        } else {
+          settings.liveModel
+        }
+      val liveTier =
+        if (isRivia && bundle != null) bundle.engine.service_tier else settings.serviceTier
 
-    val userMsg =
-      MessageEntity(
-        id = UUID.randomUUID().toString(),
-        chatId = chat.id,
-        role = "user",
-        content = userText,
-        requestId = reqId,
-        previousInteractionId = prevInteractionId,
-        model = liveModel,
-        serviceTier = liveTier,
-        status = "completed",
-        voiceLabel = voiceDurationLabel,
-        createdAt = turnCreatedAtMs,
-        chatKind = if (isRivia) "Rivia" else "Lab",
-        profile = if (isRivia) "live" else "",
-        channel = "voice",
-        fingerprint = if (isRivia) (_profileFingerprints.value["live"] ?: "") else "",
-      )
-    dao.insertMessage(userMsg)
-
-    // Step 2: Insert turn_dispatch_logs row with payload_json BEFORE the Gemini request starts (Rivia live voice turns only)
-    if (isRivia) {
-      runCatching {
-        val dispatchCtx = LiveSessionManager.getTurnDispatchContext(reqId)
-        val barrierRes =
-          dispatchCtx?.barrierResult
-            ?: LiveSessionManager.lastTurnEmotionBarrierResult.value?.takeIf {
-              it.turnRequestId == reqId
-            }
-        val existingEmotionRow = dao.getVoiceEmotionLogByRequestId(reqId)
-        val transcriptSource =
-          dispatchCtx?.transcriptSource?.takeIf { it.isNotBlank() }
-            ?: existingEmotionRow?.transcriptSource?.takeIf { it.isNotBlank() }
-            ?: "onResults"
-        val isModeATurn =
-          barrierRes?.captureResult?.mode == "A" ||
-            barrierRes?.failureReason == LiveSessionManager.EMOTION_REASON_NO_SCORES ||
-            existingEmotionRow?.mode == "A"
-        val acoustic =
-          if (isModeATurn) {
-            null
-          } else if (barrierRes?.prediction != null) {
-            val speechSec =
-              barrierRes.captureResult?.speechDurationSec
-                ?: existingEmotionRow?.speechDurationSec
-                ?: 0f
-            TurnAcousticData.fromPrediction(
-              prediction = barrierRes.prediction,
-              transcript = userText,
-              speechDurationSec = speechSec,
-            )
-          } else {
-            TurnAcousticData.fromLogOrNull(existingEmotionRow)
-          }
-
-        val resetAtMs = labMicTestPreferences.value.emotionBaselineResetAt
-        val baseline =
-          queryAndComputeEmotionBaseline(
-            dao = dao,
-            resetAtMs = resetAtMs,
-            nowMs = turnCreatedAtMs,
-            excludeRequestId = reqId,
-            excludeAtOrAfterNow = true,
-          )
-        val payloadJson =
-          TurnPayloadBuilder.buildPayloadJson(
-            timestampMs = turnCreatedAtMs,
-            requestId = reqId,
-            transcript = userText,
-            transcriptSource = transcriptSource,
-            acoustic = acoustic,
-            baseline = baseline,
-            recentMessages = priorMessages,
-          )
-        val initialTimingsJson =
-          TurnPayloadBuilder.mergeTimingsJson(
-            existingTimingsJson = null,
-            vadEndMs = dispatchCtx?.vadEndEpochMs,
-            transcriptReadyMs = dispatchCtx?.transcriptReadyEpochMs ?: turnCreatedAtMs,
-            emotionReadyMs = dispatchCtx?.emotionReadyEpochMs,
-            emotionTimeoutMs = dispatchCtx?.emotionTimeoutEpochMs,
-          )
-        dao.insertTurnDispatchLog(
-          TurnDispatchLogEntity(
-            requestId = reqId,
-            createdAt = turnCreatedAtMs,
-            payloadJson = payloadJson,
-            triageJson = null,
-            correctedJson = null,
-            toolName = null,
-            toolArgsJson = null,
-            toolResultJson = null,
-            replyText = null,
-            status = "dispatched",
-            error = null,
-            timingsJson = initialTimingsJson,
-          )
+      val userMsg =
+        MessageEntity(
+          id = UUID.randomUUID().toString(),
+          chatId = chat.id,
+          role = "user",
+          content = userText,
+          requestId = reqId,
+          previousInteractionId = prevInteractionId,
+          model = liveModel,
+          serviceTier = liveTier,
+          status = "completed",
+          voiceLabel = voiceDurationLabel,
+          createdAt = turnCreatedAtMs,
+          chatKind = if (isRivia) "Rivia" else "Lab",
+          profile = if (isRivia) "live" else "",
+          channel = "voice",
+          fingerprint = if (isRivia) (_profileFingerprints.value["live"] ?: "") else "",
         )
-      }
-    }
+      dao.insertMessage(userMsg)
 
-    executeAssistantTurn(
-      chat = chat,
-      settings = settings,
-      channel = RiviaChannel.LIVE_VOICE,
-      priorMessagesBeforeUserTurn = priorMessages,
-      userText = userText,
-      previousInteractionId = prevInteractionId,
-      requestId = reqId,
-      onDeltaCallback = onReplyDelta,
-      onCompleteCallback = onTurnComplete,
-      onErrorCallback = onTurnError,
-    )
+      // Step 2: Insert turn_dispatch_logs row with payload_json BEFORE the Gemini request starts (Rivia live voice turns only)
+      if (isRivia) {
+        runCatching {
+          val dispatchCtx = LiveSessionManager.getTurnDispatchContext(reqId)
+          val barrierRes =
+            dispatchCtx?.barrierResult
+              ?: LiveSessionManager.lastTurnEmotionBarrierResult.value?.takeIf {
+                it.turnRequestId == reqId
+              }
+          val existingEmotionRow = dao.getVoiceEmotionLogByRequestId(reqId)
+          val transcriptSource =
+            dispatchCtx?.transcriptSource?.takeIf { it.isNotBlank() }
+              ?: existingEmotionRow?.transcriptSource?.takeIf { it.isNotBlank() }
+              ?: "onResults"
+          val isModeATurn =
+            barrierRes?.captureResult?.mode == "A" ||
+              barrierRes?.failureReason == LiveSessionManager.EMOTION_REASON_NO_SCORES ||
+              existingEmotionRow?.mode == "A"
+          val acoustic =
+            if (isModeATurn) {
+              null
+            } else if (barrierRes?.prediction != null) {
+              val speechSec =
+                barrierRes.captureResult?.speechDurationSec
+                  ?: existingEmotionRow?.speechDurationSec
+                  ?: 0f
+              TurnAcousticData.fromPrediction(
+                prediction = barrierRes.prediction,
+                transcript = userText,
+                speechDurationSec = speechSec,
+              )
+            } else {
+              TurnAcousticData.fromLogOrNull(existingEmotionRow)
+            }
+
+          val resetAtMs = labMicTestPreferences.value.emotionBaselineResetAt
+          val baseline =
+            queryAndComputeEmotionBaseline(
+              dao = dao,
+              resetAtMs = resetAtMs,
+              nowMs = turnCreatedAtMs,
+              excludeRequestId = reqId,
+              excludeAtOrAfterNow = true,
+            )
+          val payloadJson =
+            TurnPayloadBuilder.buildPayloadJson(
+              timestampMs = turnCreatedAtMs,
+              requestId = reqId,
+              transcript = userText,
+              transcriptSource = transcriptSource,
+              acoustic = acoustic,
+              baseline = baseline,
+              recentMessages = priorMessages,
+            )
+          val initialTimingsJson =
+            TurnPayloadBuilder.mergeTimingsJson(
+              existingTimingsJson = null,
+              vadEndMs = dispatchCtx?.vadEndEpochMs,
+              transcriptReadyMs = dispatchCtx?.transcriptReadyEpochMs ?: turnCreatedAtMs,
+              emotionReadyMs = dispatchCtx?.emotionReadyEpochMs,
+              emotionTimeoutMs = dispatchCtx?.emotionTimeoutEpochMs,
+            )
+          dao.insertTurnDispatchLog(
+            TurnDispatchLogEntity(
+              requestId = reqId,
+              createdAt = turnCreatedAtMs,
+              payloadJson = payloadJson,
+              triageJson = null,
+              correctedJson = null,
+              toolName = null,
+              toolArgsJson = null,
+              toolResultJson = null,
+              replyText = null,
+              status = "dispatched",
+              error = null,
+              timingsJson = initialTimingsJson,
+            )
+          )
+        }
+      }
+
+      executeAssistantTurn(
+        chat = chat,
+        settings = settings,
+        channel = RiviaChannel.LIVE_VOICE,
+        priorMessagesBeforeUserTurn = priorMessages,
+        userText = userText,
+        previousInteractionId = prevInteractionId,
+        requestId = reqId,
+        onDeltaCallback = onReplyDelta,
+        onCompleteCallback = onTurnComplete,
+        onErrorCallback = onTurnError,
+      )
+    }
   }
 
   private suspend fun executeDirectAsk(
@@ -3156,23 +3470,1093 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   ): String {
     activeTurnCompletionJob?.join()
     val settings = currentRunSettings.value
-    val chat = ensureActiveChatForFirstMessage(text, settings)
-    val priorMessages = dao.getMessagesForChat(chat.id)
-    val prevInteractionId = chat.lastInteractionId
-    val reqId = customReqId ?: TextAudioTagProcessor.generateRequestId()
+    val initialChat = ensureActiveChatForFirstMessage(text, settings)
     val sb = StringBuilder()
 
-    executeAssistantTurn(
-      chat = chat,
-      settings = settings,
-      channel = channel,
-      priorMessagesBeforeUserTurn = priorMessages,
-      userText = text,
-      previousInteractionId = prevInteractionId,
-      requestId = reqId,
-      onDeltaCallback = { sb.append(it) },
-    )
+    getChatTurnMutex(initialChat.id).withLock {
+      val chat = dao.getChatById(initialChat.id) ?: initialChat
+      val priorMessages = dao.getMessagesForChat(chat.id)
+      val prevInteractionId = chat.lastInteractionId
+      val reqId = customReqId ?: TextAudioTagProcessor.generateRequestId()
+
+      executeAssistantTurn(
+        chat = chat,
+        settings = settings,
+        channel = channel,
+        priorMessagesBeforeUserTurn = priorMessages,
+        userText = text,
+        previousInteractionId = prevInteractionId,
+        requestId = reqId,
+        onDeltaCallback = { sb.append(it) },
+      )
+    }
     return sb.toString()
+  }
+
+  // =========================================================================
+  // BOTS PASS 1: TABLET SETTINGS, TOOL CACHING, TICKET POLLER & ANSWER TURN
+  // =========================================================================
+
+  fun saveTabletSettings(rawUrl: String, rawToken: String): Boolean {
+    val cleanUrl = SecureKeyRepository.normalizeNoWhitespace(rawUrl)
+    val cleanToken = SecureKeyRepository.normalizeNoWhitespace(rawToken)
+    if (!TabletMcpClient.isValidServerUrl(cleanUrl)) {
+      _tabletTestIsError.value = true
+      _tabletTestResultText.value = "Server URL must start with https:// and end in /app/mcp."
+      showError("Server URL must start with https:// and end in /app/mcp.")
+      return false
+    }
+    viewModelScope.launch {
+      keyRepository.saveTabletServerUrl(cleanUrl)
+      keyRepository.saveTabletAppToken(cleanToken)
+      // Invalidate tool cache so next call uses updated credentials
+      _tabletToolsCache.value = emptyList()
+      showNotice("Tablet settings saved.")
+    }
+    return true
+  }
+
+  fun testTabletConnection(customRawUrl: String? = null, customRawToken: String? = null) {
+    viewModelScope.launch {
+      _tabletTestRunning.value = true
+      _tabletTestResultText.value = null
+      _tabletTestIsError.value = false
+
+      val cleanUrl =
+        customRawUrl?.let { SecureKeyRepository.normalizeNoWhitespace(it) }
+          ?: keyRepository.getTabletServerUrl()
+      val cleanToken =
+        customRawToken?.let { SecureKeyRepository.normalizeNoWhitespace(it) }
+          ?: keyRepository.getTabletAppToken()
+
+      if (!TabletMcpClient.isValidServerUrl(cleanUrl)) {
+        _tabletTestRunning.value = false
+        _tabletTestIsError.value = true
+        val msg = "Server URL must start with https:// and end in /app/mcp."
+        _tabletTestResultText.value = msg
+        showError(msg)
+        return@launch
+      }
+
+      if (customRawUrl != null) keyRepository.saveTabletServerUrl(cleanUrl)
+      if (customRawToken != null) keyRepository.saveTabletAppToken(cleanToken)
+
+      val startMs = System.currentTimeMillis()
+      val res =
+        withContext(Dispatchers.IO) {
+          tabletMcpClient.listTools(serverUrl = cleanUrl, appToken = cleanToken)
+        }
+      val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+      _tabletTestRunning.value = false
+
+      when (res) {
+        is TabletCallOutcome.Success -> {
+          val allTools = res.value
+          logTabletCall(
+            tool = "tools/list",
+            ticket = null,
+            ok = true,
+            status = "ok",
+            latencyMs = latencyMs,
+            errorCode = null,
+          )
+          val names = allTools.map { it.name }
+          val geminiExposed =
+            allTools.filter {
+              (it.name == "ask_bot" || it.name == "get_tablet_battery") &&
+                it.description.isNotBlank() &&
+                it.inputSchemaJson.isNotBlank()
+            }
+          val hasAskBot = geminiExposed.any { it.name == "ask_bot" }
+          val hasBattery = geminiExposed.any { it.name == "get_tablet_battery" }
+          if (hasAskBot && hasBattery) {
+            _tabletToolsCache.value = geminiExposed
+            _tabletToolsUnavailable.value = false
+          } else {
+            _tabletToolsUnavailable.value = true
+          }
+          val displayLine = "Tools: ${names.joinToString(", ")}"
+          _tabletTestIsError.value = false
+          _tabletTestResultText.value = displayLine
+        }
+        is TabletCallOutcome.Failure -> {
+          val redactedMsg = keyRepository.redact(res.message)
+          val errCode =
+            res.errorCode.ifBlank {
+              if (redactedMsg.contains("refused the app token", ignoreCase = true)) "unauthorized"
+              else "tablet_unreachable"
+            }
+          logTabletCall(
+            tool = "tools/list",
+            ticket = null,
+            ok = false,
+            status = "failed",
+            latencyMs = latencyMs,
+            errorCode = errCode,
+          )
+          _tabletToolsUnavailable.value = true
+          _tabletTestIsError.value = true
+          _tabletTestResultText.value = redactedMsg
+          showError(redactedMsg)
+        }
+      }
+    }
+  }
+
+  /**
+   * Ensures `ask_bot` and `get_tablet_battery` schemas are cached in memory for the session.
+   * Never returns an empty or half-built tool list.
+   */
+  private suspend fun ensureTabletToolsLoaded(): List<TabletToolDef>? {
+    val cached = _tabletToolsCache.value
+    val cachedHasBoth =
+      cached.any { it.name == "ask_bot" } && cached.any { it.name == "get_tablet_battery" }
+    if (cachedHasBoth) {
+      _tabletToolsUnavailable.value = false
+      return cached
+    }
+
+    val url = keyRepository.getTabletServerUrl()
+    val token = keyRepository.getTabletAppToken()
+    if (!TabletMcpClient.isValidServerUrl(url) || token.isBlank()) {
+      _tabletToolsUnavailable.value = true
+      return null
+    }
+
+    val startMs = System.currentTimeMillis()
+    val res = tabletMcpClient.listTools(serverUrl = url, appToken = token)
+    val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+
+    return when (res) {
+      is TabletCallOutcome.Success -> {
+        val allTools = res.value
+        logTabletCall(
+          tool = "tools/list",
+          ticket = null,
+          ok = true,
+          status = "ok",
+          latencyMs = latencyMs,
+          errorCode = null,
+        )
+        val filtered =
+          allTools.filter {
+            (it.name == "ask_bot" || it.name == "get_tablet_battery") &&
+              it.description.isNotBlank() &&
+              it.inputSchemaJson.isNotBlank()
+          }
+        val hasAskBot = filtered.any { it.name == "ask_bot" }
+        val hasBattery = filtered.any { it.name == "get_tablet_battery" }
+        if (hasAskBot && hasBattery) {
+          _tabletToolsCache.value = filtered
+          _tabletToolsUnavailable.value = false
+          filtered
+        } else {
+          _tabletToolsUnavailable.value = true
+          null
+        }
+      }
+      is TabletCallOutcome.Failure -> {
+        val errCode =
+          res.errorCode.ifBlank {
+            if (res.message.contains("refused the app token", ignoreCase = true)) "unauthorized"
+            else "tablet_unreachable"
+          }
+        logTabletCall(
+          tool = "tools/list",
+          ticket = null,
+          ok = false,
+          status = "failed",
+          latencyMs = latencyMs,
+          errorCode = errCode,
+        )
+        _tabletToolsUnavailable.value = true
+        null
+      }
+    }
+  }
+
+  private suspend fun logTabletCallOutcome(tool: String, outcome: TabletCallOutcome<*>) {
+    when (outcome) {
+      is TabletCallOutcome.Success -> {
+        logTabletCall(
+          tool = tool,
+          ticket = outcome.ticket,
+          ok = outcome.ok,
+          status = outcome.status.ifBlank { if (outcome.ok) "ok" else "failed" },
+          latencyMs = outcome.latencyMs,
+          errorCode = outcome.errorCode,
+        )
+      }
+      is TabletCallOutcome.Failure -> {
+        logTabletCall(
+          tool = tool,
+          ticket = outcome.ticket,
+          ok = false,
+          status = "failed",
+          latencyMs = outcome.latencyMs,
+          errorCode = outcome.errorCode,
+        )
+      }
+    }
+  }
+
+  private suspend fun logTabletCall(
+    tool: String,
+    ticket: String?,
+    ok: Boolean,
+    status: String,
+    latencyMs: Long,
+    errorCode: String?,
+  ) {
+    val now = System.currentTimeMillis()
+    val record =
+      TabletCallRecord(
+        timestamp = now,
+        tool = tool,
+        ticket = ticket,
+        ok = ok,
+        status = status,
+        latencyMs = latencyMs,
+        errorCode = errorCode,
+      )
+    _last20TabletResults.value = (listOf(record) + _last20TabletResults.value).take(20)
+
+    runCatching {
+      dao.logRequestAndPrune(
+        RequestLogEntity(
+          timestamp = now,
+          requestId = ticket?.takeIf { it.isNotBlank() } ?: TextAudioTagProcessor.generateRequestId(),
+          model = "tablet:$tool",
+          status = if (ok) "ok" else "failed",
+          serviceTier = "standard",
+          inputTokens = 0,
+          outputTokens = 0,
+          thoughtTokens = 0,
+          latencyMs = latencyMs,
+          error = errorCode,
+          chatKind = "Lab",
+          profile = "",
+          channel = "text",
+          fingerprint = "",
+          ruleEvents = "",
+        )
+      )
+    }
+  }
+
+  private suspend fun addPendingTicket(ticket: PendingBotTicket) {
+    val cur = keyRepository.getPendingBotTickets().toMutableList()
+    cur.removeAll { it.ticket == ticket.ticket }
+    cur.add(ticket)
+    keyRepository.savePendingBotTickets(cur)
+  }
+
+  private suspend fun removePendingTicket(ticketId: String) {
+    ticketLastPollEpochMs.remove(ticketId)
+    val cur = keyRepository.getPendingBotTickets().filterNot { it.ticket == ticketId }
+    keyRepository.savePendingBotTickets(cur)
+  }
+
+  /**
+   * Section 5: Polls `check_reply` on the schedule:
+   * - every 2 s for the first 20 s
+   * - every 5 s up to 90 s
+   * - every 15 s up to 10 minutes
+   * - after 10 minutes: stop polling that ticket, remove it, and post the timeout line in its chat.
+   */
+  private fun startOrWakePendingTicketPoller() {
+    if (pendingTicketPollerJob?.isActive == true) return
+    pendingTicketPollerJob =
+      viewModelScope.launch(Dispatchers.IO) {
+        while (isActive) {
+          val tickets = keyRepository.getPendingBotTickets()
+          if (tickets.isEmpty()) break
+
+          val now = System.currentTimeMillis()
+          for (ticket in tickets) {
+            val elapsedMs = (now - ticket.startedAt).coerceAtLeast(0L)
+            if (elapsedMs >= 600_000L) {
+              // 10-minute timeout reached
+              removePendingTicket(ticket.ticket)
+              deliverBotTimeoutMessage(ticket)
+              continue
+            }
+
+            val intervalMs =
+              when {
+                elapsedMs < 20_000L -> 2_000L
+                elapsedMs < 90_000L -> 5_000L
+                else -> 15_000L
+              }
+            val lastPoll = ticketLastPollEpochMs[ticket.ticket] ?: 0L
+            if (now - lastPoll >= intervalMs) {
+              ticketLastPollEpochMs[ticket.ticket] = now
+              pollSinglePendingTicket(ticket)
+            }
+          }
+          delay(500L)
+        }
+      }
+  }
+
+  private suspend fun pollSinglePendingTicket(ticket: PendingBotTicket) {
+    val serverUrl = keyRepository.getTabletServerUrl()
+    val appToken = keyRepository.getTabletAppToken()
+    val args =
+      JSONObject().apply {
+        put("ticket", ticket.ticket)
+      }
+    val outcome =
+      tabletMcpClient.callTool(
+        serverUrl = serverUrl,
+        appToken = appToken,
+        toolName = "check_reply",
+        arguments = args,
+      )
+    logTabletCallOutcome(tool = "check_reply", outcome = outcome)
+
+    when (outcome) {
+      is TabletCallOutcome.Success -> {
+        if (!outcome.ok) {
+          // Fix #2: check_reply fail: {ok:false, error:{code,msg}, ticket, status:"failed" or "expired"}.
+          // unknown_ticket has no status field. Treat ANY ok:false as finished: remove the ticket and say "I couldn't finish that."
+          removePendingTicket(ticket.ticket)
+          val errCode = outcome.errorCode ?: outcome.status ?: "failed"
+          deliverBotFailureMessage(
+            ticket = ticket,
+            spokenLine = "I couldn't finish that.",
+            errorCode = errCode,
+            rawJson = outcome.value.toString(2),
+          )
+        } else {
+          when (outcome.status) {
+            "pending" -> {
+              // Still pending; wait for next poll tick
+            }
+            "answered" -> {
+              removePendingTicket(ticket.ticket)
+              val seconds =
+                if (outcome.value.has("seconds") && !outcome.value.isNull("seconds")) {
+                  outcome.value.optDouble("seconds", 0.0)
+                } else {
+                  ((System.currentTimeMillis() - ticket.startedAt).coerceAtLeast(0L)) / 1000.0
+                }
+              val replyObj = outcome.value.optJSONObject("reply")
+              handleAnsweredBotTicket(
+                ticket = ticket,
+                secondsTaken = seconds,
+                replyJsonObj = replyObj,
+                fullCheckReplyJson = outcome.value,
+              )
+            }
+          }
+        }
+      }
+      is TabletCallOutcome.Failure -> {
+        if (outcome.errorCode == "http_401" || outcome.errorCode == "http_403") {
+          showError(outcome.message)
+        }
+        // Keep ticket in pending list until it succeeds or hits 10-min timeout
+      }
+    }
+  }
+
+  private suspend fun deliverBotTimeoutMessage(ticket: PendingBotTicket) {
+    val line = "That's still running on the tablet — ask me to check on it in a bit."
+    getChatTurnMutex(ticket.chatId).withLock {
+      val chat = dao.getChatById(ticket.chatId) ?: return@withLock
+      val settings = RunSettings.fromJsonString(chat.runSettingsJson)
+      val cardMeta =
+        BotDetailsCardMeta(
+          bot = ticket.bot,
+          ticket = ticket.ticket,
+          seconds = 600.0,
+          rawJson =
+            JSONObject()
+              .apply {
+                put("ticket", ticket.ticket)
+                put("bot", ticket.bot)
+                put("status", "timeout_10m")
+              }
+              .toString(2),
+        )
+      val msg =
+        MessageEntity(
+          id = UUID.randomUUID().toString(),
+          chatId = chat.id,
+          role = "assistant",
+          content = line,
+          requestId = ticket.ticket,
+          interactionId = null,
+          previousInteractionId = chat.lastInteractionId,
+          model = settings.model,
+          serviceTier = settings.serviceTier,
+          status = "completed",
+          rawStepsJson = "[]",
+          createdAt = System.currentTimeMillis(),
+          chatKind = if (chat.isLabChat) "Lab" else "Rivia",
+          ruleEventsSummary = BotReplyVerifier.encodeBotDetailsCard(cardMeta),
+        )
+      dao.insertMessage(msg)
+      dao.updateChat(chat.copy(updatedAt = System.currentTimeMillis()))
+      keyRepository.appendUnsentBotLineForChat(chat.id, line)
+      speakBotDeliveredLineIfNeeded(chatId = chat.id, messageId = msg.id, line = line, settings = settings)
+    }
+  }
+
+  private suspend fun deliverBotFailureMessage(
+    ticket: PendingBotTicket,
+    spokenLine: String,
+    errorCode: String?,
+    rawJson: String,
+  ) {
+    getChatTurnMutex(ticket.chatId).withLock {
+      val chat = dao.getChatById(ticket.chatId) ?: return@withLock
+      val settings = RunSettings.fromJsonString(chat.runSettingsJson)
+      val elapsedSec =
+        ((System.currentTimeMillis() - ticket.startedAt).coerceAtLeast(0L)) / 1000.0
+      val cardMeta =
+        BotDetailsCardMeta(
+          bot = ticket.bot,
+          ticket = ticket.ticket,
+          seconds = elapsedSec,
+          rawJson = rawJson,
+          errorCode = errorCode,
+        )
+      val msg =
+        MessageEntity(
+          id = UUID.randomUUID().toString(),
+          chatId = chat.id,
+          role = "assistant",
+          content = spokenLine,
+          requestId = ticket.ticket,
+          interactionId = null,
+          previousInteractionId = chat.lastInteractionId,
+          model = settings.model,
+          serviceTier = settings.serviceTier,
+          status = "completed",
+          rawStepsJson = "[]",
+          createdAt = System.currentTimeMillis(),
+          chatKind = if (chat.isLabChat) "Lab" else "Rivia",
+          ruleEventsSummary = BotReplyVerifier.encodeBotDetailsCard(cardMeta),
+        )
+      dao.insertMessage(msg)
+      dao.updateChat(chat.copy(updatedAt = System.currentTimeMillis()))
+      keyRepository.appendUnsentBotLineForChat(chat.id, spokenLine)
+      speakBotDeliveredLineIfNeeded(
+        chatId = chat.id,
+        messageId = msg.id,
+        line = spokenLine,
+        settings = settings,
+      )
+    }
+  }
+
+  /**
+   * Section 6: Handles an answered bot ticket with the 5-point spoken-line verification,
+   * no-tools answer turn, rejected-history protection, and Details card storage.
+   */
+  private suspend fun handleAnsweredBotTicket(
+    ticket: PendingBotTicket,
+    secondsTaken: Double,
+    replyJsonObj: JSONObject?,
+    fullCheckReplyJson: JSONObject,
+  ) {
+    getChatTurnMutex(ticket.chatId).withLock {
+      val chat = dao.getChatById(ticket.chatId) ?: return@withLock
+      val settings = RunSettings.fromJsonString(chat.runSettingsJson)
+      val prettyRawJson = replyJsonObj?.toString(2) ?: fullCheckReplyJson.toString(2)
+
+      val envelope =
+        replyJsonObj?.let { BotReplyVerifier.parseReplyEnvelope(it.toString()) }
+      if (envelope == null) {
+        val spoken = "I couldn't do that."
+        val cardMeta =
+          BotDetailsCardMeta(
+            bot = ticket.bot,
+            ticket = ticket.ticket,
+            seconds = secondsTaken,
+            rawJson = prettyRawJson,
+            errorCode = "invalid_reply_envelope",
+          )
+        val msg =
+          MessageEntity(
+            id = UUID.randomUUID().toString(),
+            chatId = chat.id,
+            role = "assistant",
+            content = spoken,
+            requestId = ticket.ticket,
+            interactionId = null,
+            previousInteractionId = chat.lastInteractionId,
+            model = settings.model,
+            serviceTier = settings.serviceTier,
+            status = "completed",
+            rawStepsJson = "[]",
+            createdAt = System.currentTimeMillis(),
+            chatKind = "Lab",
+            ruleEventsSummary = BotReplyVerifier.encodeBotDetailsCard(cardMeta),
+          )
+        dao.insertMessage(msg)
+        dao.updateChat(chat.copy(updatedAt = System.currentTimeMillis()))
+        keyRepository.appendUnsentBotLineForChat(chat.id, spoken)
+        speakBotDeliveredLineIfNeeded(chat.id, msg.id, spoken, settings)
+        return@withLock
+      }
+
+      // Case 1: reply.ok is false -> Rivia says "I couldn't do that." with error.code underneath (not spoken)
+      if (!envelope.ok) {
+        val spoken = "I couldn't do that."
+        val errCode = envelope.error?.code?.takeIf { it.isNotBlank() } ?: "bot_error"
+        val cardMeta =
+          BotDetailsCardMeta(
+            bot = ticket.bot,
+            ticket = ticket.ticket,
+            seconds = secondsTaken,
+            rawJson = prettyRawJson,
+            errorCode = errCode,
+          )
+        val msg =
+          MessageEntity(
+            id = UUID.randomUUID().toString(),
+            chatId = chat.id,
+            role = "assistant",
+            content = spoken,
+            requestId = ticket.ticket,
+            interactionId = null,
+            previousInteractionId = chat.lastInteractionId,
+            model = settings.model,
+            serviceTier = settings.serviceTier,
+            status = "completed",
+            rawStepsJson = "[]",
+            createdAt = System.currentTimeMillis(),
+            chatKind = "Lab",
+            ruleEventsSummary = BotReplyVerifier.encodeBotDetailsCard(cardMeta),
+          )
+        dao.insertMessage(msg)
+        dao.updateChat(chat.copy(updatedAt = System.currentTimeMillis()))
+        keyRepository.appendUnsentBotLineForChat(chat.id, spoken)
+        speakBotDeliveredLineIfNeeded(chat.id, msg.id, spoken, settings)
+        return@withLock
+      }
+
+      // Case 2: reply.message is null OR delivery.say is false -> show the Details card only and say nothing
+      val botMsg = envelope.message
+      if (botMsg == null || !botMsg.delivery.say) {
+        val cardMeta =
+          BotDetailsCardMeta(
+            bot = ticket.bot,
+            ticket = ticket.ticket,
+            seconds = secondsTaken,
+            rawJson = prettyRawJson,
+          )
+        val msg =
+          MessageEntity(
+            id = UUID.randomUUID().toString(),
+            chatId = chat.id,
+            role = "assistant",
+            content = "",
+            requestId = ticket.ticket,
+            interactionId = null,
+            previousInteractionId = chat.lastInteractionId,
+            model = settings.model,
+            serviceTier = settings.serviceTier,
+            status = "completed",
+            rawStepsJson = "[]",
+            createdAt = System.currentTimeMillis(),
+            chatKind = "Lab",
+            ruleEventsSummary = BotReplyVerifier.encodeBotDetailsCard(cardMeta),
+          )
+        dao.insertMessage(msg)
+        dao.updateChat(chat.copy(updatedAt = System.currentTimeMillis()))
+        return@withLock
+      }
+
+      // Case 3: reply.ok is true, reply.message is non-null, and delivery.say is true
+      val priorMsgs = dao.getMessagesForChat(chat.id)
+      val prevIdBeforeAnswer =
+        chat.lastInteractionId
+          ?: priorMsgs
+            .lastOrNull { it.role == "assistant" && !it.interactionId.isNullOrBlank() }
+            ?.interactionId
+
+      val unsentLines = keyRepository.getUnsentBotLinesForChat(chat.id)
+      val earlierToldPrefix = BotReplyVerifier.formatEarlierToldNote(unsentLines)
+      val useChainedPrefix =
+        settings.store && !prevIdBeforeAnswer.isNullOrBlank() && earlierToldPrefix.isNotBlank()
+
+      val rawMsgJson =
+        replyJsonObj?.optJSONObject("message")?.toString()
+          ?: BotReplyVerifier.jsonParser.encodeToString(botMsg)
+      val promptText = BotReplyVerifier.buildAnswerTurnPrompt(rawMsgJson)
+      val apiKey = keyRepository.getGeminiKey()
+      val bundle = _loadedLayersBundle.value
+      val effectiveSettings =
+        if (bundle != null && settings.systemInstruction.isBlank() && _hasAnyLayerDraft.value) {
+          val labsSys =
+            LayerConfigManager.assembleSystemInstruction(
+              channel = "voice",
+              persona = bundle.persona,
+              style = bundle.style,
+              hardRules = bundle.hardRules,
+              spokenMaxSentences = _spokenMaxSentences.value,
+              pendingH7Notice = null,
+            )
+          settings.copy(systemInstruction = labsSys)
+        } else {
+          settings
+        }
+
+      // Fix 8.1: The answer turn sends NO tools. If the API refuses a chained turn without tools,
+      // send the tools but never run any function_call from that turn: treat it as a failed check and use fallback_text.
+      val answerAttempt =
+        runAnswerTurnGeminiCall(
+          apiKey = apiKey,
+          settings = effectiveSettings,
+          priorMessages = priorMsgs,
+          promptText = promptText,
+          previousInteractionId = prevIdBeforeAnswer,
+          earlierToldPrefix = if (useChainedPrefix) earlierToldPrefix else null,
+          includeTools = false,
+          toolsList = null,
+        )
+
+      val finalAnswerResult =
+        if (
+          answerAttempt.errorMessage != null &&
+            !prevIdBeforeAnswer.isNullOrBlank() &&
+            _tabletToolsCache.value.isNotEmpty()
+        ) {
+          runAnswerTurnGeminiCall(
+            apiKey = apiKey,
+            settings = effectiveSettings,
+            priorMessages = priorMsgs,
+            promptText = promptText,
+            previousInteractionId = prevIdBeforeAnswer,
+            earlierToldPrefix = if (useChainedPrefix) earlierToldPrefix else null,
+            includeTools = true,
+            toolsList = _tabletToolsCache.value,
+          )
+        } else {
+          answerAttempt
+        }
+
+      // Log the Gemini answer turn in Request log
+      dao.logRequestAndPrune(
+        RequestLogEntity(
+          timestamp = System.currentTimeMillis(),
+          requestId = ticket.ticket,
+          model = effectiveSettings.model,
+          status = if (finalAnswerResult.errorMessage == null) "ok" else "error",
+          serviceTier = finalAnswerResult.serviceTier,
+          inputTokens = finalAnswerResult.inputTokens,
+          outputTokens = finalAnswerResult.outputTokens,
+          thoughtTokens = finalAnswerResult.thoughtTokens,
+          latencyMs = finalAnswerResult.latencyMs,
+          error = finalAnswerResult.errorMessage,
+          chatKind = "Lab",
+          profile = "",
+          channel = "voice",
+          fingerprint = "",
+          ruleEvents = "",
+        )
+      )
+
+      val failedCheckName: String? =
+        when {
+          finalAnswerResult.calledFunction -> "unexpected_tool_call"
+          finalAnswerResult.errorMessage != null -> "gemini_error"
+          else -> {
+            val configuredNames =
+              TabletMcpClient.extractConfiguredBotNames(_tabletToolsCache.value)
+            val checkRes =
+              BotReplyVerifier.verifySpokenLine(
+                rawLine = finalAnswerResult.replyText,
+                message = botMsg,
+                configuredBotNames = configuredNames,
+              )
+            if (checkRes.passed) null else (checkRes.failedCheck ?: "verification_failed")
+          }
+        }
+
+      val finalSpokenLine: String
+      val savedInteractionId: String?
+      val savedRawStepsJson: String
+
+      if (failedCheckName == null) {
+        // Passed all 5 checks: keep the interaction in Gemini's history
+        finalSpokenLine = finalAnswerResult.replyText.trim()
+        savedInteractionId = finalAnswerResult.interactionId
+        savedRawStepsJson = finalAnswerResult.rawSteps.toString()
+
+        if (useChainedPrefix) {
+          keyRepository.clearUnsentBotLinesForChat(chat.id)
+        }
+        dao.updateChat(
+          chat.copy(
+            lastInteractionId = savedInteractionId ?: prevIdBeforeAnswer,
+            updatedAt = System.currentTimeMillis(),
+          )
+        )
+      } else {
+        // Failed a check: rejected line MUST NOT stay in Gemini's history!
+        // Keep chat.lastInteractionId at prevIdBeforeAnswer and store fallback_text as a plain Rivia message.
+        finalSpokenLine =
+          envelope.fallback_text?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "I couldn't finish that."
+        savedInteractionId = null
+        savedRawStepsJson = "[]"
+
+        dao.updateChat(
+          chat.copy(
+            lastInteractionId = prevIdBeforeAnswer,
+            updatedAt = System.currentTimeMillis(),
+          )
+        )
+        keyRepository.appendUnsentBotLineForChat(chat.id, finalSpokenLine)
+      }
+
+      val cardMeta =
+        BotDetailsCardMeta(
+          bot = ticket.bot,
+          ticket = ticket.ticket,
+          seconds = secondsTaken,
+          rawJson = prettyRawJson,
+          failedCheck = failedCheckName,
+        )
+
+      val savedMsg =
+        MessageEntity(
+          id = UUID.randomUUID().toString(),
+          chatId = chat.id,
+          role = "assistant",
+          content = finalSpokenLine,
+          thoughtSummary = finalAnswerResult.thoughtSummary,
+          requestId = ticket.ticket,
+          interactionId = savedInteractionId,
+          previousInteractionId = prevIdBeforeAnswer,
+          model = effectiveSettings.model,
+          serviceTier = finalAnswerResult.serviceTier,
+          inputTokens = finalAnswerResult.inputTokens,
+          outputTokens = finalAnswerResult.outputTokens,
+          thoughtTokens = finalAnswerResult.thoughtTokens,
+          ttftMs = finalAnswerResult.latencyMs,
+          totalTimeMs = finalAnswerResult.latencyMs,
+          status = "completed",
+          rawStepsJson = savedRawStepsJson,
+          createdAt = System.currentTimeMillis(),
+          chatKind = "Lab",
+          channel = "voice",
+          ruleEventsSummary = BotReplyVerifier.encodeBotDetailsCard(cardMeta),
+        )
+      dao.insertMessage(savedMsg)
+      speakBotDeliveredLineIfNeeded(chat.id, savedMsg.id, finalSpokenLine, effectiveSettings)
+    }
+  }
+
+  private data class AnswerTurnGeminiOutcome(
+    val replyText: String,
+    val thoughtSummary: String,
+    val interactionId: String?,
+    val serviceTier: String,
+    val inputTokens: Int,
+    val outputTokens: Int,
+    val thoughtTokens: Int,
+    val latencyMs: Long,
+    val rawSteps: JSONArray,
+    val calledFunction: Boolean,
+    val errorMessage: String?,
+  )
+
+  private suspend fun runAnswerTurnGeminiCall(
+    apiKey: String,
+    settings: RunSettings,
+    priorMessages: List<MessageEntity>,
+    promptText: String,
+    previousInteractionId: String?,
+    earlierToldPrefix: String?,
+    includeTools: Boolean,
+    toolsList: List<TabletToolDef>?,
+  ): AnswerTurnGeminiOutcome {
+    val startMs = System.currentTimeMillis()
+    val sbText = StringBuilder()
+    val sbThought = StringBuilder()
+    var interactionId: String? = null
+    var serviceTier: String = settings.serviceTier
+    var inTok = 0
+    var outTok = 0
+    var thoughtTok = 0
+    var rawSteps = JSONArray()
+    var calledFn = false
+    var errMsg: String? = null
+
+    try {
+      geminiClient.sendTurn(
+        apiKey = apiKey,
+        settings = settings,
+        channel = RiviaChannel.TYPED_CHAT,
+        priorMessages = priorMessages,
+        newUserText = promptText,
+        previousInteractionId = previousInteractionId,
+        tabletToolDefs = toolsList,
+        includeToolsOnTurn = includeTools,
+        earlierToldPrefixWhenChained = earlierToldPrefix,
+      ) { event ->
+        when (event) {
+          is GeminiStreamEvent.InteractionCreated -> {
+            interactionId = event.interactionId
+            if (event.serviceTierHeader != null) serviceTier = event.serviceTierHeader
+          }
+          is GeminiStreamEvent.TextDelta -> {
+            sbText.append(event.text)
+          }
+          is GeminiStreamEvent.ThoughtSummaryDelta -> {
+            sbThought.append(event.thoughtText)
+          }
+          is GeminiStreamEvent.ReplaceReplyText -> {
+            sbText.clear()
+            sbText.append(event.fullText)
+            if (event.fullThought.isNotBlank()) {
+              sbThought.clear()
+              sbThought.append(event.fullThought)
+            }
+          }
+          is GeminiStreamEvent.Completed -> {
+            interactionId = event.interactionId ?: interactionId
+            serviceTier = event.serviceTier
+            inTok = event.inputTokens
+            outTok = event.outputTokens
+            thoughtTok = event.thoughtTokens
+            rawSteps = event.rawSteps
+            if (
+              event.completionStatus.equals("requires_action", ignoreCase = true) ||
+                event.functionCalls.isNotEmpty()
+            ) {
+              calledFn = true
+            }
+          }
+          is GeminiStreamEvent.Error -> {
+            errMsg = keyRepository.redact(event.message)
+          }
+          else -> {}
+        }
+      }
+    } catch (e: Throwable) {
+      if (e is CancellationException) throw e
+      errMsg = keyRepository.redact(e.message ?: "Answer turn error")
+    }
+
+    val totalMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+    return AnswerTurnGeminiOutcome(
+      replyText = sbText.toString(),
+      thoughtSummary = sbThought.toString(),
+      interactionId = interactionId,
+      serviceTier = serviceTier,
+      inputTokens = inTok,
+      outputTokens = outTok,
+      thoughtTokens = thoughtTok,
+      latencyMs = totalMs,
+      rawSteps = rawSteps,
+      calledFunction = calledFn,
+      errorMessage = errMsg,
+    )
+  }
+
+  private fun speakBotDeliveredLineIfNeeded(
+    chatId: String,
+    messageId: String,
+    line: String,
+    settings: RunSettings,
+  ) {
+    if (line.isBlank()) return
+    val isLiveInThisChat =
+      _activeChatId.value == chatId && LiveSessionManager.uiState.value.isActive
+    if (isLiveInThisChat) {
+      audioPlayerManager.enqueueOrSpeakLineWithoutInterrupting(
+        messageId = messageId,
+        rawMarkdown = line,
+        isLiveChannel = true,
+      )
+    } else if (_activeChatId.value == chatId && settings.autoReadAloud) {
+      audioPlayerManager.enqueueOrSpeakLineWithoutInterrupting(
+        messageId = messageId,
+        rawMarkdown = line,
+        isLiveChannel = false,
+      )
+    }
+  }
+
+  /**
+   * Section 8: Round-trip test button on the Dev -> Bots screen:
+   * sends `ask_bot` with `bot="ard"` and `request="What does tomorrow look like? Don't write anything."`,
+   * polls `check_reply` until it answers, and shows seconds taken, the reply, and the raw JSON.
+   */
+  fun runRoundTripTest() {
+    if (_roundTripTestState.value.isRunning) return
+    viewModelScope.launch(Dispatchers.IO) {
+      _roundTripTestState.value =
+        RoundTripTestUiState(
+          isRunning = true,
+          statusText = "Sending ask_bot to ard...",
+        )
+
+      val serverUrl = keyRepository.getTabletServerUrl()
+      val appToken = keyRepository.getTabletAppToken()
+      if (!TabletMcpClient.isValidServerUrl(serverUrl) || appToken.isBlank()) {
+        _roundTripTestState.value =
+          RoundTripTestUiState(
+            isRunning = false,
+            errorText = "Configure Tablet Server URL and App token first.",
+          )
+        return@launch
+      }
+
+      val askArgs =
+        JSONObject().apply {
+          put("bot", "ard")
+          put("request", "What does tomorrow look like? Don't write anything.")
+        }
+      val askOutcome =
+        tabletMcpClient.callTool(
+          serverUrl = serverUrl,
+          appToken = appToken,
+          toolName = "ask_bot",
+          arguments = askArgs,
+        )
+      logTabletCallOutcome(tool = "ask_bot", outcome = askOutcome)
+
+      when (askOutcome) {
+        is TabletCallOutcome.Failure -> {
+          _roundTripTestState.value =
+            RoundTripTestUiState(
+              isRunning = false,
+              errorText = askOutcome.message,
+            )
+          return@launch
+        }
+        is TabletCallOutcome.Success -> {
+          if (!askOutcome.ok || askOutcome.ticket.isNullOrBlank()) {
+            val errMsgFromJson =
+              askOutcome.value.optJSONObject("error")?.optString("msg")?.takeIf { it.isNotBlank() }
+            _roundTripTestState.value =
+              RoundTripTestUiState(
+                isRunning = false,
+                rawJson = askOutcome.value.toString(2),
+                errorText =
+                  errMsgFromJson
+                    ?: askOutcome.errorCode
+                    ?: "ask_bot returned ok:false",
+              )
+            return@launch
+          }
+
+          val ticketId = askOutcome.ticket
+          val startedAt = System.currentTimeMillis()
+          _roundTripTestState.value =
+            RoundTripTestUiState(
+              isRunning = true,
+              ticket = ticketId,
+              statusText = "Waiting for reply ($ticketId)...",
+              rawJson = askOutcome.value.toString(2),
+            )
+
+          while (isActive) {
+            val elapsedMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+            if (elapsedMs >= 600_000L) {
+              _roundTripTestState.value =
+                _roundTripTestState.value.copy(
+                  isRunning = false,
+                  statusText = "Timed out after 10 minutes.",
+                  errorText = "Timed out after 10 minutes.",
+                )
+              break
+            }
+            val delayMs =
+              when {
+                elapsedMs < 20_000L -> 2_000L
+                elapsedMs < 90_000L -> 5_000L
+                else -> 15_000L
+              }
+            delay(delayMs)
+
+            val checkArgs =
+              JSONObject().apply {
+                put("ticket", ticketId)
+              }
+            val checkOutcome =
+              tabletMcpClient.callTool(
+                serverUrl = serverUrl,
+                appToken = appToken,
+                toolName = "check_reply",
+                arguments = checkArgs,
+              )
+            logTabletCallOutcome(tool = "check_reply", outcome = checkOutcome)
+
+            when (checkOutcome) {
+              is TabletCallOutcome.Failure -> {
+                _roundTripTestState.value =
+                  _roundTripTestState.value.copy(
+                    statusText = "Transient error (${checkOutcome.errorCode}), retrying...",
+                  )
+              }
+              is TabletCallOutcome.Success -> {
+                if (!checkOutcome.ok) {
+                  val checkErrMsg =
+                    checkOutcome.value
+                      .optJSONObject("error")
+                      ?.optString("msg")
+                      ?.takeIf { it.isNotBlank() }
+                  _roundTripTestState.value =
+                    RoundTripTestUiState(
+                      isRunning = false,
+                      ticket = ticketId,
+                      statusText = "Failed (${checkOutcome.errorCode ?: "error"})",
+                      rawJson = checkOutcome.value.toString(2),
+                      errorText =
+                        checkErrMsg
+                          ?: checkOutcome.errorCode
+                          ?: "I couldn't finish that.",
+                    )
+                  break
+                }
+                when (checkOutcome.status) {
+                  "pending" -> {
+                    val waited = checkOutcome.value.optDouble("waited_seconds", elapsedMs / 1000.0)
+                    _roundTripTestState.value =
+                      _roundTripTestState.value.copy(
+                        statusText =
+                          String.format(Locale.US, "Pending (%s · %.0fs)...", ticketId, waited),
+                      )
+                  }
+                  "answered" -> {
+                    val secs =
+                      checkOutcome.value.optDouble("seconds", elapsedMs / 1000.0)
+                    val replyObj = checkOutcome.value.optJSONObject("reply")
+                    val summary =
+                      replyObj?.optString("fallback_text")?.takeIf { it.isNotBlank() }
+                        ?: replyObj
+                          ?.optJSONObject("message")
+                          ?.optString("situation")
+                          ?.takeIf { it.isNotBlank() }
+                        ?: "Answered"
+                    _roundTripTestState.value =
+                      RoundTripTestUiState(
+                        isRunning = false,
+                        ticket = ticketId,
+                        statusText = "Answered",
+                        secondsTaken = secs,
+                        replySummary = summary,
+                        rawJson = (replyObj ?: checkOutcome.value).toString(2),
+                        errorText = null,
+                      )
+                    break
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   /**

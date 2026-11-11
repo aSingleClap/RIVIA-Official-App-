@@ -327,6 +327,15 @@ class EdgeSilenceTrimmer(
     candidateOnsetChunks.clear()
   }
 
+  fun clearPreSpeechBuffers() {
+    if (speechHasStarted) return
+    preRollWritePos = 0
+    preRollCount = 0
+    recognizerRingChunks.clear()
+    recognizerRingSamples = 0
+    candidateOnsetChunks.clear()
+  }
+
   private fun handlePostStartChunk(chunk512: FloatArray, snap: SileroVadTurnSnapshot) {
     if (snap.consecutiveSilenceMs == 0) {
       // Active speech chunk (prob >= endProbThreshold):
@@ -552,6 +561,7 @@ object MicSharingRecorder {
   const val WINDOW_SAMPLES_4S = 4 * SAMPLE_RATE_HZ // 64,000 samples (4.0 s @ 16 kHz)
   const val SILENT_CAPTURE_RMS_THRESHOLD = 1e-4f
   const val MAX_SAVED_WAV_CLIPS = 10
+  const val LIVE_PLAYBACK_TAIL_MS = 400L
   private const val TAG = "MicSharingRecorder"
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -562,6 +572,8 @@ object MicSharingRecorder {
   private var activeAudioRecord: AudioRecord? = null
   private val isCapturing = AtomicBoolean(false)
   private val pipeWritingAllowed = AtomicBoolean(false)
+  private val livePlaybackActive = AtomicBoolean(false)
+  private val dropFramesUntilElapsedMs = AtomicLong(0L)
   private var captureJob: Job? = null
   private var currentMode: String = "B"
   private var currentAudioSource: String = "VOICE_RECOGNITION"
@@ -574,7 +586,7 @@ object MicSharingRecorder {
   private var currentAudioRecordStarted: Boolean = false
   private val currentPipeBytesWritten = AtomicLong(0L)
   private val currentPipeClosedAtMs = AtomicLong(0L)
-  private var currentVadSpeechDetected: Boolean = false
+  @Volatile private var currentVadSpeechDetected: Boolean = false
   private var currentVadEndedTurn: Boolean = false
   private var currentVadMaxProb: Float = 0f
   private var currentSpeechDurationSec: Float = 0f
@@ -593,6 +605,55 @@ object MicSharingRecorder {
   private val pipeLock = Any()
   private var activePipeReadPfd: ParcelFileDescriptor? = null
   private var activePipeWriteStream: OutputStream? = null
+
+  /**
+   * Activates or deactivates the Live mic frame-drop gate.
+   * While [active] is true, and for [tailMs] (400 ms) after it transitions to false,
+   * AudioRecord stays running in its existing lifecycle, but read frames are dropped
+   * before reaching Silero VAD, the SpeechRecognizer pipe, or the emotion clip.
+   */
+  fun setLivePlaybackActive(active: Boolean, tailMs: Long = LIVE_PLAYBACK_TAIL_MS) {
+    if (active) {
+      livePlaybackActive.set(true)
+    } else {
+      livePlaybackActive.set(false)
+      if (tailMs > 0L) {
+        val until = android.os.SystemClock.elapsedRealtime() + tailMs
+        while (true) {
+          val cur = dropFramesUntilElapsedMs.get()
+          if (until <= cur || dropFramesUntilElapsedMs.compareAndSet(cur, until)) break
+        }
+      }
+    }
+  }
+
+  /**
+   * Immediately clears both the active playback gate and the 400 ms post-playback tail
+   * (e.g. when the user taps the orb to interrupt Rivia or when Live stops).
+   */
+  fun clearLivePlaybackGateImmediate() {
+    livePlaybackActive.set(false)
+    dropFramesUntilElapsedMs.set(0L)
+  }
+
+  /**
+   * Returns true while Rivia's audio is playing in Live or within 400 ms after it ends.
+   */
+  fun shouldDropLiveMicFrames(): Boolean {
+    if (livePlaybackActive.get()) return true
+    val until = dropFramesUntilElapsedMs.get()
+    return until > 0L && android.os.SystemClock.elapsedRealtime() < until
+  }
+
+  /**
+   * Returns true if Silero VAD has detected speech onset or active speech in the current capture turn.
+   */
+  fun isUserSpeechActiveInCurrentTurn(): Boolean {
+    if (!isCapturing.get()) return false
+    if (currentVadSpeechDetected) return true
+    val snap = activeVadManager?.getCurrentSnapshot() ?: return false
+    return snap.speechStarted || snap.consecutiveSpeechMs > 0
+  }
 
   /**
    * Formats AudioRecord.getRoutedDevice() as "<TYPE_NAME> (<productName>)" for per-turn tagging.
@@ -924,6 +985,18 @@ object MicSharingRecorder {
                   if (routed != "unknown") {
                     currentInputDevice = routed
                   }
+                }
+
+                // While Rivia's audio is playing in Live, and for 400 ms after it ends,
+                // drop the mic frames: don't feed them to Silero, the SpeechRecognizer pipe,
+                // or the emotion clip. Keep AudioRecord running.
+                if (shouldDropLiveMicFrames()) {
+                  if (!currentVadSpeechDetected) {
+                    vadStagingIndex = 0
+                    vadManager?.resetTurnState(vadConfig)
+                    edgeTrimmer?.clearPreSpeechBuffers()
+                  }
+                  continue
                 }
 
                 val bytesLen = readCount * 2

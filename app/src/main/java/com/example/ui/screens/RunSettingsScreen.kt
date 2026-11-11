@@ -730,10 +730,49 @@ fun RunSettingsScreen(
 
       // 5. Capabilities & Tools (Clean labels without raw JSON)
       item {
+        val tabletToolsUnavailable by
+          viewModel.tabletToolsUnavailable.collectAsStateWithLifecycle()
+
         SettingsCardSection(
           title = "Capabilities & Tools",
           onHelpClick = { activeHelpTopic = RiviaSettingsGuide.findTopic("tools") },
         ) {
+          // Tablet tools (Bots Pass 1 Section 3)
+          Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Tablet tools", color = RiviaText, fontWeight = FontWeight.Medium)
+                Text(
+                  "Enable ask_bot and get_tablet_battery from your tablet server",
+                  style = MaterialTheme.typography.bodySmall,
+                  color = RiviaMutedText,
+                )
+              }
+              Switch(
+                checked = currentSettings.tabletToolsEnabled,
+                onCheckedChange = {
+                  updateSettings(buildMergedSettings().copy(tabletToolsEnabled = it))
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("tablet_tools_switch"),
+              )
+            }
+            if (currentSettings.tabletToolsEnabled && tabletToolsUnavailable) {
+              Text(
+                text = "Tablet tools unavailable",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = ChivoMonoFontFamily,
+                color = RiviaWarningAmber,
+                modifier =
+                  Modifier.padding(top = 4.dp).testTag("tablet_tools_unavailable_label"),
+              )
+            }
+          }
+
           // Google Search
           Row(
             modifier = Modifier.fillMaxWidth(),
