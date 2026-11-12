@@ -101,27 +101,6 @@ class TabletMcpClient(
     }
 
     fun isValidServerUrl(raw: String): Boolean = validateServerUrl(raw).isSuccess
-
-    /**
-     * Extracts configured bot names from ask_bot's inputSchema or description (always including "ard").
-     */
-    fun extractConfiguredBotNames(tools: List<TabletToolDef>): Set<String> {
-      val names = mutableSetOf("ard")
-      val askBot = tools.firstOrNull { it.name == "ask_bot" } ?: return names
-      try {
-        val schema = JSONObject(askBot.inputSchemaJson)
-        val props = schema.optJSONObject("properties")
-        val botProp = props?.optJSONObject("bot")
-        val enumArr = botProp?.optJSONArray("enum")
-        if (enumArr != null) {
-          for (i in 0 until enumArr.length()) {
-            val v = enumArr.optString(i).trim().lowercase()
-            if (v.isNotBlank()) names.add(v)
-          }
-        }
-      } catch (_: Exception) {}
-      return names
-    }
   }
 
   private val rpcIdCounter = AtomicInteger(1)
@@ -130,8 +109,6 @@ class TabletMcpClient(
   fun filterArgumentsForTool(toolName: String, rawArguments: JSONObject): JSONObject {
     val allowedKeys: Set<String> =
       when (toolName) {
-        "check_reply" -> setOf("ticket")
-        "ask_bot" -> setOf("bot", "request")
         "get_tablet_battery" -> emptySet()
         else ->
           schemaAllowedKeysByTool[toolName]

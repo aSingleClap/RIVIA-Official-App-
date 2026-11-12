@@ -41,7 +41,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -74,12 +73,10 @@ import com.example.ui.theme.RiviaText
 import com.example.ui.theme.RiviaTextPrimary
 import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaTextTertiary
-import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlinx.coroutines.delay
 
 @Composable
 fun BotsScreen(
@@ -92,7 +89,6 @@ fun BotsScreen(
   val tabletTestRunning by viewModel.tabletTestRunning.collectAsStateWithLifecycle()
   val tabletTestResultText by viewModel.tabletTestResultText.collectAsStateWithLifecycle()
   val tabletTestIsError by viewModel.tabletTestIsError.collectAsStateWithLifecycle()
-  val pendingTickets by viewModel.pendingBotTickets.collectAsStateWithLifecycle()
   val last20Results by viewModel.last20TabletResults.collectAsStateWithLifecycle()
 
   var tabletUrlDraft by remember { mutableStateOf(savedTabletUrl) }
@@ -117,15 +113,6 @@ fun BotsScreen(
     commitTabletIfChanged()
     focusManager.clearFocus()
     onBack()
-  }
-
-  // Live 1s ticker for pending ticket waiting duration
-  var nowEpochMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-  LaunchedEffect(pendingTickets.isNotEmpty()) {
-    while (pendingTickets.isNotEmpty()) {
-      nowEpochMs = System.currentTimeMillis()
-      delay(1_000L)
-    }
   }
 
   val timeFormatter = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
@@ -159,7 +146,7 @@ fun BotsScreen(
           )
         }
         Text(
-          text = "Bots",
+          text = "Tablet",
           style = MaterialTheme.typography.titleLarge,
           color = RiviaText,
         )
@@ -308,64 +295,6 @@ fun BotsScreen(
                 color = RiviaTextPrimary,
                 fontWeight = FontWeight.SemiBold,
               )
-            }
-          }
-        }
-      }
-
-      // 2. Pending List
-      item {
-        BotsCardSection(title = "Pending list (${pendingTickets.size})") {
-          if (pendingTickets.isEmpty()) {
-            Text(
-              text = "No open tickets.",
-              style = MaterialTheme.typography.bodySmall,
-              color = RiviaTextTertiary,
-            )
-          } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              pendingTickets.forEach { t ->
-                val waitedSec = ((nowEpochMs - t.startedAt).coerceAtLeast(0L)) / 1000L
-                Surface(
-                  shape = RoundedCornerShape(12.dp),
-                  color = RiviaSurface3,
-                  border = BorderStroke(1.dp, RiviaBorder),
-                  modifier = Modifier.fillMaxWidth(),
-                ) {
-                  Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                  ) {
-                    Column(
-                      modifier = Modifier.weight(1f).padding(end = 8.dp),
-                      verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                      Text(
-                        text = "${t.bot} · ${t.ticket}",
-                        fontFamily = ChivoMonoFontFamily,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = RiviaTextPrimary,
-                      )
-                      if (t.requestText.isNotBlank()) {
-                        Text(
-                          text = t.requestText,
-                          style = MaterialTheme.typography.bodySmall,
-                          color = RiviaTextSecondary,
-                          maxLines = 2,
-                        )
-                      }
-                    }
-                    Text(
-                      text = "${waitedSec}s",
-                      fontFamily = ChivoMonoFontFamily,
-                      fontSize = 12.sp,
-                      color = RiviaWarningAmber,
-                    )
-                  }
-                }
-              }
             }
           }
         }

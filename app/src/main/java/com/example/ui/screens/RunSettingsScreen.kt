@@ -747,7 +747,7 @@ fun RunSettingsScreen(
               Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text("Tablet tools", color = RiviaText, fontWeight = FontWeight.Medium)
                 Text(
-                  "Enable ask_bot and get_tablet_battery from your tablet server",
+                  "Offer your tablet server's tools to Rivia in this chat",
                   style = MaterialTheme.typography.bodySmall,
                   color = RiviaMutedText,
                 )

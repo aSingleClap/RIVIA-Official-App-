@@ -50,7 +50,6 @@ import com.example.plugin.RiviaBridgeHolder
 import com.example.plugin.RiviaChannel
 import com.example.plugin.RiviaInternalBridge
 import com.example.security.LabMicTestPreferences
-import com.example.security.PendingBotTicket
 import com.example.security.SecureKeyRepository
 import com.example.security.VoicePreferences
 import com.example.service.LiveSessionManager
@@ -95,16 +94,6 @@ data class TabletCallRecord(
   val status: String,
   val latencyMs: Long,
   val errorCode: String?,
-)
-
-data class RoundTripTestUiState(
-  val isRunning: Boolean = false,
-  val statusText: String = "",
-  val ticket: String? = null,
-  val secondsTaken: Double? = null,
-  val replySummary: String = "",
-  val rawJson: String = "",
-  val errorText: String? = null,
 )
 
 data class EmotionBaselineSummary(
@@ -1203,13 +1192,6 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       viewModelScope,
       SharingStarted.WhileSubscribed(5000),
       "",
-    )
-
-  val pendingBotTickets: StateFlow<List<PendingBotTicket>> =
-    keyRepository.pendingBotTicketsFlow.stateIn(
-      viewModelScope,
-      SharingStarted.WhileSubscribed(5000),
-      emptyList(),
     )
 
   private val _tabletTestRunning = MutableStateFlow(false)

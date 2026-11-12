@@ -1054,13 +1054,13 @@ private fun ChatDrawerContent(
         ) {
           Icon(
             imageVector = Icons.Outlined.AccountTree,
-            contentDescription = "Bots",
+            contentDescription = "Tablet",
             tint = RiviaIconDefault,
             modifier = Modifier.size(18.dp),
           )
           Spacer(modifier = Modifier.width(8.dp))
           Text(
-            text = "Bots",
+            text = "Tablet",
             style = MaterialTheme.typography.labelLarge,
             color = RiviaTextPrimary,
           )
