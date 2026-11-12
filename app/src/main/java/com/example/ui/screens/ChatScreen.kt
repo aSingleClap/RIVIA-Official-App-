@@ -198,8 +198,6 @@ import com.example.ui.theme.RiviaWarningAmber
 import com.example.ui.theme.accentColorForMode
 import com.example.service.LiveSessionManager
 import com.example.service.LiveVoiceService
-import com.example.util.BotDetailsCardMeta
-import com.example.util.BotReplyVerifier
 import com.example.util.TextAudioTagProcessor
 import com.example.viewmodel.RiviaViewModel
 import java.text.SimpleDateFormat
@@ -3489,11 +3487,6 @@ internal fun AssistantMessageBubble(
 ) {
   val context = LocalContext.current
   var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
-  var botDetailsExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
-  val botDetails: BotDetailsCardMeta? =
-    remember(message.ruleEventsSummary) {
-      BotReplyVerifier.decodeBotDetailsCard(message.ruleEventsSummary)
-    }
 
   val orbState =
     when {
@@ -3602,103 +3595,6 @@ internal fun AssistantMessageBubble(
         )
       }
 
-      // Collapsed "Details" card for bot answers (tap to see bot name, ticket, seconds, and raw JSON)
-      if (botDetails != null) {
-        if (botDetails.ticket.isNotBlank() || botDetails.rawJson.isNotBlank()) {
-          Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = RiviaSurface2,
-            border = BorderStroke(1.dp, RiviaBorder),
-            modifier =
-              Modifier.fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .clickable { botDetailsExpanded = !botDetailsExpanded }
-                .testTag("bot_details_card"),
-          ) {
-            Column(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-              ) {
-                Text(
-                  text = "Details",
-                  style = MaterialTheme.typography.labelLarge,
-                  color = RiviaTextSecondary,
-                )
-                Icon(
-                  imageVector =
-                    if (botDetailsExpanded) Icons.Outlined.ExpandLess
-                    else Icons.Outlined.ExpandMore,
-                  contentDescription =
-                    if (botDetailsExpanded) "Collapse Details" else "Expand Details",
-                  tint = RiviaIconDefault,
-                  modifier = Modifier.size(18.dp),
-                )
-              }
-              AnimatedVisibility(visible = botDetailsExpanded) {
-                Column(
-                  modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                  verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                  if (botDetails.bot.isNotBlank()) {
-                    DetailMonoRow("Bot", botDetails.bot)
-                  }
-                  if (botDetails.ticket.isNotBlank()) {
-                    DetailMonoRow("Ticket", botDetails.ticket)
-                  }
-                  DetailMonoRow(
-                    "Seconds",
-                    String.format(Locale.US, "%.1fs", botDetails.seconds),
-                  )
-                  if (botDetails.rawJson.isNotBlank()) {
-                    Surface(
-                      color = RiviaSurface1,
-                      border = BorderStroke(1.dp, RiviaBorder),
-                      shape = RoundedCornerShape(8.dp),
-                      modifier = Modifier.fillMaxWidth(),
-                    ) {
-                      androidx.compose.foundation.text.selection.SelectionContainer {
-                        Text(
-                          text = botDetails.rawJson,
-                          fontFamily = ChivoMonoFontFamily,
-                          fontSize = 10.sp,
-                          color = RiviaTextPrimary,
-                          modifier = Modifier.padding(8.dp),
-                        )
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Failed check name or error code shown underneath (never spoken)
-        if (!botDetails.failedCheck.isNullOrBlank()) {
-          Text(
-            text = botDetails.failedCheck,
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaWarningAmber,
-            modifier = Modifier.testTag("bot_failed_check_label"),
-          )
-        }
-        if (!botDetails.errorCode.isNullOrBlank()) {
-          Text(
-            text = botDetails.errorCode,
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaErrorRed,
-            modifier = Modifier.testTag("bot_error_code_label"),
-          )
-        }
-      }
-
       // Plain API Error / H9 "No reply" Notice Display
       if (!message.errorMessage.isNullOrBlank()) {
         val isH9NoReplyNotice = message.errorMessage.startsWith("No reply")
@@ -3730,118 +3626,116 @@ internal fun AssistantMessageBubble(
         }
       }
 
-      // Quiet action row below Rivia's reply (hidden when message content is empty on a Details-only card)
-      if (message.content.isNotBlank() || botDetails == null) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(2.dp),
+      // Quiet action row below Rivia's reply
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+      ) {
+        IconButton(
+          onClick = onListen,
+          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
         ) {
+          Icon(
+            imageVector =
+              if (isSpeaking) Icons.Default.Stop
+              else Icons.AutoMirrored.Outlined.VolumeUp,
+            contentDescription =
+              if (isSpeaking) "Stop read-aloud" else "Listen with ElevenLabs",
+            tint = if (isSpeaking) RiviaIconActive else RiviaIconDefault,
+            modifier = Modifier.size(18.dp),
+          )
+        }
+
+        IconButton(
+          onClick = {
+            copyToClipboard(
+              context,
+              "Rivia reply",
+              TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
+            )
+          },
+          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.ContentCopy,
+            contentDescription = "Copy reply",
+            tint = RiviaIconDefault,
+            modifier = Modifier.size(16.dp),
+          )
+        }
+
+        IconButton(
+          onClick = {
+            val sendIntent =
+              Intent(Intent.ACTION_SEND).apply {
+                putExtra(
+                  Intent.EXTRA_TEXT,
+                  TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
+                )
+                type = "text/plain"
+              }
+            context.startActivity(Intent.createChooser(sendIntent, "Share Rivia's reply"))
+          },
+          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Share,
+            contentDescription = "Share reply",
+            tint = RiviaIconDefault,
+            modifier = Modifier.size(16.dp),
+          )
+        }
+
+        if (isLastAssistantReply && !isStreaming) {
           IconButton(
-            onClick = onListen,
+            onClick = onRegenerate,
             modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
           ) {
             Icon(
-              imageVector =
-                if (isSpeaking) Icons.Default.Stop
-                else Icons.AutoMirrored.Outlined.VolumeUp,
-              contentDescription =
-                if (isSpeaking) "Stop read-aloud" else "Listen with ElevenLabs",
-              tint = if (isSpeaking) RiviaIconActive else RiviaIconDefault,
+              imageVector = Icons.Outlined.Refresh,
+              contentDescription = "Regenerate last reply",
+              tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
           }
+        }
 
-          IconButton(
-            onClick = {
-              copyToClipboard(
-                context,
-                "Rivia reply",
-                TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
-              )
-            },
-            modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.ContentCopy,
-              contentDescription = "Copy reply",
-              tint = RiviaIconDefault,
-              modifier = Modifier.size(16.dp),
-            )
-          }
-
-          IconButton(
-            onClick = {
-              val sendIntent =
-                Intent(Intent.ACTION_SEND).apply {
-                  putExtra(
-                    Intent.EXTRA_TEXT,
-                    TextAudioTagProcessor.stripAudioTagsForScreen(message.content),
-                  )
-                  type = "text/plain"
-                }
-              context.startActivity(Intent.createChooser(sendIntent, "Share Rivia's reply"))
-            },
-            modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.Share,
-              contentDescription = "Share reply",
-              tint = RiviaIconDefault,
-              modifier = Modifier.size(16.dp),
-            )
-          }
-
-          if (isLastAssistantReply && !isStreaming) {
-            IconButton(
-              onClick = onRegenerate,
-              modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-            ) {
-              Icon(
-                imageVector = Icons.Outlined.Refresh,
-                contentDescription = "Regenerate last reply",
-                tint = RiviaIconDefault,
-                modifier = Modifier.size(18.dp),
-              )
-            }
-          }
-
-          IconButton(
-            onClick = onShowDetails,
-            modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.Info,
-              contentDescription = "Reply details",
-              tint = RiviaTextTertiary,
-              modifier = Modifier.size(16.dp),
-            )
-          }
-
-          Text(
-            text = message.requestId,
-            style = MaterialTheme.typography.labelSmall,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaTextTertiary,
-            modifier = Modifier.padding(start = 6.dp),
+        IconButton(
+          onClick = onShowDetails,
+          modifier = Modifier.size(38.dp).minimumInteractiveComponentSize(),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Info,
+            contentDescription = "Reply details",
+            tint = RiviaTextTertiary,
+            modifier = Modifier.size(16.dp),
           )
+        }
 
-          if (message.h7TrimmedFrom != null && message.h7TrimmedTo != null) {
-            Spacer(modifier = Modifier.width(6.dp))
-            Surface(
-              shape = RoundedCornerShape(50),
-              color = RiviaWarningAmber.copy(alpha = 0.16f),
-              border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.55f)),
-              modifier = Modifier.testTag("h7_trimmed_chip"),
-            ) {
-              Text(
-                text = "trimmed",
-                color = RiviaWarningAmber,
-                fontFamily = ChivoMonoFontFamily,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-              )
-            }
+        Text(
+          text = message.requestId,
+          style = MaterialTheme.typography.labelSmall,
+          fontFamily = ChivoMonoFontFamily,
+          color = RiviaTextTertiary,
+          modifier = Modifier.padding(start = 6.dp),
+        )
+
+        if (message.h7TrimmedFrom != null && message.h7TrimmedTo != null) {
+          Spacer(modifier = Modifier.width(6.dp))
+          Surface(
+            shape = RoundedCornerShape(50),
+            color = RiviaWarningAmber.copy(alpha = 0.16f),
+            border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.55f)),
+            modifier = Modifier.testTag("h7_trimmed_chip"),
+          ) {
+            Text(
+              text = "trimmed",
+              color = RiviaWarningAmber,
+              fontFamily = ChivoMonoFontFamily,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.SemiBold,
+              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            )
           }
         }
       }
@@ -4040,7 +3934,7 @@ private fun MessageDetailsDialog(
         if (
           !message.ruleEventsSummary.isNullOrBlank() &&
             message.chatKind != "Lab" &&
-            !BotReplyVerifier.isBotDetailsJson(message.ruleEventsSummary)
+            !message.ruleEventsSummary.trimStart().startsWith("{")
         ) {
           DetailMonoRow("Rule Events", message.ruleEventsSummary)
         }
