@@ -56,8 +56,6 @@ import com.example.security.VoicePreferences
 import com.example.service.LiveSessionManager
 import com.example.service.TurnRecognizerDiagnostics
 import com.example.ui.theme.AppUiMode
-import com.example.util.BotDetailsCardMeta
-import com.example.util.BotReplyVerifier
 import com.example.util.TextAudioTagProcessor
 import kotlinx.serialization.encodeToString
 import com.example.util.TurnAcousticData
