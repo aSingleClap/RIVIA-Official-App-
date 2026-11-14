@@ -2062,14 +2062,58 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun updateModePresetDefinition(updatedPreset: ModePreset) {
+    updateModePresetDefinition(updatedPreset.name, updatedPreset)
+  }
+
+  fun updateModePresetDefinition(originalName: String, updatedPreset: ModePreset) {
     viewModelScope.launch {
       val currentList = modePresets.value.toMutableList()
-      val idx = currentList.indexOfFirst { it.name == updatedPreset.name }
+      val idx = currentList.indexOfFirst { it.name == originalName }
       if (idx >= 0) {
         currentList[idx] = updatedPreset
         keyRepository.savePresetsJson(ModePreset.listToJson(currentList))
-        if (isActiveChatLab.value && currentRunSettings.value.activeModeName == updatedPreset.name) {
+        if (isActiveChatLab.value && currentRunSettings.value.activeModeName == originalName) {
           applyModePreset(updatedPreset)
+        }
+      }
+    }
+  }
+
+  fun createModePreset(newPreset: ModePreset) {
+    viewModelScope.launch {
+      val trimmedName = newPreset.name.trim()
+      if (trimmedName.isBlank()) return@launch
+      val normalized =
+        newPreset.copy(
+          name = trimmedName,
+          model = newPreset.model.trim().ifBlank { "gemini-3.8-flash" },
+        )
+      val currentList = modePresets.value.toMutableList()
+      val existingIdx = currentList.indexOfFirst { it.name.equals(trimmedName, ignoreCase = true) }
+      if (existingIdx >= 0) {
+        currentList[existingIdx] = normalized
+      } else {
+        currentList.add(normalized)
+      }
+      keyRepository.savePresetsJson(ModePreset.listToJson(currentList))
+      if (isActiveChatLab.value) {
+        applyModePreset(normalized)
+      }
+    }
+  }
+
+  fun deleteModePreset(preset: ModePreset) {
+    viewModelScope.launch {
+      val currentList = modePresets.value.toMutableList()
+      if (currentList.size <= 1) {
+        showError("At least one preset must remain.")
+        return@launch
+      }
+      val removed = currentList.removeAll { it.name == preset.name }
+      if (removed) {
+        keyRepository.savePresetsJson(ModePreset.listToJson(currentList))
+        if (isActiveChatLab.value && currentRunSettings.value.activeModeName == preset.name) {
+          currentList.firstOrNull()?.let { applyModePreset(it) }
         }
       }
     }

@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -263,6 +264,7 @@ fun ChatScreen(
   var renameDraftText by remember { mutableStateOf("") }
   var chatToDelete by remember { mutableStateOf<ChatEntity?>(null) }
   var presetToEdit by remember { mutableStateOf<ModePreset?>(null) }
+  var showCreatePresetDialog by remember { mutableStateOf(false) }
   var showRiviaChatInfoDialog by remember { mutableStateOf(false) }
   var showDevLabsModeSheet by remember { mutableStateOf(false) }
   var newChatResetToken by rememberSaveable { mutableStateOf(0) }
@@ -274,6 +276,8 @@ fun ChatScreen(
     drawerState.targetValue,
     showDevLabsModeSheet,
     showRiviaChatInfoDialog,
+    showCreatePresetDialog,
+    presetToEdit,
     chatForContextMenu,
     chatToDelete,
     messageForDetails,
@@ -283,6 +287,8 @@ fun ChatScreen(
         drawerState.targetValue == DrawerValue.Open ||
         showDevLabsModeSheet ||
         showRiviaChatInfoDialog ||
+        showCreatePresetDialog ||
+        presetToEdit != null ||
         chatForContextMenu != null ||
         chatToDelete != null ||
         messageForDetails != null
@@ -362,6 +368,11 @@ fun ChatScreen(
               focusManager.clearFocus()
               onOpenLayers(null)
             },
+            onOpenRunSettings = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              onOpenRunSettings()
+            },
             onOpenGlobalSettings = {
               keyboardController?.hide()
               focusManager.clearFocus()
@@ -403,7 +414,9 @@ fun ChatScreen(
             runSettings = runSettings,
             modePresets = modePresets,
             onSelectModePreset = viewModel::applyModePreset,
+            onCreateModePreset = { showCreatePresetDialog = true },
             onEditModePreset = { presetToEdit = it },
+            onDeleteModePreset = viewModel::deleteModePreset,
             onToggleAutoReadAloud = viewModel::toggleAutoReadAloud,
             onOpenRunSettings = onOpenRunSettings,
             onOpenGlobalSettings = onOpenGlobalSettings,
@@ -511,6 +524,12 @@ fun ChatScreen(
                 scope.launch { drawerState.close() }
                 onOpenLayers(null)
               },
+              onOpenRunSettings = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                scope.launch { drawerState.close() }
+                onOpenRunSettings()
+              },
               onOpenGlobalSettings = {
                 keyboardController?.hide()
                 focusManager.clearFocus()
@@ -555,7 +574,9 @@ fun ChatScreen(
           runSettings = runSettings,
           modePresets = modePresets,
           onSelectModePreset = viewModel::applyModePreset,
+          onCreateModePreset = { showCreatePresetDialog = true },
           onEditModePreset = { presetToEdit = it },
+          onDeleteModePreset = viewModel::deleteModePreset,
           onToggleAutoReadAloud = viewModel::toggleAutoReadAloud,
           onOpenRunSettings = onOpenRunSettings,
           onOpenGlobalSettings = onOpenGlobalSettings,
@@ -798,8 +819,9 @@ fun ChatScreen(
     )
   }
 
-  // Edit Mode Preset Dialog (Fast, Balanced, Deep; all editable)
+  // Edit Mode Preset Dialog
   presetToEdit?.let { preset ->
+    var editName by remember(preset) { mutableStateOf(preset.name) }
     var editModel by remember(preset) { mutableStateOf(preset.model) }
     var editThinking by remember(preset) { mutableStateOf(preset.thinkingLevel) }
     val allowedLevels = remember(editModel) { RunSettings.allowedThinkingLevels(editModel) }
@@ -808,15 +830,23 @@ fun ChatScreen(
       onDismissRequest = { presetToEdit = null },
       containerColor = RiviaSurface1,
       titleContentColor = RiviaTextPrimary,
-      title = { Text("Edit ${preset.name} Preset") },
+      title = { Text("Edit Preset") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          OutlinedTextField(
+            value = editName,
+            onValueChange = { editName = it },
+            label = { Text("Preset name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("edit_preset_name_input"),
+            colors = riviaTextFieldColors(),
+          )
           OutlinedTextField(
             value = editModel,
             onValueChange = { editModel = it },
             label = { Text("Model ID") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("edit_preset_model_input"),
             colors = riviaTextFieldColors(),
           )
           Text(
@@ -855,11 +885,13 @@ fun ChatScreen(
         Button(
           onClick = {
             viewModel.updateModePresetDefinition(
-              ModePreset(
-                name = preset.name,
-                model = editModel.trim(),
-                thinkingLevel = editThinking,
-              )
+              originalName = preset.name,
+              updatedPreset =
+                ModePreset(
+                  name = editName.trim().ifBlank { preset.name },
+                  model = editModel.trim().ifBlank { preset.model },
+                  thinkingLevel = editThinking,
+                ),
             )
             presetToEdit = null
           },
@@ -870,6 +902,98 @@ fun ChatScreen(
       },
       dismissButton = {
         TextButton(onClick = { presetToEdit = null }) {
+          Text("Cancel", color = RiviaTextSecondary)
+        }
+      },
+    )
+  }
+
+  // Create Mode Preset Dialog
+  if (showCreatePresetDialog) {
+    var createName by remember { mutableStateOf("") }
+    var createModel by remember { mutableStateOf("gemini-3.8-flash") }
+    var createThinking by remember { mutableStateOf("medium") }
+    val allowedLevels = remember(createModel) { RunSettings.allowedThinkingLevels(createModel) }
+
+    AlertDialog(
+      onDismissRequest = { showCreatePresetDialog = false },
+      containerColor = RiviaSurface1,
+      titleContentColor = RiviaTextPrimary,
+      title = { Text("Create Preset") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          OutlinedTextField(
+            value = createName,
+            onValueChange = { createName = it },
+            label = { Text("Preset name") },
+            placeholder = { Text("e.g. Creative, Coding, Research", color = RiviaTextTertiary) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("create_preset_name_input"),
+            colors = riviaTextFieldColors(),
+          )
+          OutlinedTextField(
+            value = createModel,
+            onValueChange = { createModel = it },
+            label = { Text("Model ID") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().testTag("create_preset_model_input"),
+            colors = riviaTextFieldColors(),
+          )
+          Text(
+            text = "Thinking level",
+            style = MaterialTheme.typography.labelLarge,
+            color = RiviaTextSecondary,
+          )
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            allowedLevels.forEach { lvl ->
+              val selected = createThinking == lvl
+              Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (selected) RiviaMint else RiviaSurface2,
+                border = BorderStroke(1.dp, if (selected) RiviaMint else RiviaBorder),
+                modifier =
+                  Modifier.clip(RoundedCornerShape(8.dp))
+                    .clickable { createThinking = lvl },
+              ) {
+                Text(
+                  text = if (lvl == "model_default") "default" else lvl,
+                  color = if (selected) RiviaOnAccent else RiviaTextPrimary,
+                  fontFamily = ChivoMonoFontFamily,
+                  fontSize = 12.sp,
+                  fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+              }
+            }
+          }
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            if (createName.isNotBlank()) {
+              viewModel.createModePreset(
+                ModePreset(
+                  name = createName.trim(),
+                  model = createModel.trim().ifBlank { "gemini-3.8-flash" },
+                  thinkingLevel = createThinking,
+                )
+              )
+              showCreatePresetDialog = false
+            }
+          },
+          enabled = createName.isNotBlank(),
+          colors = ButtonDefaults.buttonColors(containerColor = RiviaMint, contentColor = RiviaOnAccent),
+          modifier = Modifier.testTag("confirm_create_preset_button"),
+        ) {
+          Text("Create", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showCreatePresetDialog = false }) {
           Text("Cancel", color = RiviaTextSecondary)
         }
       },
@@ -894,6 +1018,7 @@ private fun ChatDrawerContent(
   onOpenLiveMode: () -> Unit,
   onOpenPipeline: () -> Unit,
   onOpenLayers: () -> Unit,
+  onOpenRunSettings: () -> Unit = {},
   onOpenGlobalSettings: () -> Unit,
   onOpenDevLabsSheet: () -> Unit = {},
 ) {
@@ -1187,8 +1312,32 @@ private fun ChatDrawerContent(
         )
       }
 
-      // Labs-only Tests row
+      // Labs-only Run settings and Tests rows (moved from Labs top bar into the drawer)
       if (appUiMode == AppUiMode.LABS) {
+        Row(
+          modifier =
+            Modifier.fillMaxWidth()
+              .height(44.dp)
+              .clickable(onClick = onOpenRunSettings)
+              .padding(horizontal = 8.dp)
+              .testTag("open_run_settings_drawer_button"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.Start,
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Tune,
+            contentDescription = "Run settings",
+            tint = Color(0xFFA3A3A3),
+            modifier = Modifier.size(17.dp),
+          )
+          Spacer(modifier = Modifier.width(12.dp))
+          Text(
+            text = "Run settings",
+            fontSize = 14.sp,
+            color = Color(0xFFEDEDED),
+          )
+        }
+
         Row(
           modifier =
             Modifier.fillMaxWidth()
@@ -1214,7 +1363,7 @@ private fun ChatDrawerContent(
         }
       }
 
-      // Settings row
+      // Settings row (flask icon)
       Row(
         modifier =
           Modifier.fillMaxWidth()
@@ -1226,7 +1375,7 @@ private fun ChatDrawerContent(
         horizontalArrangement = Arrangement.Start,
       ) {
         Icon(
-          imageVector = Icons.Outlined.Settings,
+          imageVector = Icons.Outlined.Science,
           contentDescription = "Settings",
           tint = Color(0xFFA3A3A3),
           modifier = Modifier.size(17.dp),
@@ -1489,7 +1638,9 @@ private fun ChatConversationPane(
   runSettings: RunSettings,
   modePresets: List<ModePreset>,
   onSelectModePreset: (ModePreset) -> Unit,
+  onCreateModePreset: () -> Unit = {},
   onEditModePreset: (ModePreset) -> Unit,
+  onDeleteModePreset: (ModePreset) -> Unit = {},
   onToggleAutoReadAloud: () -> Unit,
   onOpenRunSettings: () -> Unit,
   onOpenGlobalSettings: () -> Unit,
@@ -1524,6 +1675,7 @@ private fun ChatConversationPane(
   var micPermissionDeniedReason by remember { mutableStateOf<String?>(null) }
 
   var showPresetMenu by remember { mutableStateOf(false) }
+  var presetForMoreMenu by remember { mutableStateOf<String?>(null) }
   var composerText by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf("") }
   var showComposerInEmptyChat by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
   var isInDictationPanel by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
@@ -2178,7 +2330,7 @@ private fun ChatConversationPane(
           }
         }
 
-        // Secondary action strip in Top Bar (Labs only): Preset selector, Auto read-aloud, and Labs inspector buttons
+        // Secondary action strip in Top Bar (Labs only): Preset selector and Auto read-aloud
         if (appUiMode == AppUiMode.LABS) {
           Row(
             modifier =
@@ -2187,7 +2339,7 @@ private fun ChatConversationPane(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            // Labs Mode preset chip (Fast, Balanced, Deep)
+            // Labs Mode preset chip (Fast, Balanced, Deep, + custom presets)
             Box {
               Surface(
                 shape = RoundedCornerShape(18.dp),
@@ -2199,6 +2351,7 @@ private fun ChatConversationPane(
                     .clickable {
                       keyboardController?.hide()
                       focusManager.clearFocus()
+                      presetForMoreMenu = null
                       showPresetMenu = true
                     }
                     .testTag("mode_preset_chip"),
@@ -2219,48 +2372,127 @@ private fun ChatConversationPane(
 
               DropdownMenu(
                 expanded = showPresetMenu,
-                onDismissRequest = { showPresetMenu = false },
+                onDismissRequest = {
+                  presetForMoreMenu = null
+                  showPresetMenu = false
+                },
                 modifier = Modifier.background(RiviaSurface1),
               ) {
                 modePresets.forEach { preset ->
                   DropdownMenuItem(
                     text = {
-                      Column {
-                        Text(
-                          text = preset.name,
-                          color = RiviaTextPrimary,
-                          fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                          text = "${preset.model} · ${preset.thinkingLevel}",
-                          color = RiviaTextSecondary,
-                          fontFamily = ChivoMonoFontFamily,
-                          fontSize = 11.sp,
-                        )
-                      }
+                      Text(
+                        text = preset.name,
+                        color = RiviaTextPrimary,
+                        fontWeight =
+                          if (runSettings.activeModeName == preset.name) FontWeight.Bold
+                          else FontWeight.SemiBold,
+                      )
                     },
                     trailingIcon = {
-                      IconButton(
-                        onClick = {
-                          showPresetMenu = false
-                          onEditModePreset(preset)
-                        },
-                        modifier = Modifier.minimumInteractiveComponentSize(),
-                      ) {
-                        Icon(
-                          imageVector = Icons.Outlined.Edit,
-                          contentDescription = "Edit ${preset.name} preset",
-                          tint = RiviaIconDefault,
-                          modifier = Modifier.size(16.dp),
-                        )
+                      Box {
+                        IconButton(
+                          onClick = {
+                            presetForMoreMenu =
+                              if (presetForMoreMenu == preset.name) null else preset.name
+                          },
+                          modifier =
+                            Modifier.minimumInteractiveComponentSize()
+                              .testTag("preset_more_${preset.name}"),
+                        ) {
+                          Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "More options for ${preset.name}",
+                            tint = RiviaIconDefault,
+                            modifier = Modifier.size(18.dp),
+                          )
+                        }
+
+                        DropdownMenu(
+                          expanded = presetForMoreMenu == preset.name,
+                          onDismissRequest = { presetForMoreMenu = null },
+                          modifier = Modifier.background(RiviaSurface2),
+                        ) {
+                          DropdownMenuItem(
+                            leadingIcon = {
+                              Icon(
+                                imageVector = Icons.Outlined.Edit,
+                                contentDescription = "Edit preset",
+                                tint = RiviaIconDefault,
+                                modifier = Modifier.size(16.dp),
+                              )
+                            },
+                            text = {
+                              Text(
+                                text = "Edit",
+                                color = RiviaTextPrimary,
+                              )
+                            },
+                            onClick = {
+                              presetForMoreMenu = null
+                              showPresetMenu = false
+                              onEditModePreset(preset)
+                            },
+                            modifier = Modifier.testTag("preset_edit_${preset.name}"),
+                          )
+                          DropdownMenuItem(
+                            leadingIcon = {
+                              Icon(
+                                imageVector = Icons.Outlined.DeleteOutline,
+                                contentDescription = "Delete preset",
+                                tint = RiviaErrorRed,
+                                modifier = Modifier.size(16.dp),
+                              )
+                            },
+                            text = {
+                              Text(
+                                text = "Delete",
+                                color = RiviaErrorRed,
+                              )
+                            },
+                            onClick = {
+                              presetForMoreMenu = null
+                              showPresetMenu = false
+                              onDeleteModePreset(preset)
+                            },
+                            modifier = Modifier.testTag("preset_delete_${preset.name}"),
+                          )
+                        }
                       }
                     },
                     onClick = {
+                      presetForMoreMenu = null
                       showPresetMenu = false
                       onSelectModePreset(preset)
                     },
                   )
                 }
+
+                HorizontalDivider(color = RiviaBorder, thickness = 1.dp)
+
+                DropdownMenuItem(
+                  leadingIcon = {
+                    Icon(
+                      imageVector = Icons.Default.Add,
+                      contentDescription = "Create preset",
+                      tint = RiviaMint,
+                      modifier = Modifier.size(18.dp),
+                    )
+                  },
+                  text = {
+                    Text(
+                      text = "Create preset",
+                      color = RiviaMint,
+                      fontWeight = FontWeight.SemiBold,
+                    )
+                  },
+                  onClick = {
+                    presetForMoreMenu = null
+                    showPresetMenu = false
+                    onCreateModePreset()
+                  },
+                  modifier = Modifier.testTag("create_preset_menu_item"),
+                )
               }
             }
 
@@ -2279,29 +2511,6 @@ private fun ChatConversationPane(
                     if (runSettings.autoReadAloud) "Disable auto read-aloud"
                     else "Enable auto read-aloud",
                   tint = if (runSettings.autoReadAloud) RiviaIconActive else RiviaIconDefault,
-                )
-              }
-
-              IconButton(
-                onClick = { onOpenLayers(null) },
-                modifier =
-                  Modifier.minimumInteractiveComponentSize().testTag("labs_top_bar_layers_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.Science,
-                  contentDescription = "Open Labs Sandbox Layers",
-                  tint = RiviaIconDefault,
-                )
-              }
-              IconButton(
-                onClick = onOpenRunSettings,
-                modifier =
-                  Modifier.minimumInteractiveComponentSize().testTag("run_settings_gear_button"),
-              ) {
-                Icon(
-                  imageVector = Icons.Outlined.Tune,
-                  contentDescription = "Open Run settings for this Labs chat",
-                  tint = RiviaIconDefault,
                 )
               }
             }

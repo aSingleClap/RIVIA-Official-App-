@@ -44,7 +44,7 @@ data class ModePreset(
         for (i in 0 until arr.length()) {
           list.add(fromJson(arr.getJSONObject(i)))
         }
-        if (list.size == 3) list else defaultPresets()
+        if (list.isNotEmpty()) list else defaultPresets()
       } catch (_: Exception) {
         defaultPresets()
       }
