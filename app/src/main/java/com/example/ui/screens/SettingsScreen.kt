@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -26,12 +27,17 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Download
@@ -51,14 +57,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -76,13 +78,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -99,6 +104,7 @@ import com.example.ui.components.SettingHelpBottomSheet
 import com.example.ui.components.SettingHelpTopic
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
+import com.example.ui.components.copyToClipboard
 import com.example.ui.theme.AppUiMode
 import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
@@ -107,10 +113,12 @@ import com.example.ui.theme.RiviaErrorRed
 import com.example.ui.theme.RiviaIconActive
 import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMint
+import com.example.ui.theme.RiviaModeViolet
 import com.example.ui.theme.RiviaMutedText
 import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
 import com.example.ui.theme.RiviaSurface
+import com.example.ui.theme.RiviaSurface1
 import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaSurface3
 import com.example.ui.theme.RiviaText
@@ -118,12 +126,259 @@ import com.example.ui.theme.RiviaTextPrimary
 import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
+import com.example.ui.theme.accentColorForMode
 import com.example.viewmodel.RiviaViewModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
+
+enum class SettingsSubPicker {
+  HER_VOICE,
+  READ_ALOUD_MODEL,
+  LIVE_MODEL,
+  LANGUAGE,
+  AUDIO_QUALITY,
+  MIC_CAPTURE_MODE,
+}
+
+data class SettingsOptionItem(
+  val id: String,
+  val title: String,
+  val badge: String? = null,
+  val description: String,
+  val selected: Boolean,
+  val enabled: Boolean = true,
+  val previewUrl: String? = null,
+)
+
+@Composable
+fun SettingsOptionPickerScreen(
+  title: String,
+  subtitle: String? = null,
+  options: List<SettingsOptionItem>,
+  headerActionLabel: String? = null,
+  headerActionEnabled: Boolean = true,
+  onHeaderAction: (() -> Unit)? = null,
+  onPreview: ((String) -> Unit)? = null,
+  footerContent: (@Composable () -> Unit)? = null,
+  onSelect: (SettingsOptionItem) -> Unit,
+  onBack: () -> Unit,
+) {
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val focusManager = LocalFocusManager.current
+  LaunchedEffect(Unit) {
+    keyboardController?.hide()
+    focusManager.clearFocus()
+  }
+
+  BackHandler(onBack = onBack)
+
+  Surface(
+    color = RiviaBackground,
+    modifier =
+      Modifier.fillMaxSize()
+        .background(RiviaBackground)
+        .statusBarsPadding()
+        .navigationBarsPadding(),
+  ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+      // Top header bar
+      Surface(color = RiviaBackground, modifier = Modifier.fillMaxWidth()) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.weight(1f),
+          ) {
+            IconButton(
+              onClick = onBack,
+              modifier = Modifier.minimumInteractiveComponentSize(),
+            ) {
+              Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
+                tint = RiviaTextPrimary,
+              )
+            }
+            Text(
+              text = title,
+              style = MaterialTheme.typography.titleLarge,
+              fontWeight = FontWeight.SemiBold,
+              color = RiviaTextPrimary,
+            )
+          }
+
+          if (headerActionLabel != null && onHeaderAction != null) {
+            OutlinedButton(
+              onClick = onHeaderAction,
+              enabled = headerActionEnabled,
+              shape = RoundedCornerShape(50),
+              border = BorderStroke(1.dp, RiviaBorder),
+              colors =
+                ButtonDefaults.outlinedButtonColors(
+                  containerColor = RiviaSurface2,
+                  contentColor = RiviaTextPrimary,
+                ),
+              contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+              modifier = Modifier.minimumInteractiveComponentSize().padding(end = 6.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Outlined.Refresh,
+                contentDescription = headerActionLabel,
+                tint = RiviaIconDefault,
+                modifier = Modifier.size(15.dp),
+              )
+              Spacer(modifier = Modifier.width(6.dp))
+              Text(
+                text = headerActionLabel,
+                color = RiviaTextPrimary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+              )
+            }
+          }
+        }
+      }
+
+      LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        if (!subtitle.isNullOrBlank()) {
+          item {
+            Text(
+              text = subtitle,
+              color = RiviaTextSecondary,
+              fontSize = 13.sp,
+              lineHeight = 18.sp,
+              modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            )
+          }
+        }
+
+        items(options, key = { it.id }) { item ->
+          Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = if (item.selected) RiviaSurface2 else RiviaSurface1,
+            border =
+              BorderStroke(
+                1.dp,
+                if (item.selected) RiviaMint.copy(alpha = 0.85f)
+                else RiviaBorder.copy(alpha = 0.75f),
+              ),
+            modifier =
+              Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable(enabled = item.enabled) { onSelect(item) },
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(16.dp),
+              verticalAlignment = Alignment.Top,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                  Text(
+                    text = item.title,
+                    color = if (item.enabled) RiviaTextPrimary else RiviaTextTertiary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  if (!item.badge.isNullOrBlank()) {
+                    Surface(
+                      shape = RoundedCornerShape(6.dp),
+                      color = RiviaSurface3,
+                      border = BorderStroke(1.dp, RiviaBorder),
+                    ) {
+                      Text(
+                        text = item.badge,
+                        color = RiviaTextSecondary,
+                        fontFamily = ChivoMonoFontFamily,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                      )
+                    }
+                  }
+                }
+                Text(
+                  text = item.description,
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                  lineHeight = 18.sp,
+                )
+              }
+
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                if (!item.previewUrl.isNullOrBlank() && onPreview != null) {
+                  Surface(
+                    shape = CircleShape,
+                    color = RiviaSurface3,
+                    border = BorderStroke(1.dp, RiviaBorder),
+                    modifier =
+                      Modifier.size(34.dp)
+                        .clip(CircleShape)
+                        .clickable { onPreview(item.previewUrl) },
+                  ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                      Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Preview ${item.title}",
+                        tint = if (item.selected) RiviaMint else RiviaTextPrimary,
+                        modifier = Modifier.size(18.dp),
+                      )
+                    }
+                  }
+                }
+
+                Surface(
+                  shape = CircleShape,
+                  color = if (item.selected) RiviaMint else Color.Transparent,
+                  border =
+                    BorderStroke(
+                      1.5.dp,
+                      if (item.selected) RiviaMint else RiviaBorder,
+                    ),
+                  modifier = Modifier.size(24.dp),
+                ) {
+                  if (item.selected) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                      Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Selected",
+                        tint = RiviaOnAccent,
+                        modifier = Modifier.size(15.dp),
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if (footerContent != null) {
+          item { footerContent() }
+        }
+      }
+    }
+  }
+}
 
 @Composable
 fun SettingsScreen(
@@ -134,9 +389,15 @@ fun SettingsScreen(
   val focusManager = LocalFocusManager.current
   val appUiMode by viewModel.appUiMode.collectAsStateWithLifecycle()
 
+  var activeSubPicker by rememberSaveable { mutableStateOf<SettingsSubPicker?>(null) }
+
   BackHandler {
     focusManager.clearFocus()
-    onBack()
+    if (activeSubPicker != null) {
+      activeSubPicker = null
+    } else {
+      onBack()
+    }
   }
 
   var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -144,10 +405,8 @@ fun SettingsScreen(
     remember(appUiMode) {
       when (appUiMode) {
         AppUiMode.RIVIA -> listOf("Voice", "Backup")
-        AppUiMode.LABS ->
-          listOf("Keys & Data", "Voice (Labs)", "Plug-ins", "Labs & VAD", "Request Log")
-        AppUiMode.DEV ->
-          listOf("Keys & Data", "Voice", "Plug-ins", "Mic & VAD", "Request Log")
+        AppUiMode.LABS -> listOf("Keys", "Voice", "Plug-ins", "Mic", "Log")
+        AppUiMode.DEV -> listOf("Keys", "Voice", "Plug-ins", "Mic", "Log")
       }
     }
   val safeSelectedTab = selectedTab.coerceIn(0, tabs.lastIndex)
@@ -162,186 +421,242 @@ fun SettingsScreen(
   val audioError by viewModel.audioPlayerManager.lastAudioError.collectAsStateWithLifecycle()
   val audioNotice by viewModel.audioPlayerManager.lastAudioNotice.collectAsStateWithLifecycle()
 
+  val keyboardController = LocalSoftwareKeyboardController.current
   var activeHelpTopic by remember { mutableStateOf<SettingHelpTopic?>(null) }
   var showFullGuideSheet by remember { mutableStateOf(false) }
+  var showDevLabsModeSheet by remember { mutableStateOf(false) }
 
-  val modeBadgeLabel =
-    when (appUiMode) {
-      AppUiMode.RIVIA -> "RIVIA"
-      AppUiMode.DEV -> "DEV · RIVIA INTERNALS"
-      AppUiMode.LABS -> "LABS · SANDBOX"
-    }
-
-  Column(
-    modifier =
-      Modifier.fillMaxSize()
-        .background(RiviaBackground)
-        .statusBarsPadding()
-        .navigationBarsPadding()
-  ) {
-    // Top bar (clean header with mode badge and Guide button)
-    Surface(color = RiviaBackground, modifier = Modifier.fillMaxWidth()) {
-      Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          IconButton(
-            onClick = {
-              focusManager.clearFocus()
-              onBack()
-            },
-            modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_back_button"),
-          ) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-              contentDescription = "Back to chat",
-              tint = RiviaText,
-            )
-          }
-          Text(
-            text = "Settings",
-            style = MaterialTheme.typography.titleLarge,
-            color = RiviaText,
-          )
-          Surface(
-            shape = RoundedCornerShape(50),
-            color = RiviaSurface2,
-            border = BorderStroke(1.dp, RiviaBorder),
-            modifier = Modifier.testTag("settings_mode_badge"),
-          ) {
-            Text(
-              text = modeBadgeLabel,
-              color = RiviaTextSecondary,
-              fontFamily = ChivoMonoFontFamily,
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Bold,
-              modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
-            )
-          }
-        }
-
-        GuideHeaderButton(
-          onClick = { showFullGuideSheet = true },
-          modifier = Modifier.padding(end = 8.dp),
-        )
-      }
-    }
-
-    // Tabs: Voice + Backup in Rivia mode; full 5-tab bar in Dev & Labs
-    ScrollableTabRow(
-      selectedTabIndex = safeSelectedTab,
-      containerColor = RiviaBackground,
-      contentColor = RiviaTextPrimary,
-      edgePadding = 12.dp,
-      indicator = { tabPositions ->
-        if (safeSelectedTab < tabPositions.size) {
-          TabRowDefaults.SecondaryIndicator(
-            modifier =
-              Modifier.tabIndicatorOffset(tabPositions[safeSelectedTab])
-                .testTag("settings_selected_tab_indicator"),
-            color = RiviaMint,
-          )
-        }
-      },
-      divider = { HorizontalDivider(color = RiviaBorder) },
+  LaunchedEffect(activeSubPicker, activeHelpTopic, showFullGuideSheet, showDevLabsModeSheet) {
+    if (
+      activeSubPicker != null ||
+        activeHelpTopic != null ||
+        showFullGuideSheet ||
+        showDevLabsModeSheet
     ) {
-      tabs.forEachIndexed { idx, title ->
-        Tab(
-          selected = safeSelectedTab == idx,
-          onClick = {
-            focusManager.clearFocus()
-            selectedTab = idx
-          },
-          modifier =
-            Modifier.minimumInteractiveComponentSize()
-              .testTag("settings_tab_${title.lowercase().replace(" ", "_")}"),
-          text = {
-            Text(
-              text = title,
-              color = if (safeSelectedTab == idx) RiviaTextPrimary else RiviaTextSecondary,
-              fontWeight = if (safeSelectedTab == idx) FontWeight.SemiBold else FontWeight.Normal,
-            )
-          },
-        )
-      }
+      keyboardController?.hide()
+      focusManager.clearFocus()
     }
+  }
 
-    // Plain API Error / Status Banner
-    val activeBanner = audioError ?: audioNotice ?: statusBanner
-    if (!activeBanner.isNullOrBlank()) {
-      val err = audioError != null || (audioNotice == null && isErrorBanner)
-      Surface(
-        color = RiviaSurface,
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-      ) {
+  val modeBadgeLabel = appUiMode.displayName
+  val modeBadgeColor = accentColorForMode(appUiMode)
+
+  val activeTabTitle = tabs.getOrElse(safeSelectedTab) { "Settings" }
+
+  Box(modifier = Modifier.fillMaxSize().background(RiviaBackground)) {
+    Column(
+      modifier =
+        Modifier.fillMaxSize()
+          .background(RiviaBackground)
+          .statusBarsPadding()
+          .navigationBarsPadding()
+    ) {
+      // Sleek Header: Back arrow + Active Tab Title on left, Mode pill badge + Help (?) button on right
+      Surface(color = RiviaBackground, modifier = Modifier.fillMaxWidth()) {
         Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.SpaceBetween,
         ) {
           Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            StatusShape(
-              status = if (err) StatusType.ERROR else StatusType.OK,
-              size = 10.dp,
-            )
+            IconButton(
+              onClick = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                onBack()
+              },
+              modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_back_button"),
+            ) {
+              Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back to chat",
+                tint = RiviaTextPrimary,
+              )
+            }
             Text(
-              text = activeBanner,
-              style = MaterialTheme.typography.bodySmall,
-              color = if (err) RiviaErrorRed else RiviaText,
+              text = activeTabTitle,
+              style = MaterialTheme.typography.titleLarge,
+              fontWeight = FontWeight.SemiBold,
+              color = RiviaTextPrimary,
             )
           }
-          TextButton(onClick = { viewModel.clearStatusBanner() }) {
-            Text("Dismiss", color = RiviaMutedText, fontSize = 12.sp)
+
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(end = 6.dp),
+          ) {
+            Surface(
+              shape = RoundedCornerShape(50),
+              color = Color.Transparent,
+              border = BorderStroke(1.dp, RiviaModeViolet),
+              modifier =
+                Modifier.clip(RoundedCornerShape(50))
+                  .clickable {
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                    showDevLabsModeSheet = true
+                  }
+                  .testTag("settings_mode_badge"),
+            ) {
+              Text(
+                text = modeBadgeLabel,
+                color = modeBadgeColor,
+                fontFamily = ChivoMonoFontFamily,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+              )
+            }
+
+            GuideHeaderButton(
+              onClick = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                showFullGuideSheet = true
+              },
+            )
           }
+        }
+      }
+
+      // Sleek Pill Tab Bar
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement =
+          if (tabs.size <= 2) Arrangement.spacedBy(10.dp) else Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        tabs.forEachIndexed { idx, title ->
+          val isSelected = safeSelectedTab == idx
+          Surface(
+            shape = RoundedCornerShape(50),
+            color = if (isSelected) RiviaMint else Color.Transparent,
+            modifier =
+              Modifier.clip(RoundedCornerShape(50))
+                .clickable {
+                  focusManager.clearFocus()
+                  activeSubPicker = null
+                  selectedTab = idx
+                }
+                .then(
+                  if (isSelected) Modifier.testTag("settings_selected_tab_indicator")
+                  else Modifier
+                )
+                .testTag("settings_tab_${title.lowercase().replace(" ", "_")}"),
+          ) {
+            Text(
+              text = title,
+              color = if (isSelected) RiviaOnAccent else RiviaTextSecondary,
+              fontSize = 14.sp,
+              fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+              modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+          }
+        }
+      }
+
+      // Plain API Error / Status Banner
+      val activeBanner = audioError ?: audioNotice ?: statusBanner
+      if (!activeBanner.isNullOrBlank()) {
+        val err = audioError != null || (audioNotice == null && isErrorBanner)
+        Surface(
+          color = RiviaSurface1,
+          shape = RoundedCornerShape(14.dp),
+          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.weight(1f),
+            ) {
+              StatusShape(
+                status = if (err) StatusType.ERROR else StatusType.OK,
+                size = 10.dp,
+              )
+              Text(
+                text = activeBanner,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (err) RiviaErrorRed else RiviaText,
+              )
+            }
+            TextButton(onClick = { viewModel.clearStatusBanner() }) {
+              Text("Dismiss", color = RiviaMutedText, fontSize = 12.sp)
+            }
+          }
+        }
+      }
+
+      if (appUiMode == AppUiMode.RIVIA) {
+        when (safeSelectedTab) {
+          0 ->
+            VoiceSettingsTab(
+              viewModel = viewModel,
+              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+              onOpenSubPicker = { activeSubPicker = it },
+            )
+          1 ->
+            RiviaBackupTab(
+              viewModel = viewModel,
+              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+            )
+        }
+      } else {
+        when (safeSelectedTab) {
+          0 ->
+            KeysAndBackupTab(
+              viewModel = viewModel,
+              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+            )
+          1 ->
+            VoiceSettingsTab(
+              viewModel = viewModel,
+              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+              onOpenSubPicker = { activeSubPicker = it },
+            )
+          2 -> PluginsTab()
+          3 ->
+            DefaultsLauncherTab(
+              viewModel = viewModel,
+              onOpenDefaultRunSettings = onOpenDefaultRunSettings,
+              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+              onOpenSubPicker = { activeSubPicker = it },
+            )
+          4 -> RequestLogTab(viewModel = viewModel)
         }
       }
     }
 
-    if (appUiMode == AppUiMode.RIVIA) {
-      when (safeSelectedTab) {
-        0 ->
-          VoiceSettingsTab(
-            viewModel = viewModel,
-            onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-          )
-        1 ->
-          RiviaBackupTab(
-            viewModel = viewModel,
-            onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-          )
-      }
-    } else {
-      when (safeSelectedTab) {
-        0 ->
-          KeysAndBackupTab(
-            viewModel = viewModel,
-            onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-          )
-        1 ->
-          VoiceSettingsTab(
-            viewModel = viewModel,
-            onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-          )
-        2 -> PluginsTab()
-        3 ->
-          DefaultsLauncherTab(
-            viewModel = viewModel,
-            onOpenDefaultRunSettings = onOpenDefaultRunSettings,
-            onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-          )
-        4 -> RequestLogTab(viewModel = viewModel)
-      }
+    // Separate full-screen vertical list picker when a dropdown/selector item is tapped
+    activeSubPicker?.let { subPicker ->
+      SettingsSubPickerHost(
+        subPicker = subPicker,
+        viewModel = viewModel,
+        onBack = { activeSubPicker = null },
+      )
     }
+  }
+
+  if (showDevLabsModeSheet) {
+    DevLabsModeSheet(
+      currentMode = appUiMode,
+      onSelectMode = { mode ->
+        showDevLabsModeSheet = false
+        viewModel.setAppUiMode(mode)
+      },
+      onDismiss = { showDevLabsModeSheet = false },
+    )
   }
 
   if (activeHelpTopic != null || showFullGuideSheet) {
@@ -1054,25 +1369,504 @@ fun computeInstalledAppSignatureSha256(context: android.content.Context): String
   }
 }
 
+private fun friendlyElevenModelName(modelId: String): String {
+  return when (modelId) {
+    "eleven_v4" -> "Eleven v4"
+    "eleven_v4_turbo" -> "Eleven v4 Turbo"
+    "eleven_v3" -> "Eleven v3"
+    "eleven_flash_v2_5" -> "Eleven Flash v2.5"
+    "eleven_multilingual_v2" -> "Eleven Multilingual v2"
+    "eleven_turbo_v2_5" -> "Eleven Turbo v2.5"
+    else -> modelId
+  }
+}
+
+private fun elevenModelDescription(
+  modelId: String,
+  isLive: Boolean,
+  apiDescription: String?,
+): String {
+  val base =
+    when (modelId) {
+      "eleven_v4" ->
+        if (isLive) {
+          "Flagship expressive model. Highest emotional range, natural pacing, and automatic performance of [softly] and [laughs] audio tags, with slightly higher latency than v4 Turbo."
+        } else {
+          "Flagship expressive model (Default for Read aloud). Highest emotional range, natural pacing, and automatic performance of [softly] and [laughs] audio tags. Manages style and speed automatically."
+        }
+      "eleven_v4_turbo" ->
+        if (isLive) {
+          "Low-latency expressive v4 model (Default for Live conversations). Preserves v4's natural expressiveness and audio tag support with fast streaming turnaround."
+        } else {
+          "Low-latency expressive v4 model. Delivers v4 vocal quality and audio tag support with faster time-to-first-audio."
+        }
+      "eleven_v3" ->
+        "Expressive generation model with broad vocal range, rich inflection, and natural conversational prosody."
+      "eleven_flash_v2_5" ->
+        "Ultra-low-latency model (~75 ms) engineered for instant real-time turn-taking across 32 languages. Supports manual Style and Speed sliders."
+      "eleven_multilingual_v2" ->
+        "High-stability, studio-grade synthesis across 29 languages with consistent tone and manual Style and Speed controls."
+      "eleven_turbo_v2_5" ->
+        "Balanced low-latency multilingual model (~250 ms) with manual Style and Speed controls."
+      else -> apiDescription?.takeIf { it.isNotBlank() } ?: "ElevenLabs speech synthesis model ($modelId)."
+    }
+  return base
+}
+
+private fun deliveryDescriptor(stability: Float): String {
+  return when {
+    stability < 0.35f -> "Expressive"
+    stability <= 0.65f -> "Balanced"
+    else -> "Steady"
+  }
+}
+
+private fun likenessDescriptor(similarity: Float): String {
+  return when {
+    similarity < 0.45f -> "Loose"
+    similarity <= 0.80f -> "Close"
+    else -> "Exact"
+  }
+}
+
+private data class LanguageOptionSpec(
+  val code: String,
+  val title: String,
+  val description: String,
+)
+
+private val LANGUAGE_OPTION_SPECS =
+  listOf(
+    LanguageOptionSpec(
+      code = "en-US",
+      title = "English (US)",
+      description = "American English speech recognition (Default). Tuned for US accents, idioms, and conversational phrasing.",
+    ),
+    LanguageOptionSpec(
+      code = "en-GB",
+      title = "English (UK)",
+      description = "British English speech recognition tuned for UK accents and vocabulary.",
+    ),
+    LanguageOptionSpec(
+      code = "en-AU",
+      title = "English (AU)",
+      description = "Australian English speech recognition tuned for Australian accents and phrasing.",
+    ),
+    LanguageOptionSpec(
+      code = "en-CA",
+      title = "English (CA)",
+      description = "Canadian English speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "es-US",
+      title = "Spanish (US)",
+      description = "Latin American and US Spanish speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "es-ES",
+      title = "Spanish (ES)",
+      description = "Castilian Spanish speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "fr-FR",
+      title = "French",
+      description = "Standard French speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "de-DE",
+      title = "German",
+      description = "Standard German speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "it-IT",
+      title = "Italian",
+      description = "Standard Italian speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "pt-BR",
+      title = "Portuguese (BR)",
+      description = "Brazilian Portuguese speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "ja-JP",
+      title = "Japanese",
+      description = "Japanese speech recognition.",
+    ),
+    LanguageOptionSpec(
+      code = "ko-KR",
+      title = "Korean",
+      description = "Korean speech recognition.",
+    ),
+  )
+
+private fun friendlyLanguageLabel(code: String): String {
+  val trimmed = code.trim()
+  return LANGUAGE_OPTION_SPECS.firstOrNull { it.code.equals(trimmed, ignoreCase = true) }?.title
+    ?: trimmed.ifBlank { "English (US)" }
+}
+
+private fun friendlyAudioQualityLabel(format: String): String {
+  return when (format) {
+    "mp3_44100_192" -> "Highest · 192 kbps"
+    "mp3_44100_128" -> "High · 128 kbps"
+    "mp3_44100_96" -> "Standard · 96 kbps"
+    "mp3_44100_64" -> "Compact · 64 kbps"
+    "mp3_44100_32" -> "Low · 32 kbps"
+    "mp3_22050_32" -> "22 kHz · 32 kbps"
+    else -> format
+  }
+}
+
+private fun audioQualityDescription(format: String): String {
+  return when (format) {
+    "mp3_44100_192" ->
+      "44.1 kHz MP3 at 192 kbps. Maximum studio vocal clarity with the highest bandwidth usage (requires Creator+ tier on ElevenLabs)."
+    "mp3_44100_128" ->
+      "44.1 kHz MP3 at 128 kbps (Default). Crisp, full-range vocal fidelity balanced for everyday Wi-Fi and mobile data."
+    "mp3_44100_96" ->
+      "44.1 kHz MP3 at 96 kbps. Preserves full 44.1 kHz sample rate with ~25% smaller audio downloads."
+    "mp3_44100_64" ->
+      "44.1 kHz MP3 at 64 kbps. Faster streaming over congested or weak cellular connections with mild compression."
+    "mp3_44100_32" ->
+      "44.1 kHz MP3 at 32 kbps. Low data usage for constrained connections."
+    "mp3_22050_32" ->
+      "22.05 kHz narrowband MP3 at 32 kbps. Smallest possible audio payload for the fastest time-to-first-byte on slow networks."
+    else -> "ElevenLabs MP3 output format ($format)."
+  }
+}
+
+private fun voiceCategoryDescription(category: String, voiceId: String): String {
+  return when (category.lowercase(Locale.US)) {
+    "professional" ->
+      "Professional voice clone ($voiceId) · Studio-grade clone trained on extended audio. Supports Professional clone strength tuning on Eleven v4."
+    "cloned", "instant" ->
+      "Instant voice clone ($voiceId) · Custom cloned voice from your ElevenLabs library."
+    "generated", "designed" ->
+      "Voice Design custom voice ($voiceId) · Custom synthesized voice profile from your ElevenLabs library."
+    "premade" ->
+      "Premade ElevenLabs voice ($voiceId) · Standard library voice."
+    else ->
+      if (category.isNotBlank()) {
+        "${category.replaceFirstChar { it.uppercase() }} voice ($voiceId) from your ElevenLabs account."
+      } else {
+        "Custom ElevenLabs voice ($voiceId)."
+      }
+  }
+}
+
+@Composable
+private fun SettingsSubPickerHost(
+  subPicker: SettingsSubPicker,
+  viewModel: RiviaViewModel,
+  onBack: () -> Unit,
+) {
+  val context = LocalContext.current
+  val focusManager = LocalFocusManager.current
+  val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
+  val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
+  val elevenModels by viewModel.elevenModels.collectAsStateWithLifecycle()
+  val isLoadingVoices by viewModel.isLoadingVoices.collectAsStateWithLifecycle()
+  val labMicPrefs by viewModel.labMicTestPreferences.collectAsStateWithLifecycle()
+  val modeBRuntimeNote by MicSharingRecorder.modeBRuntimeNote.collectAsStateWithLifecycle()
+
+  val availableModelIds =
+    remember(elevenModels) {
+      val fromApi = elevenModels.map { it.modelId }
+      (listOf(
+          "eleven_v4",
+          "eleven_v4_turbo",
+          "eleven_v3",
+          "eleven_flash_v2_5",
+          "eleven_multilingual_v2",
+        ) + fromApi)
+        .distinct()
+    }
+
+  when (subPicker) {
+    SettingsSubPicker.HER_VOICE -> {
+      LaunchedEffect(Unit) {
+        if (personalVoices.isEmpty() && viewModel.elevenLabsKey.value.isNotBlank()) {
+          viewModel.refreshElevenLabsVoicesAndModels()
+        }
+      }
+      val options =
+        remember(personalVoices, voicePrefs.voiceId) {
+          personalVoices.map { v ->
+            SettingsOptionItem(
+              id = v.voiceId,
+              title = v.name,
+              badge = v.category.ifBlank { "custom" },
+              description = voiceCategoryDescription(v.category, v.voiceId),
+              selected = v.voiceId == voicePrefs.voiceId,
+              previewUrl = v.previewUrl,
+            )
+          }
+        }
+      SettingsOptionPickerScreen(
+        title = "Her voice",
+        subtitle =
+          "Select a personal voice from your ElevenLabs account. Tap the play button on any option to hear a preview.",
+        options = options,
+        headerActionLabel = if (isLoadingVoices) "Loading..." else "Refresh",
+        headerActionEnabled = !isLoadingVoices,
+        onHeaderAction = { viewModel.refreshElevenLabsVoicesAndModels() },
+        onPreview = { url -> viewModel.audioPlayerManager.playPreviewUrl(url) },
+        footerContent = {
+          if (personalVoices.isEmpty()) {
+            Surface(
+              shape = RoundedCornerShape(18.dp),
+              color = RiviaSurface1,
+              border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+              modifier = Modifier.fillMaxWidth(),
+            ) {
+              Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                Text(
+                  text =
+                    if (isLoadingVoices) "Loading your personal voices..."
+                    else "No personal voices loaded yet",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text =
+                    "Make sure your ElevenLabs API key is saved in Keys, then tap Refresh above to fetch your custom and cloned voices.",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+            }
+          }
+        },
+        onSelect = { selectedItem ->
+          personalVoices.firstOrNull { it.voiceId == selectedItem.id }?.let { v ->
+            viewModel.selectElevenLabsVoice(v)
+          }
+          onBack()
+        },
+        onBack = onBack,
+      )
+    }
+
+    SettingsSubPicker.READ_ALOUD_MODEL -> {
+      val options =
+        remember(availableModelIds, elevenModels, voicePrefs.readAloudModelId) {
+          availableModelIds.map { mId ->
+            val apiModel = elevenModels.firstOrNull { it.modelId == mId }
+            SettingsOptionItem(
+              id = mId,
+              title = friendlyElevenModelName(mId),
+              badge = mId,
+              description = elevenModelDescription(mId, isLive = false, apiDescription = apiModel?.description),
+              selected = voicePrefs.readAloudModelId == mId,
+            )
+          }
+        }
+      SettingsOptionPickerScreen(
+        title = "Read aloud",
+        subtitle =
+          "Choose the ElevenLabs speech synthesis model used when reading chat replies aloud.",
+        options = options,
+        onSelect = { item ->
+          viewModel.updateVoicePrefs { it.copy(readAloudModelId = item.id) }
+          onBack()
+        },
+        onBack = onBack,
+      )
+    }
+
+    SettingsSubPicker.LIVE_MODEL -> {
+      val options =
+        remember(availableModelIds, elevenModels, voicePrefs.liveModelId) {
+          availableModelIds.map { mId ->
+            val apiModel = elevenModels.firstOrNull { it.modelId == mId }
+            SettingsOptionItem(
+              id = mId,
+              title = friendlyElevenModelName(mId),
+              badge = mId,
+              description = elevenModelDescription(mId, isLive = true, apiDescription = apiModel?.description),
+              selected = voicePrefs.liveModelId == mId,
+            )
+          }
+        }
+      SettingsOptionPickerScreen(
+        title = "Live conversations",
+        subtitle =
+          "Choose the ElevenLabs model used for real-time voice streaming during Live conversations.",
+        options = options,
+        onSelect = { item ->
+          viewModel.updateVoicePrefs { it.copy(liveModelId = item.id) }
+          onBack()
+        },
+        onBack = onBack,
+      )
+    }
+
+    SettingsSubPicker.LANGUAGE -> {
+      var customCodeDraft by remember(voicePrefs.sttLanguage) {
+        mutableStateOf(voicePrefs.sttLanguage)
+      }
+      val options =
+        remember(voicePrefs.sttLanguage) {
+          LANGUAGE_OPTION_SPECS.map { spec ->
+            SettingsOptionItem(
+              id = spec.code,
+              title = spec.title,
+              badge = spec.code,
+              description = spec.description,
+              selected = voicePrefs.sttLanguage.trim().equals(spec.code, ignoreCase = true),
+            )
+          }
+        }
+      SettingsOptionPickerScreen(
+        title = "Language",
+        subtitle =
+          "Choose the speech recognition language and regional accent used when Rivia listens to you.",
+        options = options,
+        footerContent = {
+          Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = RiviaSurface1,
+            border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(
+              modifier = Modifier.padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text(
+                text = "Custom BCP-47 language code",
+                color = RiviaTextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Text(
+                text = "Enter any regional BCP-47 tag supported by Android SpeechRecognizer (for example en-IN, es-MX, zh-CN).",
+                color = RiviaTextSecondary,
+                fontSize = 12.sp,
+              )
+              OutlinedTextField(
+                value = customCodeDraft,
+                onValueChange = { customCodeDraft = it },
+                label = { Text("Language code") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                  KeyboardActions(
+                    onDone = {
+                      val clean = customCodeDraft.trim().ifBlank { "en-US" }
+                      viewModel.updateVoicePrefs { it.copy(sttLanguage = clean) }
+                      focusManager.clearFocus()
+                      onBack()
+                    }
+                  ),
+                modifier = Modifier.fillMaxWidth(),
+                colors = riviaTextFieldColors(),
+              )
+            }
+          }
+        },
+        onSelect = { item ->
+          viewModel.updateVoicePrefs { it.copy(sttLanguage = item.id) }
+          onBack()
+        },
+        onBack = onBack,
+      )
+    }
+
+    SettingsSubPicker.AUDIO_QUALITY -> {
+      val options =
+        remember(voicePrefs.outputFormat) {
+          ElevenLabsClient.SUPPORTED_MP3_FORMATS.map { fmt ->
+            SettingsOptionItem(
+              id = fmt,
+              title = friendlyAudioQualityLabel(fmt),
+              badge = fmt,
+              description = audioQualityDescription(fmt),
+              selected = voicePrefs.outputFormat == fmt,
+            )
+          }
+        }
+      SettingsOptionPickerScreen(
+        title = "Audio quality",
+        subtitle =
+          "Select the MP3 sample rate and bitrate for ElevenLabs audio synthesis.",
+        options = options,
+        onSelect = { item ->
+          viewModel.updateVoicePrefs { it.copy(outputFormat = item.id) }
+          onBack()
+        },
+        onBack = onBack,
+      )
+    }
+
+    SettingsSubPicker.MIC_CAPTURE_MODE -> {
+      val modeBSupported = remember { MicSharingRecorder.isModeBApiSupported() }
+      val modeBDescription =
+        remember(context, modeBRuntimeNote) {
+          MicSharingRecorder.getModeBSupportDescription(context)
+        }
+      val options =
+        remember(labMicPrefs.micTestMode, modeBSupported, modeBDescription) {
+          listOf(
+            SettingsOptionItem(
+              id = "B",
+              title =
+                if (modeBSupported) "Mode B · EXTRA_AUDIO_SOURCE pipe"
+                else "Mode B · Unsupported on API < 33",
+              badge = "Default",
+              description =
+                "Records with AudioRecord (AudioSource.VOICE_RECOGNITION, 16 kHz mono) and pipes gained audio (-20 dBFS target, max +20 dB, limiter) to SpeechRecognizer while Silero VAD and the ONNX emotion model score raw un-gained audio.\n$modeBDescription",
+              selected = labMicPrefs.micTestMode == "B",
+              enabled = modeBSupported,
+            ),
+            SettingsOptionItem(
+              id = "A",
+              title = "Mode A · Direct Google capture",
+              badge = "No AudioRecord",
+              description =
+                "Does not start the app's AudioRecord at all, so Android SpeechRecognizer captures the microphone directly. Excluded from the emotion baseline because turns have no raw acoustic scores.",
+              selected = labMicPrefs.micTestMode != "B",
+            ),
+          )
+        }
+      SettingsOptionPickerScreen(
+        title = "Mic capture mode",
+        subtitle =
+          "Choose how microphone audio is captured and shared during Live voice turns.",
+        options = options,
+        onSelect = { item ->
+          viewModel.updateLabMicTestPrefs { it.copy(micTestMode = item.id) }
+          onBack()
+        },
+        onBack = onBack,
+      )
+    }
+  }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun VoiceSettingsTab(
   viewModel: RiviaViewModel,
-  onShowHelp: (String) -> Unit,
+  @Suppress("UNUSED_PARAMETER") onShowHelp: (String) -> Unit,
+  onOpenSubPicker: (SettingsSubPicker) -> Unit,
 ) {
+  val context = LocalContext.current
   val focusManager = LocalFocusManager.current
   val appUiMode by viewModel.appUiMode.collectAsStateWithLifecycle()
   val isDevOrLabs = appUiMode != AppUiMode.RIVIA
   val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
-  val elevenModels by viewModel.elevenModels.collectAsStateWithLifecycle()
-  val isLoadingVoices by viewModel.isLoadingVoices.collectAsStateWithLifecycle()
 
   var voiceIdDraft by remember { mutableStateOf(voicePrefs.voiceId) }
-  var sttLanguageDraft by remember { mutableStateOf(voicePrefs.sttLanguage) }
+  var advancedExpanded by rememberSaveable { mutableStateOf(true) }
 
   LaunchedEffect(voicePrefs.voiceId) { voiceIdDraft = voicePrefs.voiceId }
-  LaunchedEffect(voicePrefs.sttLanguage) { sttLanguageDraft = voicePrefs.sttLanguage }
 
   fun commitVoiceIdIfChanged() {
     val trimmed = voiceIdDraft.trim()
@@ -1081,16 +1875,8 @@ private fun VoiceSettingsTab(
     }
   }
 
-  fun commitSttLanguageIfChanged() {
-    val trimmed = sttLanguageDraft.trim().ifBlank { "en-US" }
-    if (trimmed != voicePrefs.sttLanguage) {
-      viewModel.updateVoicePrefs { it.copy(sttLanguage = trimmed) }
-    }
-  }
-
   val commitVoiceDraftsRef by rememberUpdatedState {
     commitVoiceIdIfChanged()
-    commitSttLanguageIfChanged()
   }
 
   DisposableEffect(Unit) { onDispose { commitVoiceDraftsRef() } }
@@ -1112,562 +1898,905 @@ private fun VoiceSettingsTab(
     voicePrefs.isProfessionalClone &&
       (voicePrefs.readAloudModelId == "eleven_v4" || voicePrefs.liveModelId == "eleven_v4")
 
+  val matchedVoice =
+    remember(personalVoices, voicePrefs.voiceId) {
+      personalVoices.firstOrNull { it.voiceId == voicePrefs.voiceId }
+    }
+  val displayVoiceName =
+    remember(voicePrefs.voiceName, matchedVoice, voicePrefs.voiceId) {
+      voicePrefs.voiceName.ifBlank {
+        matchedVoice?.name ?: if (voicePrefs.voiceId.isNotBlank()) "Custom voice" else "Jen"
+      }
+    }
+
+  val sleekSliderColors =
+    SliderDefaults.colors(
+      thumbColor = RiviaMint,
+      activeTrackColor = RiviaMint,
+      inactiveTrackColor = RiviaBorder,
+    )
+
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
-    contentPadding = PaddingValues(16.dp),
-    verticalArrangement = Arrangement.spacedBy(16.dp),
+    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+    verticalArrangement = Arrangement.spacedBy(20.dp),
   ) {
-    // 1. Personal Voice Picker & Voice ID Paste
+    // 1. Her voice
     item {
-      SettingsCardSection(
-        title = "Custom ElevenLabs Voice",
-        onHelpClick = { onShowHelp("custom_voice") },
-      ) {
-        Row(
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = "Her voice",
+          color = RiviaTextTertiary,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Medium,
+          modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color = RiviaSurface1,
+          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
           modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Text(
-            text =
-              if (personalVoices.isEmpty()) "Load your personal voices from ElevenLabs"
-              else "${personalVoices.size} personal voices available",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-            modifier = Modifier.weight(1f).padding(end = 12.dp),
-          )
-          OutlinedButton(
-            onClick = { viewModel.refreshElevenLabsVoicesAndModels() },
-            enabled = !isLoadingVoices,
-            shape = RoundedCornerShape(14.dp),
-            border = BorderStroke(1.dp, RiviaBorder),
-            colors =
-              ButtonDefaults.outlinedButtonColors(
-                containerColor = RiviaSurface2,
-                contentColor = RiviaTextPrimary,
-              ),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            modifier = Modifier.minimumInteractiveComponentSize(),
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            Icon(
-              imageVector = Icons.Outlined.Refresh,
-              contentDescription = "Refresh personal voices",
-              tint = RiviaIconDefault,
-              modifier = Modifier.size(16.dp),
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-              if (isLoadingVoices) "Loading..." else "Load Voices",
-              color = RiviaTextPrimary,
-              fontSize = 12.sp,
-            )
+            Surface(
+              shape = CircleShape,
+              color = RiviaMint,
+              modifier =
+                Modifier.size(46.dp)
+                  .clip(CircleShape)
+                  .clickable {
+                    val preview = matchedVoice?.previewUrl
+                    if (!preview.isNullOrBlank()) {
+                      viewModel.audioPlayerManager.playPreviewUrl(preview)
+                    } else {
+                      commitVoiceIdIfChanged()
+                      viewModel.testElevenLabsSpeakLine(voiceIdDraft)
+                    }
+                  },
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxSize(),
+              ) {
+                Icon(
+                  imageVector = Icons.Default.PlayArrow,
+                  contentDescription = "Preview $displayVoiceName",
+                  tint = RiviaOnAccent,
+                  modifier = Modifier.size(22.dp),
+                )
+              }
+            }
+
+            Column(
+              modifier =
+                Modifier.weight(1f)
+                  .padding(horizontal = 14.dp)
+                  .clickable { onOpenSubPicker(SettingsSubPicker.HER_VOICE) },
+              verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              Text(
+                text = displayVoiceName,
+                color = RiviaTextPrimary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Text(
+                text = "Your custom voice",
+                color = RiviaTextSecondary,
+                fontSize = 13.sp,
+              )
+            }
+
+            Surface(
+              shape = RoundedCornerShape(50),
+              color = RiviaSurface2,
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier =
+                Modifier.clip(RoundedCornerShape(50))
+                  .clickable { onOpenSubPicker(SettingsSubPicker.HER_VOICE) },
+            ) {
+              Text(
+                text = "Change",
+                color = RiviaTextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+              )
+            }
           }
         }
+      }
+    }
 
-        if (personalVoices.isNotEmpty()) {
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            personalVoices.forEach { v ->
-              val isSelected = v.voiceId == voicePrefs.voiceId
-              Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (isSelected) RiviaSurface3 else RiviaSurface2,
-                border = BorderStroke(1.dp, RiviaBorder),
+    // 2. Voice model (Dev / Labs)
+    if (isDevOrLabs) {
+      item {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(
+            text = "Voice model",
+            color = RiviaTextTertiary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 4.dp).testTag("el_models_section"),
+          )
+          Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = RiviaSurface1,
+            border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+              // Read aloud row -> opens separate vertical list screen with model descriptions
+              Row(
                 modifier =
                   Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable {
-                      voiceIdDraft = v.voiceId
-                      viewModel.selectElevenLabsVoice(v)
-                    },
+                    .clickable { onOpenSubPicker(SettingsSubPicker.READ_ALOUD_MODEL) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
               ) {
+                Column(
+                  modifier = Modifier.weight(1f).padding(end = 12.dp),
+                  verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Read aloud",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = friendlyElevenModelName(voicePrefs.readAloudModelId),
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Icon(
+                  imageVector = Icons.Default.KeyboardArrowDown,
+                  contentDescription = "Select Read aloud model",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+              // Live conversations row -> opens separate vertical list screen with model descriptions
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .clickable { onOpenSubPicker(SettingsSubPicker.LIVE_MODEL) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Column(
+                  modifier = Modifier.weight(1f).padding(end = 12.dp),
+                  verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Live conversations",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = friendlyElevenModelName(voicePrefs.liveModelId),
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Icon(
+                  imageVector = Icons.Default.KeyboardArrowDown,
+                  contentDescription = "Select Live conversations model",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. How she sounds
+    item {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = "How she sounds",
+          color = RiviaTextTertiary,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Medium,
+          modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color = RiviaSurface1,
+          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            // Delivery + Likeness sliders
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+              // Delivery (stability)
+              Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(
-                  modifier =
-                    Modifier.fillMaxWidth()
-                      .padding(horizontal = 14.dp, vertical = 10.dp),
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
                   verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Text(
+                    text = "Delivery",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text =
+                      "${deliveryDescriptor(voicePrefs.stability)} · ${"%.2f".format(Locale.US, voicePrefs.stability)}",
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Slider(
+                  value = voicePrefs.stability.coerceIn(0f, 1f),
+                  onValueChange = { v ->
+                    viewModel.updateVoicePrefs { it.copy(stability = v) }
+                  },
+                  valueRange = 0f..1f,
+                  colors = sleekSliderColors,
+                  modifier = Modifier.testTag("voice_stability_slider"),
+                )
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
                   horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                  Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                  Text(
+                    text = "More expressive",
+                    color = RiviaTextTertiary,
+                    fontSize = 12.sp,
+                  )
+                  Text(
+                    text = "More steady",
+                    color = RiviaTextTertiary,
+                    fontSize = 12.sp,
+                  )
+                }
+              }
+
+              // Likeness (similarityBoost)
+              Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  Text(
+                    text = "Likeness",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text =
+                      "${likenessDescriptor(voicePrefs.similarityBoost)} · ${"%.2f".format(Locale.US, voicePrefs.similarityBoost)}",
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Slider(
+                  value = voicePrefs.similarityBoost.coerceIn(0f, 1f),
+                  onValueChange = { v ->
+                    viewModel.updateVoicePrefs { it.copy(similarityBoost = v) }
+                  },
+                  valueRange = 0f..1f,
+                  colors = sleekSliderColors,
+                  modifier = Modifier.testTag("voice_similarity_slider"),
+                )
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Text(
+                    text = "Looser",
+                    color = RiviaTextTertiary,
+                    fontSize = 12.sp,
+                  )
+                  Text(
+                    text = "Closer to $displayVoiceName",
+                    color = RiviaTextTertiary,
+                    fontSize = 12.sp,
+                  )
+                }
+              }
+
+              if (showStyleAndSpeed) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
                     Text(
-                      text = v.name,
+                      text = "Style",
                       color = RiviaTextPrimary,
-                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                      fontSize = 15.sp,
+                      fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                      text = "${v.category} · ${v.voiceId}",
-                      color = RiviaTextTertiary,
-                      fontFamily = ChivoMonoFontFamily,
-                      fontSize = 11.sp,
+                      text = "%.2f".format(Locale.US, voicePrefs.style),
+                      color = RiviaTextSecondary,
+                      fontSize = 13.sp,
                     )
                   }
-                  if (!v.previewUrl.isNullOrBlank()) {
-                    IconButton(
-                      onClick = { viewModel.audioPlayerManager.playPreviewUrl(v.previewUrl) },
-                      modifier = Modifier.minimumInteractiveComponentSize(),
+                  Slider(
+                    value = voicePrefs.style.coerceIn(0f, 1f),
+                    onValueChange = { v ->
+                      viewModel.updateVoicePrefs { it.copy(style = v) }
+                    },
+                    valueRange = 0f..1f,
+                    colors = sleekSliderColors,
+                  )
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    Text(
+                      text = "Speed",
+                      color = RiviaTextPrimary,
+                      fontSize = 15.sp,
+                      fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                      text = "${"%.2f".format(Locale.US, voicePrefs.speed)}x",
+                      color = RiviaTextSecondary,
+                      fontSize = 13.sp,
+                    )
+                  }
+                  Slider(
+                    value = voicePrefs.speed.coerceIn(0.7f, 1.2f),
+                    onValueChange = { v ->
+                      viewModel.updateVoicePrefs { it.copy(speed = v) }
+                    },
+                    valueRange = 0.7f..1.2f,
+                    colors = sleekSliderColors,
+                  )
+                }
+              }
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Clarity boost
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Clarity boost",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Makes her voice crisper",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.useSpeakerBoost,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(useSpeakerBoost = b) }
+                },
+                colors = riviaSwitchColors(),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Emotion cues
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Emotion cues",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "She acts out [softly] and [laughs]; you never see the tags",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.sendAudioTags,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(sendAudioTags = b) }
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("send_audio_tags_switch"),
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // 4. How she hears you
+    item {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = "How she hears you",
+          color = RiviaTextTertiary,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Medium,
+          modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color = RiviaSurface1,
+          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            // Language row -> opens separate vertical list screen with language descriptions
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .clickable { onOpenSubPicker(SettingsSubPicker.LANGUAGE) }
+                  .padding(horizontal = 16.dp, vertical = 16.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Text(
+                text = "Language",
+                color = RiviaTextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = friendlyLanguageLabel(voicePrefs.sttLanguage),
+                  color = RiviaTextSecondary,
+                  fontSize = 14.sp,
+                )
+                Icon(
+                  imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                  contentDescription = "Choose speech language",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(18.dp),
+                )
+              }
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Transcribe on this phone
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Transcribe on this phone",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Works offline; may be less accurate",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.preferOnDeviceRecognition,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(preferOnDeviceRecognition = b) }
+                },
+                colors = riviaSwitchColors(),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Keep screen on in Live
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Keep screen on in Live",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "So the screen never locks mid-conversation",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.keepScreenOnInLive,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(keepScreenOnInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Use earbud mic in Live
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Use earbud mic in Live",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Her voice drops to call quality in your earbuds",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.useEarbudMicInLive,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(useEarbudMicInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // 5. Advanced Card (Voice ID, clone tuning, audio quality)
+    item {
+      Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = RiviaSurface1,
+        border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+          Row(
+            modifier =
+              Modifier.fillMaxWidth()
+                .clickable { advancedExpanded = !advancedExpanded }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Column(
+              modifier = Modifier.weight(1f).padding(end = 12.dp),
+              verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              Text(
+                text = "Advanced",
+                color = RiviaTextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Text(
+                text = "Voice ID, clone tuning, audio quality",
+                color = RiviaTextSecondary,
+                fontSize = 13.sp,
+              )
+            }
+            Icon(
+              imageVector =
+                if (advancedExpanded) Icons.Default.KeyboardArrowUp
+                else Icons.Default.KeyboardArrowDown,
+              contentDescription = if (advancedExpanded) "Collapse Advanced" else "Expand Advanced",
+              tint = RiviaTextSecondary,
+              modifier = Modifier.size(20.dp),
+            )
+          }
+
+          if (advancedExpanded) {
+            Column(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
+              verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+              // Voice ID + Copy
+              Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                  text = "Voice ID",
+                  color = RiviaTextTertiary,
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.Medium,
+                )
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                  OutlinedTextField(
+                    value = voiceIdDraft,
+                    onValueChange = { voiceIdDraft = it },
+                    placeholder = { Text("Paste ElevenLabs Voice ID", color = RiviaTextTertiary) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions =
+                      KeyboardActions(
+                        onDone = {
+                          commitVoiceIdIfChanged()
+                          focusManager.clearFocus()
+                        }
+                      ),
+                    modifier =
+                      Modifier.weight(1f)
+                        .then(commitOnFocusLostModifier { commitVoiceIdIfChanged() })
+                        .testTag("voice_id_input"),
+                    colors = riviaTextFieldColors(),
+                  )
+
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = RiviaSurface2,
+                    border = BorderStroke(1.dp, RiviaBorder),
+                    modifier =
+                      Modifier.height(52.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                          commitVoiceIdIfChanged()
+                          copyToClipboard(context, "Voice ID", voiceIdDraft.trim())
+                          viewModel.showNotice("Copied Voice ID to clipboard.")
+                        },
+                  ) {
+                    Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.Center,
+                      modifier = Modifier.padding(horizontal = 16.dp),
                     ) {
-                      Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = "Preview voice ${v.name}",
-                        tint = if (isSelected) RiviaIconActive else RiviaIconDefault,
+                      Text(
+                        text = "Copy",
+                        color = RiviaTextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
                       )
                     }
                   }
                 }
               }
-            }
-          }
-        }
 
-        OutlinedTextField(
-          value = voiceIdDraft,
-          onValueChange = { voiceIdDraft = it },
-          label = { Text("Voice ID") },
-          singleLine = true,
-          shape = RoundedCornerShape(14.dp),
-          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-          keyboardActions =
-            KeyboardActions(
-              onDone = {
-                commitVoiceIdIfChanged()
-                focusManager.clearFocus()
+              // Professional clone tuning
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Column(
+                  modifier = Modifier.weight(1f).padding(end = 12.dp),
+                  verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Professional clone tuning",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = "Only for Professional voice clones",
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Switch(
+                  checked = voicePrefs.isProfessionalClone,
+                  onCheckedChange = { isPro ->
+                    viewModel.updateVoicePrefs { it.copy(isProfessionalClone = isPro) }
+                  },
+                  colors = riviaSwitchColors(),
+                )
               }
-            ),
-          modifier =
-            Modifier.fillMaxWidth()
-              .then(commitOnFocusLostModifier { commitVoiceIdIfChanged() })
-              .testTag("voice_id_input"),
-          colors = riviaTextFieldColors(),
-        )
 
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text("Professional voice clone", color = RiviaText)
-            Text(
-              "Enables clone strength tuning on eleven_v4",
-              style = MaterialTheme.typography.bodySmall,
-              color = RiviaMutedText,
-            )
-          }
-          Switch(
-            checked = voicePrefs.isProfessionalClone,
-            onCheckedChange = { isPro ->
-              viewModel.updateVoicePrefs { it.copy(isProfessionalClone = isPro) }
-            },
-            colors = riviaSwitchColors(),
-          )
-        }
-      }
-    }
+              if (showCloneStrength) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    Text(
+                      text = "Clone strength",
+                      color = RiviaTextPrimary,
+                      fontSize = 14.sp,
+                      fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                      text = "%.2f".format(Locale.US, voicePrefs.cloneStrength),
+                      color = RiviaTextSecondary,
+                      fontSize = 13.sp,
+                    )
+                  }
+                  Slider(
+                    value = voicePrefs.cloneStrength.coerceIn(0f, 1f),
+                    onValueChange = { v ->
+                      viewModel.updateVoicePrefs { it.copy(cloneStrength = v) }
+                    },
+                    valueRange = 0f..1f,
+                    colors = sleekSliderColors,
+                  )
+                }
+              }
 
-    // 2. Model Pickers for Read-Aloud and Live (Dev / Labs only)
-    if (isDevOrLabs) {
-      item {
-        val availableModelIds =
-          remember(elevenModels) {
-            val fromApi = elevenModels.map { it.modelId }
-            (listOf(
-                "eleven_v4",
-                "eleven_v4_turbo",
-                "eleven_flash_v2_5",
-                "eleven_multilingual_v2",
-              ) + fromApi)
-              .distinct()
-          }
-
-        SettingsCardSection(
-          title = "ElevenLabs TTS Models",
-          onHelpClick = { onShowHelp("tts_models") },
-        ) {
-          Text(
-            text = "Read-aloud model (default eleven_v4)",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-            modifier = Modifier.testTag("el_models_section"),
-          )
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            availableModelIds.forEach { mId ->
-              OptionChip(
-                label = mId,
-                selected = voicePrefs.readAloudModelId == mId,
-                onClick = {
-                  viewModel.updateVoicePrefs { it.copy(readAloudModelId = mId) }
-                },
-              )
+              // Read numbers and dates as words (Segmented bar: Auto / Always / Never)
+              Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                  text = "Read numbers and dates as words",
+                  color = RiviaTextTertiary,
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.Medium,
+                  modifier = Modifier.testTag("format_normalization_audio_tags_section"),
+                )
+                val normOptions =
+                  listOf(
+                    "auto" to "Auto",
+                    "on" to "Always",
+                    "off" to "Never",
+                  )
+                Surface(
+                  shape = RoundedCornerShape(12.dp),
+                  color = RiviaBackground,
+                  border = BorderStroke(1.dp, RiviaBorder),
+                  modifier = Modifier.fillMaxWidth(),
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth().padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                  ) {
+                    normOptions.forEach { (normKey, normLabel) ->
+                      val isSelected = voicePrefs.textNormalization == normKey
+                      Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) RiviaSurface3 else Color.Transparent,
+                        modifier =
+                          Modifier.weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                              viewModel.updateVoicePrefs { it.copy(textNormalization = normKey) }
+                            },
+                      ) {
+                        Text(
+                          text = normLabel,
+                          color = if (isSelected) RiviaTextPrimary else RiviaTextSecondary,
+                          fontSize = 13.sp,
+                          fontWeight =
+                            if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                          textAlign = TextAlign.Center,
+                          modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        )
+                      }
+                    }
+                  }
+                }
+              }
             }
-          }
 
-          Spacer(modifier = Modifier.height(6.dp))
-          Text(
-            text = "Live mode model (default eleven_v4_turbo)",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-          )
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            availableModelIds.forEach { mId ->
-              OptionChip(
-                label = mId,
-                selected = voicePrefs.liveModelId == mId,
-                onClick = { viewModel.updateVoicePrefs { it.copy(liveModelId = mId) } },
-              )
-            }
-          }
-        }
-      }
-    }
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
 
-    // 3. Voice Settings
-    item {
-      SettingsCardSection(
-        title = "Voice Settings",
-        onHelpClick = { onShowHelp("voice_tuning") },
-      ) {
-        if (isDevOrLabs) {
-          Text(
-            text = "Stability: ${"%.2f".format(voicePrefs.stability)}",
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaText,
-          )
-          Slider(
-            value = voicePrefs.stability.coerceIn(0f, 1f),
-            onValueChange = { v -> viewModel.updateVoicePrefs { it.copy(stability = v) } },
-            valueRange = 0f..1f,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaTextPrimary,
-                activeTrackColor = RiviaTextSecondary,
-                inactiveTrackColor = RiviaBorder,
-              ),
-            modifier = Modifier.testTag("voice_stability_slider"),
-          )
-
-          Text(
-            text = "Similarity Boost: ${"%.2f".format(voicePrefs.similarityBoost)}",
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaText,
-          )
-          Slider(
-            value = voicePrefs.similarityBoost.coerceIn(0f, 1f),
-            onValueChange = { v ->
-              viewModel.updateVoicePrefs { it.copy(similarityBoost = v) }
-            },
-            valueRange = 0f..1f,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaTextPrimary,
-                activeTrackColor = RiviaTextSecondary,
-                inactiveTrackColor = RiviaBorder,
-              ),
-            modifier = Modifier.testTag("voice_similarity_slider"),
-          )
-        }
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = "Speaker Boost",
-            color = RiviaText,
-            modifier = Modifier.weight(1f).padding(end = 12.dp),
-          )
-          Switch(
-            checked = voicePrefs.useSpeakerBoost,
-            onCheckedChange = { b ->
-              viewModel.updateVoicePrefs { it.copy(useSpeakerBoost = b) }
-            },
-            colors = riviaSwitchColors(),
-          )
-        }
-
-        if (showStyleAndSpeed) {
-          HorizontalDivider(color = RiviaBorder)
-          Text(
-            text = "Style: ${"%.2f".format(voicePrefs.style)}",
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaText,
-          )
-          Slider(
-            value = voicePrefs.style.coerceIn(0f, 1f),
-            onValueChange = { v -> viewModel.updateVoicePrefs { it.copy(style = v) } },
-            valueRange = 0f..1f,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaTextPrimary,
-                activeTrackColor = RiviaTextSecondary,
-                inactiveTrackColor = RiviaBorder,
-              ),
-          )
-
-          Text(
-            text = "Speed: ${"%.2f".format(voicePrefs.speed)}",
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaText,
-          )
-          Slider(
-            value = voicePrefs.speed.coerceIn(0.7f, 1.2f),
-            onValueChange = { v -> viewModel.updateVoicePrefs { it.copy(speed = v) } },
-            valueRange = 0.7f..1.2f,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaTextPrimary,
-                activeTrackColor = RiviaTextSecondary,
-                inactiveTrackColor = RiviaBorder,
-              ),
-          )
-        } else {
-          Text(
-            text = "Style and speed are managed automatically by eleven_v4 and eleven_v4_turbo.",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-          )
-        }
-
-        if (showCloneStrength) {
-          HorizontalDivider(color = RiviaBorder)
-          Text(
-            text = "Clone Strength: ${"%.2f".format(voicePrefs.cloneStrength)}",
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = ChivoMonoFontFamily,
-            color = RiviaTextPrimary,
-          )
-          Slider(
-            value = voicePrefs.cloneStrength.coerceIn(0f, 1f),
-            onValueChange = { v ->
-              viewModel.updateVoicePrefs { it.copy(cloneStrength = v) }
-            },
-            valueRange = 0f..1f,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaTextPrimary,
-                activeTrackColor = RiviaTextSecondary,
-                inactiveTrackColor = RiviaBorder,
-              ),
-          )
-        }
-
-        if (!isDevOrLabs) {
-          Button(
-            onClick = {
-              commitVoiceIdIfChanged()
-              viewModel.testElevenLabsSpeakLine(voiceIdDraft)
-            },
-            shape = RoundedCornerShape(14.dp),
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = RiviaMint,
-                contentColor = RiviaOnAccent,
-              ),
-            modifier =
-              Modifier.fillMaxWidth()
-                .minimumInteractiveComponentSize()
-                .testTag("test_voice_speak_button"),
-          ) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Outlined.VolumeUp,
-              contentDescription = "Test voice playback",
-              modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Test Voice (Speak one line)", fontWeight = FontWeight.SemiBold)
-          }
-        }
-      }
-    }
-
-    // 4. Normalization, Output Format & Audio Tags (Dev / Labs only)
-    if (isDevOrLabs) {
-      item {
-        SettingsCardSection(
-          title = "Format, Normalization & Audio Tags",
-          onHelpClick = { onShowHelp("audio_tags_format") },
-        ) {
-          Text(
-            text = "Text normalization",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-            modifier = Modifier.testTag("format_normalization_audio_tags_section"),
-          )
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("auto", "on", "off").forEach { norm ->
-              OptionChip(
-                label = norm,
-                selected = voicePrefs.textNormalization == norm,
-                onClick = {
-                  viewModel.updateVoicePrefs { it.copy(textNormalization = norm) }
-                },
-              )
-            }
-          }
-
-          Text(
-            text = "Output audio quality",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaMutedText,
-          )
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            ElevenLabsClient.SUPPORTED_MP3_FORMATS.forEach { fmt ->
-              OptionChip(
-                label = fmt,
-                selected = voicePrefs.outputFormat == fmt,
-                onClick = { viewModel.updateVoicePrefs { it.copy(outputFormat = fmt) } },
-              )
-            }
-          }
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-          ) {
-            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-              Text("Send expressive audio tags", color = RiviaText)
+            // Audio quality row -> opens separate vertical list screen with format descriptions
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .clickable { onOpenSubPicker(SettingsSubPicker.AUDIO_QUALITY) }
+                  .padding(horizontal = 16.dp, vertical = 16.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
               Text(
-                "Performs [softly], [laughs] vocally while hiding them on screen",
-                style = MaterialTheme.typography.bodySmall,
-                color = RiviaMutedText,
+                text = "Audio quality",
+                color = RiviaTextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
               )
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = friendlyAudioQualityLabel(voicePrefs.outputFormat),
+                  color = RiviaTextSecondary,
+                  fontSize = 14.sp,
+                )
+                Icon(
+                  imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                  contentDescription = "Choose audio quality",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(18.dp),
+                )
+              }
             }
-            Switch(
-              checked = voicePrefs.sendAudioTags,
-              onCheckedChange = { b ->
-                viewModel.updateVoicePrefs { it.copy(sendAudioTags = b) }
-              },
-              colors = riviaSwitchColors(),
-              modifier = Modifier.testTag("send_audio_tags_switch"),
-            )
-          }
-
-          Button(
-            onClick = {
-              commitVoiceIdIfChanged()
-              viewModel.testElevenLabsSpeakLine(voiceIdDraft)
-            },
-            shape = RoundedCornerShape(14.dp),
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = RiviaMint,
-                contentColor = RiviaOnAccent,
-              ),
-            modifier =
-              Modifier.fillMaxWidth()
-                .minimumInteractiveComponentSize()
-                .testTag("test_voice_speak_button"),
-          ) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Outlined.VolumeUp,
-              contentDescription = "Test voice playback",
-              modifier = Modifier.size(18.dp),
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Test Voice (Speak one line)", fontWeight = FontWeight.SemiBold)
           }
         }
       }
     }
 
-    // 5. Speech-to-Text & Live Mode Options
+    // 6. Full-width pill button: "Hear these settings"
     item {
-      SettingsCardSection(
-        title = "Speech-to-Text & Live Mode",
-        onHelpClick = { onShowHelp("stt_live_options") },
+      Button(
+        onClick = {
+          commitVoiceIdIfChanged()
+          viewModel.testElevenLabsSpeakLine(voiceIdDraft)
+        },
+        shape = RoundedCornerShape(50),
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = RiviaMint,
+            contentColor = RiviaOnAccent,
+          ),
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(54.dp)
+            .minimumInteractiveComponentSize()
+            .testTag("test_voice_speak_button"),
       ) {
-        OutlinedTextField(
-          value = sttLanguageDraft,
-          onValueChange = { sttLanguageDraft = it },
-          label = { Text("Speech-to-text language (default en-US)") },
-          singleLine = true,
-          shape = RoundedCornerShape(14.dp),
-          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-          keyboardActions =
-            KeyboardActions(
-              onDone = {
-                commitSttLanguageIfChanged()
-                focusManager.clearFocus()
-              }
-            ),
-          modifier =
-            Modifier.fillMaxWidth()
-              .then(commitOnFocusLostModifier { commitSttLanguageIfChanged() }),
-          colors = riviaTextFieldColors(),
+        Icon(
+          imageVector = Icons.AutoMirrored.Outlined.VolumeUp,
+          contentDescription = "Hear these settings",
+          modifier = Modifier.size(18.dp),
         )
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = "Prefer on-device recognition",
-            color = RiviaText,
-            modifier = Modifier.weight(1f).padding(end = 12.dp),
-          )
-          Switch(
-            checked = voicePrefs.preferOnDeviceRecognition,
-            onCheckedChange = { b ->
-              viewModel.updateVoicePrefs { it.copy(preferOnDeviceRecognition = b) }
-            },
-            colors = riviaSwitchColors(),
-          )
-        }
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Text(
-            text = "Keep screen on in Live",
-            color = RiviaText,
-            modifier = Modifier.weight(1f).padding(end = 12.dp),
-          )
-          Switch(
-            checked = voicePrefs.keepScreenOnInLive,
-            onCheckedChange = { b ->
-              viewModel.updateVoicePrefs { it.copy(keepScreenOnInLive = b) }
-            },
-            colors = riviaSwitchColors(),
-          )
-        }
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-          Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text("Use earbud mic in Live", color = RiviaText)
-            Text(
-              "Off by default so earbuds receive full-quality media audio",
-              style = MaterialTheme.typography.bodySmall,
-              color = RiviaMutedText,
-            )
-          }
-          Switch(
-            checked = voicePrefs.useEarbudMicInLive,
-            onCheckedChange = { b ->
-              viewModel.updateVoicePrefs { it.copy(useEarbudMicInLive = b) }
-            },
-            colors = riviaSwitchColors(),
-          )
-        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = "Hear these settings",
+          fontSize = 15.sp,
+          fontWeight = FontWeight.SemiBold,
+        )
       }
     }
   }
@@ -1757,6 +2886,7 @@ private fun DefaultsLauncherTab(
   viewModel: RiviaViewModel,
   onOpenDefaultRunSettings: () -> Unit,
   onShowHelp: (String) -> Unit,
+  onOpenSubPicker: (SettingsSubPicker) -> Unit,
 ) {
   val context = LocalContext.current
   val modelState by viewModel.emotionModelState.collectAsStateWithLifecycle()
@@ -2116,34 +3246,42 @@ private fun DefaultsLauncherTab(
 
         HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
 
-        Text(
-          text = "Mic capture mode (Live default: Mode B)",
-          style = MaterialTheme.typography.labelMedium,
-          color = RiviaText,
-        )
-        FlowRow(
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
+        Row(
+          modifier =
+            Modifier.fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .clickable { onOpenSubPicker(SettingsSubPicker.MIC_CAPTURE_MODE) }
+              .padding(vertical = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-          OptionChip(
-            label = "Mode A (Google capture · no AudioRecord)",
-            selected = labMicPrefs.micTestMode != "B",
-            onClick = { viewModel.updateLabMicTestPrefs { it.copy(micTestMode = "A") } },
-          )
-          OptionChip(
-            label =
-              if (modeBSupported) "Mode B (EXTRA_AUDIO_SOURCE pipe · Default)"
-              else "Mode B (Unsupported on API < 33)",
-            selected = labMicPrefs.micTestMode == "B",
-            onClick = {
-              if (modeBSupported) {
-                viewModel.updateLabMicTestPrefs { it.copy(micTestMode = "B") }
-              } else {
-                viewModel.showNotice(
-                  "Mode B requires Android 13 (API 33+) for RecognizerIntent.EXTRA_AUDIO_SOURCE."
-                )
-              }
-            },
+          Column(
+            modifier = Modifier.weight(1f).padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+          ) {
+            Text(
+              text = "Mic capture mode",
+              color = RiviaTextPrimary,
+              fontSize = 15.sp,
+              fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+              text =
+                if (labMicPrefs.micTestMode == "B") {
+                  if (modeBSupported) "Mode B · EXTRA_AUDIO_SOURCE pipe (Default)"
+                  else "Mode B · Unsupported on API < 33"
+                } else {
+                  "Mode A · Direct Google capture (no AudioRecord)"
+                },
+              color = RiviaTextSecondary,
+              fontSize = 13.sp,
+            )
+          }
+          Icon(
+            imageVector = Icons.Default.KeyboardArrowDown,
+            contentDescription = "Select Mic capture mode",
+            tint = RiviaTextSecondary,
+            modifier = Modifier.size(20.dp),
           )
         }
 
@@ -2329,12 +3467,23 @@ private fun DefaultsLauncherTab(
         )
 
         // 1. Speech start prob threshold (default 0.50)
-        Text(
-          text = "Speech start probability threshold: ${"%.2f".format(Locale.US, labMicPrefs.vadStartThreshold)}",
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = ChivoMonoFontFamily,
-          color = RiviaText,
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "Speech start threshold",
+            color = RiviaTextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text(
+            text = "%.2f".format(Locale.US, labMicPrefs.vadStartThreshold),
+            color = RiviaTextSecondary,
+            fontSize = 13.sp,
+          )
+        }
         Slider(
           value = labMicPrefs.vadStartThreshold.coerceIn(0.10f, 0.90f),
           onValueChange = { v ->
@@ -2344,20 +3493,31 @@ private fun DefaultsLauncherTab(
           valueRange = 0.10f..0.90f,
           colors =
             SliderDefaults.colors(
-              thumbColor = RiviaTextPrimary,
-              activeTrackColor = RiviaTextSecondary,
+              thumbColor = RiviaMint,
+              activeTrackColor = RiviaMint,
               inactiveTrackColor = RiviaBorder,
             ),
           modifier = Modifier.testTag("vad_start_prob_slider"),
         )
 
         // 2. Speech start duration ms (default 250 ms)
-        Text(
-          text = "Speech start duration: ${labMicPrefs.vadStartDurationMs} ms",
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = ChivoMonoFontFamily,
-          color = RiviaText,
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "Speech start duration",
+            color = RiviaTextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text(
+            text = "${labMicPrefs.vadStartDurationMs} ms",
+            color = RiviaTextSecondary,
+            fontSize = 13.sp,
+          )
+        }
         Slider(
           value = labMicPrefs.vadStartDurationMs.toFloat().coerceIn(64f, 1000f),
           onValueChange = { v ->
@@ -2367,20 +3527,31 @@ private fun DefaultsLauncherTab(
           valueRange = 64f..1000f,
           colors =
             SliderDefaults.colors(
-              thumbColor = RiviaTextPrimary,
-              activeTrackColor = RiviaTextSecondary,
+              thumbColor = RiviaMint,
+              activeTrackColor = RiviaMint,
               inactiveTrackColor = RiviaBorder,
             ),
           modifier = Modifier.testTag("vad_start_duration_slider"),
         )
 
         // 3. Turn end prob threshold (default 0.35)
-        Text(
-          text = "Turn end probability threshold: ${"%.2f".format(Locale.US, labMicPrefs.vadEndThreshold)}",
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = ChivoMonoFontFamily,
-          color = RiviaText,
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "Turn end threshold",
+            color = RiviaTextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text(
+            text = "%.2f".format(Locale.US, labMicPrefs.vadEndThreshold),
+            color = RiviaTextSecondary,
+            fontSize = 13.sp,
+          )
+        }
         Slider(
           value = labMicPrefs.vadEndThreshold.coerceIn(0.05f, 0.80f),
           onValueChange = { v ->
@@ -2390,20 +3561,31 @@ private fun DefaultsLauncherTab(
           valueRange = 0.05f..0.80f,
           colors =
             SliderDefaults.colors(
-              thumbColor = RiviaTextPrimary,
-              activeTrackColor = RiviaTextSecondary,
+              thumbColor = RiviaMint,
+              activeTrackColor = RiviaMint,
               inactiveTrackColor = RiviaBorder,
             ),
           modifier = Modifier.testTag("vad_end_prob_slider"),
         )
 
         // 4. Turn end silence duration ms (default 700 ms)
-        Text(
-          text = "Turn end silence duration: ${labMicPrefs.vadEndSilenceMs} ms",
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = ChivoMonoFontFamily,
-          color = RiviaText,
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = "Turn end silence duration",
+            color = RiviaTextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Text(
+            text = "${labMicPrefs.vadEndSilenceMs} ms",
+            color = RiviaTextSecondary,
+            fontSize = 13.sp,
+          )
+        }
         Slider(
           value = labMicPrefs.vadEndSilenceMs.toFloat().coerceIn(200f, 2500f),
           onValueChange = { v ->
@@ -2413,8 +3595,8 @@ private fun DefaultsLauncherTab(
           valueRange = 200f..2500f,
           colors =
             SliderDefaults.colors(
-              thumbColor = RiviaTextPrimary,
-              activeTrackColor = RiviaTextSecondary,
+              thumbColor = RiviaMint,
+              activeTrackColor = RiviaMint,
               inactiveTrackColor = RiviaBorder,
             ),
           modifier = Modifier.testTag("vad_end_silence_slider"),

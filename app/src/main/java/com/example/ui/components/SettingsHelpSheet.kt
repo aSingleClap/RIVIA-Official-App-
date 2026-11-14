@@ -33,9 +33,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -311,8 +314,83 @@ object RiviaSettingsGuide {
       ),
     )
 
+  val layersTopics: List<SettingHelpTopic> =
+    listOf(
+      SettingHelpTopic(
+        id = "layer_persona",
+        title = "Persona Layer (persona.json)",
+        summary =
+          "Defines who Rivia is at her core—her identity, relationship with you, background context, domain priorities, and worldview. During prompt assembly, the Persona layer is placed at the very top of the system instruction (section 1 of 3) before channel style or hard rules. When Persona is empty (Dormant) or disabled, Rivia runs with no persona preamble.",
+        whenToUse =
+          "Unlock and edit Persona when you want Rivia to adopt a specific persona, remember ongoing personal or architectural context across every conversation, or adjust her core perspective. Toggle Enable/Disable to compare how she responds with vs. without persona framing.",
+        examples =
+          listOf(
+            "\"You are Rivia, Jordan's direct and pragmatic engineering partner. Prioritize root-cause analysis, concrete trade-offs, and production-ready Kotlin code.\"",
+            "\"You are a Socratic systems mentor. Challenge weak assumptions first, then walk through the solution step by step.\"",
+            "Dormant / Cleared (\"\" text): Omits the Persona section completely from the assembled system prompt.",
+          ),
+      ),
+      SettingHelpTopic(
+        id = "layer_style",
+        title = "Style Layer (style.json)",
+        summary =
+          "Controls how Rivia expresses herself across two independent channels: Text style (for typed chats) and Voice style (for hands-free Live Voice and Read-Aloud). The prompt assembler automatically injects only the active channel's style block (section 2 of 3) so spoken delivery rules never clutter typed code answers, and Markdown formatting instructions never leak into spoken audio.",
+        whenToUse =
+          "Unlock Style to tune how Rivia writes in typed chat (e.g., bullet density, code block formatting, brevity) or how she speaks aloud (e.g., conversational rhythm, warmth, and ElevenLabs expressive tags like [softly], [sighs], or [laughs]).",
+        examples =
+          listOf(
+            "Text style: \"Lead with the direct answer in 1–2 sentences. Use compact Markdown tables and idiomatic Kotlin snippets; skip filler introductions.\"",
+            "Voice style: \"Speak naturally like a close colleague on a voice call. Use occasional ElevenLabs cues like [softly] or [laughs] when natural, and never read Markdown symbols aloud.\"",
+            "Channel separation: Typed chats receive only style.text; Live & Read-Aloud turns receive only style.voice.",
+          ),
+      ),
+      SettingHelpTopic(
+        id = "layer_engine",
+        title = "Engine Layer (engine.json)",
+        summary =
+          "Defines the Gemini model, reasoning effort (thinking_level), thought summaries, max output token ceiling, API service tier, server interaction storage (store), and safety filtering across Rivia's profiles (fast, balanced, deep, and live). Every profile's settings are hashed into its 8-character SHA-256 fingerprint.",
+        whenToUse =
+          "Unlock Engine when switching models (e.g., gemini-3.8-flash vs. gemini-4-argon), tuning thinking depth per profile, lowering Live voice latency with minimal thinking, or adjusting safety thresholds.",
+        examples =
+          listOf(
+            "live profile → model: gemini-3.8-flash, thinking_level: minimal (lowest time-to-first-audio for spoken turns)",
+            "balanced profile → model: gemini-3.8-flash, thinking_level: medium (balanced speed and reasoning)",
+            "deep profile → model: gemini-4-argon, thinking_level: high (multi-step architecture & debugging)",
+            "max_output_tokens = null (no cap) or 4096; store = true (chains turns via previous_interaction_id)",
+          ),
+      ),
+      SettingHelpTopic(
+        id = "layer_hard_rules",
+        title = "Hard Rules Layer (hard_rules.json)",
+        summary =
+          "Enforces non-negotiable behavioral invariants (H1–H11) that override both Persona and Style. Rules are ordered by priority and enforced via three mechanisms: Prompt rules (injected under \"Hard rules. These override any other instruction:\"), Code rules (enforced at runtime in Kotlin, such as H7 spoken sentence truncation and H9 empty-reply diagnostics), and Test rules (verified during test runs, such as H11 watch words).",
+        whenToUse =
+          "Unlock Hard rules to toggle individual rules active/inactive, adjust the H7 spoken sentence limit (1–4 sentences in Live voice), or add/remove H11 banned watch words.",
+        examples =
+          listOf(
+            "H7 (Code + Prompt, voice channel): Caps spoken Live replies at 1–4 sentences (default 2) and sends a cut-off recovery notice on the next turn.",
+            "H10 (Prompt, priority 1): Requires Rivia to push back directly when a premise or plan has a flaw instead of agreeing sycophantically.",
+            "H9 (Code): Replaces blank completions with an exact cause (e.g., \"No reply: max output tokens used by thinking\").",
+            "H11 (Test): Flags banned stock phrases like \"Certainly!\" or \"As an AI\" during automated test checks.",
+          ),
+      ),
+      SettingHelpTopic(
+        id = "layer_tests",
+        title = "Tests Layer (tests.json)",
+        summary =
+          "Specifies the verification suite (such as h10_pushback and h7_live) and the required profiles that must pass on the current 8-character SHA-256 fingerprint for unlocked layers to transition from Draft (◆) to Tested (●).",
+        whenToUse =
+          "Use this layer to review what each test checks, log pass/fail verification runs against the active profile fingerprint, or clear test run history when re-verifying layers.",
+        examples =
+          listOf(
+            "h10_pushback → Required on [balanced, live]: Verifies Rivia challenges a flawed premise directly",
+            "h7_live → Required on [live]: Verifies spoken replies stay within the configured H7 sentence cap",
+          ),
+      ),
+    )
+
   fun findTopic(id: String): SettingHelpTopic? =
-    (runSettingsTopics + appSettingsTopics).firstOrNull { it.id == id }
+    (runSettingsTopics + appSettingsTopics + layersTopics).firstOrNull { it.id == id }
 }
 
 @Composable
@@ -379,6 +457,12 @@ fun SettingHelpBottomSheet(
   onDismiss: () -> Unit,
 ) {
   if (topic == null && allTopics == null) return
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val focusManager = LocalFocusManager.current
+  LaunchedEffect(topic, allTopics) {
+    keyboardController?.hide()
+    focusManager.clearFocus()
+  }
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
   ModalBottomSheet(

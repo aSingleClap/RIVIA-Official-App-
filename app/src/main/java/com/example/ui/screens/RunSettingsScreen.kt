@@ -78,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -222,6 +223,7 @@ fun RunSettingsScreen(
     onBack()
   }
 
+  val keyboardController = LocalSoftwareKeyboardController.current
   var showModelPickerForLive by remember { mutableStateOf<Boolean?>(null) }
   var previewJsonText by remember { mutableStateOf<String?>(null) }
   var newStopSequence by remember { mutableStateOf("") }
@@ -234,6 +236,7 @@ fun RunSettingsScreen(
   var activeHelpTopic by remember { mutableStateOf<SettingHelpTopic?>(null) }
   var showFullGuideSheet by remember { mutableStateOf(false) }
 
+  Box(modifier = Modifier.fillMaxSize()) {
   Column(
     modifier =
       Modifier.fillMaxSize()
@@ -243,6 +246,24 @@ fun RunSettingsScreen(
   ) {
     // Top bar
     var overflowMenuExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(
+      overflowMenuExpanded,
+      showModelPickerForLive,
+      activeHelpTopic,
+      showFullGuideSheet,
+      previewJsonText,
+    ) {
+      if (
+        overflowMenuExpanded ||
+          showModelPickerForLive != null ||
+          activeHelpTopic != null ||
+          showFullGuideSheet ||
+          previewJsonText != null
+      ) {
+        keyboardController?.hide()
+        focusManager.clearFocus()
+      }
+    }
     Surface(color = RiviaBackground, modifier = Modifier.fillMaxWidth()) {
       BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val isCompactWidth = maxWidth < 600.dp
@@ -257,6 +278,8 @@ fun RunSettingsScreen(
           ) {
             IconButton(
               onClick = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 commitDraftsIfChanged()
                 onBack()
               },
@@ -281,7 +304,11 @@ fun RunSettingsScreen(
           if (isCompactWidth) {
             Box {
               IconButton(
-                onClick = { overflowMenuExpanded = true },
+                onClick = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  overflowMenuExpanded = true
+                },
                 modifier =
                   Modifier.minimumInteractiveComponentSize()
                     .testTag("run_settings_overflow_button"),
@@ -1688,90 +1715,90 @@ fun RunSettingsScreen(
     )
   }
 
-  // Model Picker Dialog
+  // Model Picker Full-Screen View
   showModelPickerForLive?.let { isForLive ->
-    AlertDialog(
-      onDismissRequest = { showModelPickerForLive = null },
-      containerColor = RiviaSurface1,
-      titleContentColor = RiviaTextPrimary,
-      title = {
-        Text(if (isForLive) "Select Live Voice Model" else "Select Typed Chat Model")
-      },
-      text = {
-        if (cachedModels.isEmpty()) {
-          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-              "No cached models yet. Make sure your Gemini key is set and tap Refresh.",
-              color = RiviaTextSecondary,
-            )
-            Button(
-              onClick = { viewModel.refreshGeminiModels() },
-              colors =
-                ButtonDefaults.buttonColors(
-                  containerColor = RiviaMint,
-                  contentColor = RiviaOnAccent,
-                ),
-            ) {
-              Text("Refresh Models Now")
-            }
-          }
+    val currentSelectedId = if (isForLive) liveModelDraft.trim() else modelDraft.trim()
+    val defaultOptions =
+      if (isForLive) {
+        listOf(
+          SettingsOptionItem(
+            id = "gemini-3.1-flash-live-preview",
+            title = "Gemini 3.1 Flash Live Preview",
+            badge = "Default Live",
+            description = "Native real-time bidirectional voice streaming model with low latency and tool calling.",
+            selected = currentSelectedId == "gemini-3.1-flash-live-preview",
+          ),
+          SettingsOptionItem(
+            id = "gemini-2.5-flash-native-audio-preview-12-2025",
+            title = "Gemini 2.5 Flash Native Audio",
+            badge = "2.5 Live",
+            description = "Previous generation native audio live model for bidirectional voice sessions.",
+            selected = currentSelectedId == "gemini-2.5-flash-native-audio-preview-12-2025",
+          ),
+        )
+      } else {
+        listOf(
+          SettingsOptionItem(
+            id = "gemini-3.1-pro-preview",
+            title = "Gemini 3.1 Pro Preview",
+            badge = "Reasoning · 1M in",
+            description = "Flagship reasoning model for complex analysis, coding, multi-step planning, and deep synthesis.",
+            selected = currentSelectedId == "gemini-3.1-pro-preview",
+          ),
+          SettingsOptionItem(
+            id = "gemini-3-flash-preview",
+            title = "Gemini 3 Flash Preview",
+            badge = "Fast · Balanced",
+            description = "High-speed multimodal model offering strong reasoning with snappy response times.",
+            selected = currentSelectedId == "gemini-3-flash-preview",
+          ),
+          SettingsOptionItem(
+            id = "gemini-3.1-flash-lite-preview",
+            title = "Gemini 3.1 Flash-Lite Preview",
+            badge = "Ultra-low latency",
+            description = "Lightweight, high-throughput model ideal for quick replies and simple tasks.",
+            selected = currentSelectedId == "gemini-3.1-flash-lite-preview",
+          ),
+        )
+      }
+    val cachedOptionItems =
+      cachedModels.map { m ->
+        SettingsOptionItem(
+          id = m.id,
+          title = m.displayName.ifBlank { m.id },
+          badge = m.id,
+          description =
+            "Input limit: ${m.inputTokenLimit} tokens · Output limit: ${m.outputTokenLimit} tokens.",
+          selected = currentSelectedId == m.id,
+        )
+      }
+    val combinedOptions =
+      (defaultOptions + cachedOptionItems).distinctBy { it.id }
+
+    SettingsOptionPickerScreen(
+      title = if (isForLive) "Live voice model" else "Typed chat model",
+      subtitle =
+        if (isForLive) {
+          "Choose the Gemini model used for real-time Live voice sessions."
         } else {
-          LazyColumn(
-            modifier = Modifier.height(360.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            items(cachedModels, key = { it.id }) { m ->
-              Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = RiviaSurface2,
-                modifier =
-                  Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable {
-                      if (isForLive) {
-                        liveModelDraft = m.id
-                        updateSettings(buildMergedSettings().copy(liveModel = m.id))
-                      } else {
-                        modelDraft = m.id
-                        updateSettings(
-                          buildMergedSettings().copy(model = m.id, activeModeName = "Custom")
-                        )
-                      }
-                      showModelPickerForLive = null
-                    },
-              ) {
-                Column(
-                  modifier = Modifier.padding(12.dp),
-                  verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                  Text(
-                    text = m.displayName,
-                    color = RiviaTextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                  )
-                  Text(
-                    text = m.id,
-                    color = RiviaTextSecondary,
-                    fontFamily = ChivoMonoFontFamily,
-                    fontSize = 12.sp,
-                  )
-                  Text(
-                    text = "In: ${m.inputTokenLimit} · Out: ${m.outputTokenLimit}",
-                    color = RiviaTextTertiary,
-                    fontFamily = ChivoMonoFontFamily,
-                    fontSize = 11.sp,
-                  )
-                }
-              }
-            }
-          }
+          "Choose the Gemini model used for typed chat and tool turns."
+        },
+      options = combinedOptions,
+      headerActionLabel = "Refresh",
+      onHeaderAction = { viewModel.refreshGeminiModels() },
+      onSelect = { option ->
+        if (isForLive) {
+          liveModelDraft = option.id
+          updateSettings(buildMergedSettings().copy(liveModel = option.id))
+        } else {
+          modelDraft = option.id
+          updateSettings(
+            buildMergedSettings().copy(model = option.id, activeModeName = "Custom")
+          )
         }
+        showModelPickerForLive = null
       },
-      confirmButton = {
-        TextButton(onClick = { showModelPickerForLive = null }) {
-          Text("Close", color = RiviaTextSecondary)
-        }
-      },
+      onBack = { showModelPickerForLive = null },
     )
   }
 
@@ -1818,6 +1845,7 @@ fun RunSettingsScreen(
         }
       },
     )
+  }
   }
 }
 
@@ -1869,34 +1897,41 @@ fun SettingsCardSection(
   onHelpClick: (() -> Unit)? = null,
   content: @Composable () -> Unit,
 ) {
-  Surface(
-    shape = RoundedCornerShape(18.dp),
-    color = RiviaSurface2,
+  Column(
     modifier = Modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    Column(
-      modifier = Modifier.padding(18.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
+    Row(
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Text(
-          text = title,
-          style = MaterialTheme.typography.titleMedium,
-          color = RiviaTextPrimary,
-          modifier = Modifier.weight(1f),
+      Text(
+        text = title,
+        color = RiviaTextTertiary,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier.weight(1f),
+      )
+      if (onHelpClick != null) {
+        InfoHelpIconButton(
+          contentDescription = "Explain $title and show examples",
+          onClick = onHelpClick,
         )
-        if (onHelpClick != null) {
-          InfoHelpIconButton(
-            contentDescription = "Explain $title and show examples",
-            onClick = onHelpClick,
-          )
-        }
       }
-      content()
+    }
+    Surface(
+      shape = RoundedCornerShape(18.dp),
+      color = RiviaSurface1,
+      border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(
+        modifier = Modifier.padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        content()
+      }
     }
   }
 }

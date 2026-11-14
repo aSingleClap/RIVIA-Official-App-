@@ -142,6 +142,8 @@ data class LayerCardUiMeta(
   val sourceSubtitle: String, // "from build" or "edited on phone"
   val hasDraft: Boolean,
   val bundledLocked: Boolean,
+  val enabled: Boolean = true,
+  val isLocked: Boolean = status == LayerStatus.LOCKED,
   val lockPendingSha256: String? = null,
   val lockMismatchWarning: String? = null,
   val exportedLockJson: String? = null,

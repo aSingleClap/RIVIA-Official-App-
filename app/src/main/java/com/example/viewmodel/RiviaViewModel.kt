@@ -986,7 +986,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         pendingProf,
         bundle,
         mode ->
-        if (mode == AppUiMode.RIVIA) {
+        if (mode != AppUiMode.LABS) {
           "live"
         } else {
           val fallback = bundle?.engine?.default_profile ?: "live"
@@ -1449,16 +1449,23 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         }
       } catch (_: Throwable) {}
 
-      // Observe drafts, locks, settings, test runs, and active UI mode so Rivia/Dev vs Labs sandbox stay isolated
+      // Observe drafts, locks, settings, test runs, enabled states, lock overrides, and active UI mode so Rivia/Dev vs Labs sandbox stay isolated
       val settingsFlow =
         combine(
           dao.observeLayerSettingsById(1),
           dao.observeLayerSettingsById(2),
           _appUiMode,
-        ) { riviaSettings, labsSettings, mode ->
+          keyRepository.disabledLayersFlow,
+          keyRepository.layerLockOverridesFlow,
+        ) { riviaSettings, labsSettings, mode, disabledLayers, lockOverrides ->
           val effectiveSettings =
             if (mode == AppUiMode.LABS) (labsSettings ?: riviaSettings) else riviaSettings
-          Pair(mode, effectiveSettings)
+          LayerModePrefsSnapshot(
+            mode = mode,
+            settingsEntity = effectiveSettings,
+            disabledLayers = disabledLayers,
+            lockOverrides = lockOverrides,
+          )
         }
 
       combine(
@@ -1466,8 +1473,8 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           dao.observeLayerLocks(),
           settingsFlow,
           dao.observeLayerTestRuns(),
-        ) { allDrafts, allLocks, (mode, settingsEntity), testRuns ->
-          val isLabs = mode == AppUiMode.LABS
+        ) { allDrafts, allLocks, prefsSnap, testRuns ->
+          val isLabs = prefsSnap.mode == AppUiMode.LABS
           val scopedDrafts =
             if (isLabs) {
               allDrafts
@@ -1484,11 +1491,26 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
             } else {
               allLocks.filter { !it.layerKey.startsWith("labs:") }
             }
-          recomputeLayerState(rawFiles, scopedDrafts, scopedLocks, settingsEntity, testRuns)
+          recomputeLayerState(
+            rawFiles = rawFiles,
+            drafts = scopedDrafts,
+            locks = scopedLocks,
+            settingsEntity = prefsSnap.settingsEntity,
+            testRuns = testRuns,
+            disabledLayers = prefsSnap.disabledLayers,
+            lockOverrides = prefsSnap.lockOverrides,
+          )
         }
         .collect {}
     }
   }
+
+  private data class LayerModePrefsSnapshot(
+    val mode: AppUiMode,
+    val settingsEntity: LayerSettingsEntity?,
+    val disabledLayers: Set<String>,
+    val lockOverrides: Map<String, Boolean>,
+  )
 
   private fun recomputeLayerState(
     rawFiles: Map<String, String>,
@@ -1496,6 +1518,8 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     locks: List<LayerLockEntity>,
     settingsEntity: LayerSettingsEntity?,
     testRuns: List<LayerTestRunEntity>,
+    disabledLayers: Set<String> = emptySet(),
+    lockOverrides: Map<String, Boolean> = emptyMap(),
   ) {
     val validation = LayerConfigManager.loadAndValidateBundle(rawFiles, drafts)
     val bundle =
@@ -1509,8 +1533,10 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     _loadedLayersBundle.value = bundle
     _hasAnyLayerDraft.value = bundle.draftKeys.isNotEmpty()
 
-    // Update H2 write-tool guard in PluginRegistry
-    val h2Active = bundle.hardRules.rules.any { it.id == "H2" && it.active }
+    // Update H2 write-tool guard in PluginRegistry (only when hard_rules is enabled)
+    val h2Active =
+      "hard_rules" !in disabledLayers &&
+        bundle.hardRules.rules.any { it.id == "H2" && it.active }
     PluginRegistry.updateH2State(
       h2Active && "H2" in LayerConfigManager.SUPPORTED_CODE_RULE_HANDLERS
     )
@@ -1562,10 +1588,10 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     }
     _profileTestStates.value = testStates
 
-    // Compute card metadata for persona, style, engine, hard_rules
+    // Compute card metadata for persona, style, engine, hard_rules, and tests
     val lockMap = locks.associateBy { it.layerKey }
     val metas = mutableMapOf<String, LayerCardUiMeta>()
-    for (layerKey in listOf("persona", "style", "engine", "hard_rules")) {
+    for (layerKey in listOf("persona", "style", "engine", "hard_rules", "tests")) {
       val fileName = LayerConfigManager.LAYER_FILES[layerKey] ?: "$layerKey.json"
       val hasDraft = layerKey in bundle.draftKeys
       val (version, updated, bundledLocked) =
@@ -1582,15 +1608,40 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
               bundle.hardRules.updated,
               bundle.bundledHardRules.locked,
             )
+          "tests" ->
+            Triple(bundle.tests.version, bundle.tests.updated, true)
           else -> Triple(1, "", false)
         }
-      val status =
-        LayerConfigManager.computeLayerStatus(
-          layerKey = layerKey,
-          bundle = bundle,
-          fingerprints = fps,
-          testRuns = testRuns,
-        )
+      val baseStatus =
+        if (layerKey == "tests") {
+          LayerStatus.LOCKED
+        } else {
+          LayerConfigManager.computeLayerStatus(
+            layerKey = layerKey,
+            bundle = bundle,
+            fingerprints = fps,
+            testRuns = testRuns,
+          )
+        }
+      val isEnabled = layerKey !in disabledLayers
+      val isLocked = lockOverrides[layerKey] ?: (baseStatus == LayerStatus.LOCKED)
+      val effectiveStatus =
+        if (isLocked) {
+          LayerStatus.LOCKED
+        } else if (baseStatus == LayerStatus.LOCKED) {
+          if (layerKey == "tests") {
+            LayerStatus.DRAFT
+          } else {
+            LayerConfigManager.computeLayerStatus(
+              layerKey = layerKey,
+              bundle = bundle.copy(draftKeys = bundle.draftKeys + layerKey),
+              fingerprints = fps,
+              testRuns = testRuns,
+            )
+          }
+        } else {
+          baseStatus
+        }
       val lockRow = lockMap[layerKey]
       metas[layerKey] =
         LayerCardUiMeta(
@@ -1598,10 +1649,12 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           fileName = fileName,
           version = version,
           updated = updated,
-          status = status,
+          status = effectiveStatus,
           sourceSubtitle = if (hasDraft) "edited on phone" else "from build",
           hasDraft = hasDraft,
           bundledLocked = bundledLocked,
+          enabled = isEnabled,
+          isLocked = isLocked,
           lockPendingSha256 = lockRow?.pendingCanonicalSha256,
           lockMismatchWarning = lockRow?.mismatchWarning,
           exportedLockJson = lockRow?.exportedJson,
@@ -1610,11 +1663,90 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     _layerCardMetas.value = metas
   }
 
+  private fun layerDisplayName(layerKey: String): String =
+    when (layerKey) {
+      "persona" -> "Persona"
+      "style" -> "Style"
+      "engine" -> "Engine"
+      "hard_rules" -> "Hard rules"
+      "tests" -> "Tests"
+      else -> layerKey
+    }
+
+  fun setLayerEnabled(layerKey: String, enabled: Boolean) {
+    viewModelScope.launch {
+      keyRepository.setLayerEnabled(layerKey, enabled)
+      showNotice("${layerDisplayName(layerKey)} layer ${if (enabled) "enabled" else "disabled"}.")
+    }
+  }
+
+  fun setLayerLocked(layerKey: String, locked: Boolean) {
+    viewModelScope.launch {
+      keyRepository.setLayerLockOverride(layerKey, locked)
+      showNotice("${layerDisplayName(layerKey)} layer ${if (locked) "locked" else "unlocked"}.")
+    }
+  }
+
+  fun clearLayer(layerKey: String): Result<Unit> {
+    val bundle = _loadedLayersBundle.value ?: return Result.failure(Exception("Layers not loaded"))
+    return when (layerKey) {
+      "persona" -> {
+        val cleared = bundle.persona.copy(version = 0, locked = false, text = "")
+        val rawJson = LayerConfigManager.prettyJson.encodeToString(PersonaLayerConfig.serializer(), cleared)
+        saveRawLayerDraft("persona", rawJson)
+      }
+      "style" -> {
+        val cleared = bundle.style.copy(locked = false, text = "", voice = "")
+        val rawJson = LayerConfigManager.prettyJson.encodeToString(StyleLayerConfig.serializer(), cleared)
+        saveRawLayerDraft("style", rawJson)
+      }
+      "engine" -> {
+        val cleared =
+          bundle.bundledEngine.copy(
+            locked = false,
+            default_profile = "balanced",
+            thought_summaries = "auto",
+            max_output_tokens = null,
+            service_tier = "standard",
+            store = true,
+            safety = kotlinx.serialization.json.JsonPrimitive("model_default"),
+          )
+        saveEngineDraft(cleared)
+      }
+      "hard_rules" -> {
+        val clearedRules =
+          bundle.hardRules.rules.map { rule ->
+            if (rule.enforced_by != "code" || rule.id == "H2") {
+              rule.copy(active = false)
+            } else {
+              rule
+            }
+          }
+        val h7Default = bundle.bundledHardRules.rules.firstOrNull { it.id == "H7" }?.default ?: 2
+        setSpokenMaxSentences(h7Default)
+        saveWatchWordsList(emptyList())
+        saveHardRulesDraft(bundle.hardRules.copy(locked = false, rules = clearedRules))
+      }
+      "tests" -> {
+        viewModelScope.launch {
+          dao.clearAllLayerTestRuns()
+          showNotice("Cleared logged test runs.")
+        }
+        Result.success(Unit)
+      }
+      else -> Result.failure(IllegalArgumentException("Unknown layer $layerKey"))
+    }
+  }
+
   // --- Layer Editing, Drafts, Locking, Tunables, and Test Logging ---
 
   fun savePersonaDraft(newText: String): Result<Unit> {
     val bundle = _loadedLayersBundle.value ?: return Result.failure(Exception("Layers not loaded"))
-    val updated = bundle.persona.copy(locked = false, text = newText)
+    val nextVersion =
+      if (newText.isBlank()) 0
+      else if (bundle.persona.version <= 0) 1
+      else bundle.persona.version
+    val updated = bundle.persona.copy(version = nextVersion, locked = false, text = newText)
     val rawJson = LayerConfigManager.prettyJson.encodeToString(PersonaLayerConfig.serializer(), updated)
     return saveRawLayerDraft("persona", rawJson)
   }
@@ -1670,6 +1802,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           updatedAt = System.currentTimeMillis(),
         )
       )
+      keyRepository.setLayerLockOverride(layerKey, false)
       // Clear any previous lock mismatch warning when user intentionally edits draft
       val existingLock = dao.getLayerLock(dbLayerKey)
       if (existingLock != null && existingLock.mismatchWarning != null) {
@@ -1680,19 +1813,20 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   fun startDraftFromLocked(layerKey: String) {
-    val bundle = _loadedLayersBundle.value ?: return
-    when (layerKey) {
-      "persona" -> savePersonaDraft(bundle.persona.text)
-      "style" -> saveStyleDraft(bundle.style.text, bundle.style.voice)
-      "engine" -> saveEngineDraft(bundle.engine)
-      "hard_rules" -> saveHardRulesDraft(bundle.hardRules)
-    }
+    setLayerLocked(layerKey, false)
   }
 
   fun discardLayerDraft(layerKey: String) {
     val dbLayerKey = scopedLayerKey(layerKey)
     viewModelScope.launch {
       dao.deleteLayerDraft(dbLayerKey)
+      keyRepository.setLayerLockOverride(layerKey, null)
+      if (layerKey == "hard_rules") {
+        val h7Default =
+          _loadedLayersBundle.value?.bundledHardRules?.rules?.firstOrNull { it.id == "H7" }?.default ?: 2
+        setSpokenMaxSentences(h7Default)
+        saveWatchWordsList(emptyList())
+      }
       val existingLock = dao.getLayerLock(dbLayerKey)
       if (existingLock != null) {
         dao.saveLayerLock(
@@ -1703,7 +1837,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           )
         )
       }
-      showNotice("Reverted $layerKey to the bundled file.")
+      showNotice("Reverted ${layerDisplayName(layerKey)} to the bundled file.")
     }
   }
 
@@ -1842,13 +1976,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     stopStreaming()
     _activeChatId.value = null
     _pendingNewChatIsLab.value = false
-    val defaultProf =
-      if (_appUiMode.value == AppUiMode.RIVIA) {
-        "live"
-      } else {
-        _loadedLayersBundle.value?.engine?.default_profile ?: "live"
-      }
-    _pendingRiviaProfile.value = defaultProf
+    _pendingRiviaProfile.value = "live"
     _pendingNewChatSettings.value = null
   }
 
@@ -2023,7 +2151,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           val isRivia = !chat.isLabChat
           val bundle = _loadedLayersBundle.value
           val effectiveRiviaProfile =
-            if (_appUiMode.value == AppUiMode.RIVIA) "live" else chat.riviaProfile
+            if (_appUiMode.value != AppUiMode.LABS) "live" else chat.riviaProfile
           val normProf = LayerConfigManager.normalizeProfileKey(effectiveRiviaProfile)
           val userModel =
             if (isRivia && bundle != null) {
@@ -2125,7 +2253,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           val isRivia = !updatedChat.isLabChat
           val bundle = _loadedLayersBundle.value
           val effectiveRiviaProfile =
-            if (_appUiMode.value == AppUiMode.RIVIA) "live" else updatedChat.riviaProfile
+            if (_appUiMode.value != AppUiMode.LABS) "live" else updatedChat.riviaProfile
           val normProf = LayerConfigManager.normalizeProfileKey(effectiveRiviaProfile)
           val userModel =
             if (isRivia && bundle != null) {
@@ -2241,13 +2369,13 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     val now = System.currentTimeMillis()
     val isLab = _pendingNewChatIsLab.value
     val defaultProf =
-      if (_appUiMode.value == AppUiMode.RIVIA) {
+      if (_appUiMode.value != AppUiMode.LABS) {
         "live"
       } else {
         _loadedLayersBundle.value?.engine?.default_profile ?: "live"
       }
     val riviaProf =
-      if (_appUiMode.value == AppUiMode.RIVIA) {
+      if (_appUiMode.value != AppUiMode.LABS) {
         "live"
       } else {
         _pendingRiviaProfile.value.ifBlank { defaultProf }
@@ -2303,7 +2431,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     // - In Rivia mode, the permanent mode is "live".
     // - "live_typed" always maps to engine profile "live" for fingerprint, test-state chip, Log a run, Chat info, Request log.
     val rawSelectedProfile =
-      if (channel == RiviaChannel.LIVE_VOICE || _appUiMode.value == AppUiMode.RIVIA) {
+      if (channel == RiviaChannel.LIVE_VOICE || _appUiMode.value != AppUiMode.LABS) {
         "live"
       } else {
         chat.riviaProfile
@@ -2377,20 +2505,46 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     val pendingH7NoticeToSend =
       if (isRivia) latestChatAtStart.pendingH7Notice else null
 
+    val metasSnap = _layerCardMetas.value
+    val effectivePersonaForTurn =
+      if (metasSnap["persona"]?.enabled == false && bundle != null) {
+        bundle.persona.copy(version = 0, text = "")
+      } else {
+        bundle?.persona
+      }
+    val effectiveStyleForTurn =
+      if (metasSnap["style"]?.enabled == false && bundle != null) {
+        bundle.style.copy(text = "", voice = "")
+      } else {
+        bundle?.style
+      }
+    val effectiveHardRulesForTurn =
+      if (metasSnap["hard_rules"]?.enabled == false && bundle != null) {
+        bundle.hardRules.copy(rules = emptyList())
+      } else {
+        bundle?.hardRules
+      }
+    val effectiveEngineForTurn =
+      if (metasSnap["engine"]?.enabled == false && bundle != null) {
+        bundle.bundledEngine
+      } else {
+        bundle?.engine
+      }
+
     val customBodyBuilder: ((JSONArray, String?, Boolean) -> JSONObject)? =
       if (isRivia && bundle != null) {
         { inputSteps, prevId, stream ->
           val sysInstruction =
             LayerConfigManager.assembleSystemInstruction(
               channel = layerChannel,
-              persona = bundle.persona,
-              style = bundle.style,
-              hardRules = bundle.hardRules,
+              persona = effectivePersonaForTurn ?: bundle.persona,
+              style = effectiveStyleForTurn ?: bundle.style,
+              hardRules = effectiveHardRulesForTurn ?: bundle.hardRules,
               spokenMaxSentences = _spokenMaxSentences.value,
               pendingH7Notice = pendingH7NoticeToSend,
             )
           geminiClient.buildRiviaRequestBodyJson(
-            engine = bundle.engine,
+            engine = effectiveEngineForTurn ?: bundle.engine,
             profileName = normalizedProfile,
             assembledSystemInstruction = sysInstruction,
             inputSteps = inputSteps,
@@ -2410,9 +2564,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         val labsLayerSysInstruction =
           LayerConfigManager.assembleSystemInstruction(
             channel = layerChannel,
-            persona = bundle.persona,
-            style = bundle.style,
-            hardRules = bundle.hardRules,
+            persona = effectivePersonaForTurn ?: bundle.persona,
+            style = effectiveStyleForTurn ?: bundle.style,
+            hardRules = effectiveHardRulesForTurn ?: bundle.hardRules,
             spokenMaxSentences = _spokenMaxSentences.value,
             pendingH7Notice = null,
           )
@@ -3821,18 +3975,32 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       if (channelChoice == "voice") "live"
       else LayerConfigManager.normalizeProfileKey(selectedProfile)
 
+    val metasSnap = _layerCardMetas.value
+    val effectivePersona =
+      if (metasSnap["persona"]?.enabled == false) bundle.persona.copy(version = 0, text = "")
+      else bundle.persona
+    val effectiveStyle =
+      if (metasSnap["style"]?.enabled == false) bundle.style.copy(text = "", voice = "")
+      else bundle.style
+    val effectiveHardRules =
+      if (metasSnap["hard_rules"]?.enabled == false) bundle.hardRules.copy(rules = emptyList())
+      else bundle.hardRules
+    val effectiveEngine =
+      if (metasSnap["engine"]?.enabled == false) bundle.bundledEngine
+      else bundle.engine
+
     val sysInstruction =
       LayerConfigManager.assembleSystemInstruction(
         channel = channelChoice,
-        persona = bundle.persona,
-        style = bundle.style,
-        hardRules = bundle.hardRules,
+        persona = effectivePersona,
+        style = effectiveStyle,
+        hardRules = effectiveHardRules,
         spokenMaxSentences = _spokenMaxSentences.value,
         pendingH7Notice = pendingH7,
       )
 
     return geminiClient.buildRiviaRedactedPreview(
-      engine = bundle.engine,
+      engine = effectiveEngine,
       profileName = profileForChannel,
       assembledSystemInstruction = sysInstruction,
       previousInteractionId = prevId,

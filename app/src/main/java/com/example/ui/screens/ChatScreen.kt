@@ -183,6 +183,7 @@ import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaModeBlue
 import com.example.ui.theme.RiviaModeMint
 import com.example.ui.theme.RiviaModeViolet
+import com.example.ui.theme.RiviaModeWhite
 import com.example.ui.theme.RiviaMutedText
 import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
@@ -250,6 +251,8 @@ fun ChatScreen(
 
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val scope = rememberCoroutineScope()
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val focusManager = LocalFocusManager.current
 
   // Dialog states
   var messageForDetails by remember { mutableStateOf<MessageEntity?>(null) }
@@ -264,6 +267,30 @@ fun ChatScreen(
   var showDevLabsModeSheet by remember { mutableStateOf(false) }
   var newChatResetToken by rememberSaveable { mutableStateOf(0) }
   var isInLiveMode by rememberSaveable { mutableStateOf(false) }
+
+  // Close the keyboard whenever any drawer, menu, sheet, or dialog is opened
+  LaunchedEffect(
+    drawerState.isOpen,
+    drawerState.targetValue,
+    showDevLabsModeSheet,
+    showRiviaChatInfoDialog,
+    chatForContextMenu,
+    chatToDelete,
+    messageForDetails,
+  ) {
+    if (
+      drawerState.isOpen ||
+        drawerState.targetValue == DrawerValue.Open ||
+        showDevLabsModeSheet ||
+        showRiviaChatInfoDialog ||
+        chatForContextMenu != null ||
+        chatToDelete != null ||
+        messageForDetails != null
+    ) {
+      keyboardController?.hide()
+      focusManager.clearFocus()
+    }
+  }
 
   // Galaxy Z Fold6 Adaptive Layout:
   // Cover screen (compact width < 600.dp) -> one pane with a drawer.
@@ -295,19 +322,56 @@ fun ChatScreen(
             searchQuery = searchQuery,
             onSearchQueryChange = viewModel::setDrawerSearchQuery,
             onNewChat = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
               newChatResetToken++
               viewModel.startNewChat()
             },
-            onSelectChat = { viewModel.selectChat(it.id) },
-            onLongPressChat = { chatForContextMenu = it },
-            onOpenTests = onOpenTests,
-            onOpenBots = onOpenBots,
-            onOpenLiveMode = { isInLiveMode = true },
-            onOpenPipeline = onOpenPipeline,
-            onOpenLayers = { onOpenLayers(null) },
-            onOpenGlobalSettings = onOpenGlobalSettings,
-            onOpenDevLabsSheet = { showDevLabsModeSheet = true },
-            onExitToRivia = { viewModel.setAppUiMode(AppUiMode.RIVIA) },
+            onSelectChat = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              viewModel.selectChat(it.id)
+            },
+            onLongPressChat = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              chatForContextMenu = it
+            },
+            onOpenTests = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              onOpenTests()
+            },
+            onOpenBots = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              onOpenBots()
+            },
+            onOpenLiveMode = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              isInLiveMode = true
+            },
+            onOpenPipeline = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              onOpenPipeline()
+            },
+            onOpenLayers = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              onOpenLayers(null)
+            },
+            onOpenGlobalSettings = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              onOpenGlobalSettings()
+            },
+            onOpenDevLabsSheet = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              showDevLabsModeSheet = true
+            },
           )
         }
         // Hinge-safe divider gap
@@ -322,6 +386,11 @@ fun ChatScreen(
             onOpenDrawer = {},
             appUiMode = appUiMode,
             onSelectUiMode = viewModel::setAppUiMode,
+            onOpenDevLabsSheet = {
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              showDevLabsModeSheet = true
+            },
             chatTitle = activeChat?.title ?: "New chat",
             isLabChat = isActiveChatLab,
             activeRiviaProfile = activeRiviaProfile,
@@ -341,13 +410,7 @@ fun ChatScreen(
             isInLiveMode = isInLiveMode,
             keepScreenOnInLive = voicePrefs.keepScreenOnInLive,
             onOpenLiveMode = { isInLiveMode = true },
-            onEndLiveMode = {
-              if (messages.isNotEmpty()) {
-                newChatResetToken++
-                viewModel.startNewChat()
-              }
-              isInLiveMode = false
-            },
+            onEndLiveMode = { isInLiveMode = false },
             missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
             statusBanner =
               (if (!isActiveChatLab) layersLoadError else null)
@@ -401,46 +464,64 @@ fun ChatScreen(
               searchQuery = searchQuery,
               onSearchQueryChange = viewModel::setDrawerSearchQuery,
               onNewChat = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 newChatResetToken++
                 viewModel.startNewChat()
                 scope.launch { drawerState.close() }
               },
               onSelectChat = { chat ->
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 viewModel.selectChat(chat.id)
                 scope.launch { drawerState.close() }
               },
-              onLongPressChat = { chatForContextMenu = it },
+              onLongPressChat = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                chatForContextMenu = it
+              },
               onOpenTests = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 onOpenTests()
               },
               onOpenBots = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 onOpenBots()
               },
               onOpenLiveMode = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 isInLiveMode = true
               },
               onOpenPipeline = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 onOpenPipeline()
               },
               onOpenLayers = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 onOpenLayers(null)
               },
               onOpenGlobalSettings = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 onOpenGlobalSettings()
               },
               onOpenDevLabsSheet = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
                 scope.launch { drawerState.close() }
                 showDevLabsModeSheet = true
-              },
-              onExitToRivia = {
-                scope.launch { drawerState.close() }
-                viewModel.setAppUiMode(AppUiMode.RIVIA)
               },
             )
           }
@@ -450,9 +531,18 @@ fun ChatScreen(
           activeChatId = activeChat?.id,
           newChatResetToken = newChatResetToken,
           showDrawerButton = true,
-          onOpenDrawer = { scope.launch { drawerState.open() } },
+          onOpenDrawer = {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+            scope.launch { drawerState.open() }
+          },
           appUiMode = appUiMode,
           onSelectUiMode = viewModel::setAppUiMode,
+          onOpenDevLabsSheet = {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+            showDevLabsModeSheet = true
+          },
           chatTitle = activeChat?.title ?: "New chat",
           isLabChat = isActiveChatLab,
           activeRiviaProfile = activeRiviaProfile,
@@ -472,13 +562,7 @@ fun ChatScreen(
           isInLiveMode = isInLiveMode,
           keepScreenOnInLive = voicePrefs.keepScreenOnInLive,
           onOpenLiveMode = { isInLiveMode = true },
-          onEndLiveMode = {
-            if (messages.isNotEmpty()) {
-              newChatResetToken++
-              viewModel.startNewChat()
-            }
-            isInLiveMode = false
-          },
+          onEndLiveMode = { isInLiveMode = false },
           missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
           statusBanner =
             (if (!isActiveChatLab) layersLoadError else null)
@@ -812,7 +896,6 @@ private fun ChatDrawerContent(
   onOpenLayers: () -> Unit,
   onOpenGlobalSettings: () -> Unit,
   onOpenDevLabsSheet: () -> Unit = {},
-  onExitToRivia: () -> Unit = {},
 ) {
   val dateFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.US) }
 
@@ -1000,111 +1083,8 @@ private fun ChatDrawerContent(
       }
     }
 
-    // Labs-only Tests drawer item (opens the 7 Step 0 / Step 1 checks screen)
-    if (appUiMode == AppUiMode.LABS) {
-      Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = RiviaSurface2,
-        border = BorderStroke(1.dp, RiviaBorder),
-        modifier =
-          Modifier.fillMaxWidth()
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onOpenTests)
-            .testTag("open_tests_button"),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.Center,
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.Science,
-            contentDescription = "Tests",
-            tint = RiviaIconDefault,
-            modifier = Modifier.size(18.dp),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = "Tests",
-            style = MaterialTheme.typography.labelLarge,
-            color = RiviaTextPrimary,
-          )
-        }
-      }
-    }
-
-    // Dev-only Bots drawer item (opens the Bots screen in Dev mode)
-    if (appUiMode == AppUiMode.DEV) {
-      Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = RiviaSurface2,
-        border = BorderStroke(1.dp, RiviaBorder),
-        modifier =
-          Modifier.fillMaxWidth()
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onOpenBots)
-            .testTag("open_bots_button"),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.Center,
-        ) {
-          Icon(
-            imageVector = Icons.Outlined.AccountTree,
-            contentDescription = "Tablet",
-            tint = RiviaIconDefault,
-            modifier = Modifier.size(18.dp),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = "Tablet",
-            style = MaterialTheme.typography.labelLarge,
-            color = RiviaTextPrimary,
-          )
-        }
-      }
-    }
-
-    // Exit to Rivia action in Dev and Labs modes
-    if (appUiMode != AppUiMode.RIVIA) {
-      Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = RiviaSurface2,
-        border = BorderStroke(1.dp, RiviaBorder),
-        modifier =
-          Modifier.fillMaxWidth()
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onExitToRivia)
-            .testTag("drawer_exit_to_rivia_button"),
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.Center,
-        ) {
-          Icon(
-            imageVector = Icons.AutoMirrored.Outlined.ExitToApp,
-            contentDescription = "Exit to Rivia",
-            tint = RiviaIconDefault,
-            modifier = Modifier.size(16.dp),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = "Exit to Rivia",
-            style = MaterialTheme.typography.labelMedium,
-            color = RiviaTextPrimary,
-            fontWeight = FontWeight.SemiBold,
-          )
-        }
-      }
-    }
-
-    // Pipeline, Layers, and Settings grouped together at the bottom of the drawer, above "Dev & Labs",
-    // with one thin #262626 divider line above them.
+    // Tablet, Layers, Pipeline, Tests (in Labs), and Settings grouped together in the same menu
+    // at the bottom of the drawer, above the mode pill, with one thin #262626 divider line above them.
     val settingsButtonLabel =
       when (appUiMode) {
         AppUiMode.RIVIA -> "Settings"
@@ -1118,34 +1098,28 @@ private fun ChatDrawerContent(
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {
-      // Pipeline row
+      // Tablet row
       Row(
         modifier =
           Modifier.fillMaxWidth()
             .height(44.dp)
-            .clickable(onClick = onOpenPipeline)
+            .clickable(onClick = onOpenBots)
             .padding(horizontal = 8.dp)
-            .testTag("open_pipeline_button"),
+            .testTag("open_bots_button"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start,
       ) {
         Icon(
           imageVector = Icons.Outlined.AccountTree,
-          contentDescription = "Pipeline",
+          contentDescription = "Tablet",
           tint = Color(0xFFA3A3A3),
           modifier = Modifier.size(17.dp),
         )
         Spacer(modifier = Modifier.width(12.dp))
         Text(
-          text = "Pipeline",
+          text = "Tablet",
           fontSize = 14.sp,
           color = Color(0xFFEDEDED),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = "Soon",
-          color = Color(0xFF8F8F8F),
-          fontSize = 11.sp,
         )
       }
 
@@ -1182,6 +1156,64 @@ private fun ChatDrawerContent(
         }
       }
 
+      // Pipeline row
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(44.dp)
+            .clickable(onClick = onOpenPipeline)
+            .padding(horizontal = 8.dp)
+            .testTag("open_pipeline_button"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.AccountTree,
+          contentDescription = "Pipeline",
+          tint = Color(0xFFA3A3A3),
+          modifier = Modifier.size(17.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+          text = "Pipeline",
+          fontSize = 14.sp,
+          color = Color(0xFFEDEDED),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = "Soon",
+          color = Color(0xFF8F8F8F),
+          fontSize = 11.sp,
+        )
+      }
+
+      // Labs-only Tests row
+      if (appUiMode == AppUiMode.LABS) {
+        Row(
+          modifier =
+            Modifier.fillMaxWidth()
+              .height(44.dp)
+              .clickable(onClick = onOpenTests)
+              .padding(horizontal = 8.dp)
+              .testTag("open_tests_button"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.Start,
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.Science,
+            contentDescription = "Tests",
+            tint = Color(0xFFA3A3A3),
+            modifier = Modifier.size(17.dp),
+          )
+          Spacer(modifier = Modifier.width(12.dp))
+          Text(
+            text = "Tests",
+            fontSize = 14.sp,
+            color = Color(0xFFEDEDED),
+          )
+        }
+      }
+
       // Settings row
       Row(
         modifier =
@@ -1208,37 +1240,51 @@ private fun ChatDrawerContent(
       }
     }
 
-    // Quiet "Dev & Labs" row at the very bottom of the chats drawer, below Settings
-    Row(
-      modifier =
-        Modifier.fillMaxWidth()
-          .minimumInteractiveComponentSize()
-          .clip(RoundedCornerShape(12.dp))
-          .clickable(onClick = onOpenDevLabsSheet)
-          .padding(horizontal = 12.dp, vertical = 6.dp)
-          .testTag("drawer_dev_labs_button"),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.Center,
+    // Single hollow purple outlined pill with the selected mode's corresponding color and name inside
+    val selectedModeColor = accentColorForMode(appUiMode)
+    Box(
+      modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+      contentAlignment = Alignment.Center,
     ) {
-      Text(
-        text = "Dev & Labs",
-        style = MaterialTheme.typography.labelSmall,
-        fontFamily = ChivoMonoFontFamily,
-        color = RiviaTextTertiary,
-      )
+      Surface(
+        shape = RoundedCornerShape(50),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, RiviaModeViolet),
+        modifier =
+          Modifier.minimumInteractiveComponentSize()
+            .clip(RoundedCornerShape(50))
+            .clickable(onClick = onOpenDevLabsSheet)
+            .testTag("drawer_dev_labs_button"),
+      ) {
+        Text(
+          text = appUiMode.displayName,
+          style = MaterialTheme.typography.labelMedium,
+          fontFamily = ChivoMonoFontFamily,
+          fontWeight = FontWeight.SemiBold,
+          color = selectedModeColor,
+          modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
+        )
+      }
     }
   }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DevLabsModeSheet(
+fun DevLabsModeSheet(
   currentMode: AppUiMode,
   onSelectMode: (AppUiMode) -> Unit,
   onDismiss: () -> Unit,
 ) {
   val haptic = LocalHapticFeedback.current
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val focusManager = LocalFocusManager.current
   var showDevHoldHint by remember { mutableStateOf(false) }
+
+  LaunchedEffect(Unit) {
+    keyboardController?.hide()
+    focusManager.clearFocus()
+  }
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
@@ -1258,6 +1304,46 @@ private fun DevLabsModeSheet(
         fontWeight = FontWeight.SemiBold,
         color = RiviaTextPrimary,
       )
+
+      // Rivia choice: opens on a normal tap
+      Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = RiviaSurface2,
+        border =
+          BorderStroke(
+            1.dp,
+            if (currentMode == AppUiMode.RIVIA) RiviaModeWhite else RiviaBorder,
+          ),
+        modifier =
+          Modifier.fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable { onSelectMode(AppUiMode.RIVIA) }
+            .testTag("sheet_choice_rivia"),
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+          ) {
+            Text(
+              text = "Rivia",
+              style = MaterialTheme.typography.titleSmall,
+              color = RiviaModeWhite,
+              fontWeight = FontWeight.Bold,
+            )
+            Text(
+              text = "Standard Rivia experience for everyday voice and chat conversations.",
+              style = MaterialTheme.typography.bodySmall,
+              color = RiviaTextSecondary,
+            )
+          }
+        }
+      }
 
       // Dev choice: requires 600 ms long press + haptic tick on unlock
       Surface(
@@ -1303,7 +1389,7 @@ private fun DevLabsModeSheet(
               Text(
                 text = "Dev",
                 style = MaterialTheme.typography.titleSmall,
-                color = RiviaTextPrimary,
+                color = RiviaModeViolet,
                 fontWeight = FontWeight.Bold,
               )
               Surface(
@@ -1367,7 +1453,7 @@ private fun DevLabsModeSheet(
             Text(
               text = "Labs",
               style = MaterialTheme.typography.titleSmall,
-              color = RiviaTextPrimary,
+              color = RiviaModeBlue,
               fontWeight = FontWeight.Bold,
             )
             Text(
@@ -1390,6 +1476,7 @@ private fun ChatConversationPane(
   onOpenDrawer: () -> Unit,
   appUiMode: AppUiMode,
   onSelectUiMode: (AppUiMode) -> Unit,
+  onOpenDevLabsSheet: () -> Unit = {},
   chatTitle: String,
   isLabChat: Boolean,
   activeRiviaProfile: String,
@@ -1440,6 +1527,7 @@ private fun ChatConversationPane(
   var composerText by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf("") }
   var showComposerInEmptyChat by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
   var isInDictationPanel by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var dictationOpenedFromComposer by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
   var focusComposerOnReveal by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
   var startDictationOnReveal by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
   var requestKeyboardFocusNow by remember { mutableStateOf(false) }
@@ -1533,25 +1621,29 @@ private fun ChatConversationPane(
     )
   val isLiveSpeaking = liveState.orbState == OrbState.SPEAKING
 
-  // End Live cleanly on system Back and return to the sphere screen in reverse
+  // End Live cleanly on system Back (stays in chat if in a chat or if something was said; returns to sphere if started outside a chat and nothing was said)
   BackHandler(enabled = isInLiveMode) {
     LiveVoiceService.stop(context)
     requestKeyboardFocusNow = false
     focusComposerOnReveal = false
     startDictationOnReveal = false
+    dictationOpenedFromComposer = false
     isInDictationPanel = false
-    composerText = ""
-    showComposerInEmptyChat = false
     onEndLiveMode()
   }
 
-  // Cancel dictation panel on system Back and return to the sphere screen in reverse
+  // Cancel dictation panel on system Back and return to composer (if opened from composer) or sphere screen
   BackHandler(enabled = !isInLiveMode && isInDictationPanel) {
     requestKeyboardFocusNow = false
     focusComposerOnReveal = false
     startDictationOnReveal = false
-    composerText = ""
-    showComposerInEmptyChat = false
+    if (dictationOpenedFromComposer || messages.isNotEmpty()) {
+      showComposerInEmptyChat = true
+    } else {
+      composerText = ""
+      showComposerInEmptyChat = false
+    }
+    dictationOpenedFromComposer = false
     isInDictationPanel = false
   }
 
@@ -1960,7 +2052,11 @@ private fun ChatConversationPane(
         ) {
           if (showDrawerButton) {
             IconButton(
-              onClick = onOpenDrawer,
+              onClick = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                onOpenDrawer()
+              },
               modifier = Modifier.minimumInteractiveComponentSize().testTag("drawer_button"),
             ) {
               Icon(
@@ -1986,17 +2082,24 @@ private fun ChatConversationPane(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
               )
-              // In Dev and Labs, show a small mode tag in the top bar ("DEV" or "LABS"); Rivia mode shows no mode tag
+              // In Dev and Labs, show a hollow purple outlined mode pill with the selected mode's color and name inside
               if (appUiMode != AppUiMode.RIVIA) {
                 Surface(
                   shape = RoundedCornerShape(50),
-                  color = RiviaSurface2,
-                  border = BorderStroke(1.dp, RiviaBorder),
-                  modifier = Modifier.testTag("top_bar_mode_tag"),
+                  color = Color.Transparent,
+                  border = BorderStroke(1.dp, RiviaModeViolet),
+                  modifier =
+                    Modifier.clip(RoundedCornerShape(50))
+                      .clickable {
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                        onOpenDevLabsSheet()
+                      }
+                      .testTag("top_bar_mode_tag"),
                 ) {
                   Text(
-                    text = if (appUiMode == AppUiMode.DEV) "DEV" else "LABS",
-                    color = RiviaTextSecondary,
+                    text = appUiMode.displayName,
+                    color = accentColorForMode(appUiMode),
                     fontFamily = ChivoMonoFontFamily,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
@@ -2011,7 +2114,11 @@ private fun ChatConversationPane(
                   color = RiviaWarningAmber.copy(alpha = 0.16f),
                   border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.6f)),
                   modifier =
-                    Modifier.clickable { onOpenLayers(null) }
+                    Modifier.clickable {
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                        onOpenLayers(null)
+                      }
                       .testTag("top_bar_draft_chip"),
                 ) {
                   Text(
@@ -2036,28 +2143,43 @@ private fun ChatConversationPane(
               )
             }
           }
-          if (appUiMode == AppUiMode.RIVIA) {
-            // Auto read-aloud toggle directly in the top bar for Rivia mode (no model/profile selector)
-            IconButton(
-              onClick = onToggleAutoReadAloud,
-              modifier =
-                Modifier.minimumInteractiveComponentSize().testTag("auto_read_aloud_toggle"),
-            ) {
-              Icon(
-                imageVector =
-                  if (runSettings.autoReadAloud) Icons.AutoMirrored.Outlined.VolumeUp
-                  else Icons.AutoMirrored.Outlined.VolumeOff,
-                contentDescription =
-                  if (runSettings.autoReadAloud) "Disable auto read-aloud"
-                  else "Enable auto read-aloud",
-                tint = if (runSettings.autoReadAloud) RiviaIconActive else RiviaIconDefault,
-              )
+          if (appUiMode != AppUiMode.LABS) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              // Auto read-aloud toggle directly in the top bar for Rivia and Dev modes (no model/profile selector)
+              IconButton(
+                onClick = onToggleAutoReadAloud,
+                modifier =
+                  Modifier.minimumInteractiveComponentSize().testTag("auto_read_aloud_toggle"),
+              ) {
+                Icon(
+                  imageVector =
+                    if (runSettings.autoReadAloud) Icons.AutoMirrored.Outlined.VolumeUp
+                    else Icons.AutoMirrored.Outlined.VolumeOff,
+                  contentDescription =
+                    if (runSettings.autoReadAloud) "Disable auto read-aloud"
+                    else "Enable auto read-aloud",
+                  tint = if (runSettings.autoReadAloud) RiviaIconActive else RiviaIconDefault,
+                )
+              }
+              if (appUiMode == AppUiMode.DEV) {
+                IconButton(
+                  onClick = onOpenChatInfo,
+                  modifier =
+                    Modifier.minimumInteractiveComponentSize().testTag("run_settings_gear_button"),
+                ) {
+                  Icon(
+                    imageVector = Icons.Outlined.Info,
+                    contentDescription = "Open Chat info for this Rivia chat",
+                    tint = RiviaTextTertiary,
+                  )
+                }
+              }
             }
           }
         }
 
-        // Secondary action strip in Top Bar (Dev & Labs only): Profile / Preset selector, Auto read-aloud, and Dev/Labs inspector buttons
-        if (appUiMode != AppUiMode.RIVIA) {
+        // Secondary action strip in Top Bar (Labs only): Preset selector, Auto read-aloud, and Labs inspector buttons
+        if (appUiMode == AppUiMode.LABS) {
           Row(
             modifier =
               Modifier.fillMaxWidth()
@@ -2065,173 +2187,78 @@ private fun ChatConversationPane(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            if (appUiMode == AppUiMode.LABS) {
-              // Labs Mode preset chip (Fast, Balanced, Deep)
-              Box {
-                Surface(
-                  shape = RoundedCornerShape(18.dp),
-                  color = RiviaSurface2,
-                  border = BorderStroke(1.dp, RiviaBorder),
-                  modifier =
-                    Modifier.minimumInteractiveComponentSize()
-                      .clip(RoundedCornerShape(18.dp))
-                      .clickable { showPresetMenu = true }
-                      .testTag("mode_preset_chip"),
+            // Labs Mode preset chip (Fast, Balanced, Deep)
+            Box {
+              Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = RiviaSurface2,
+                border = BorderStroke(1.dp, RiviaBorder),
+                modifier =
+                  Modifier.minimumInteractiveComponentSize()
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable {
+                      keyboardController?.hide()
+                      focusManager.clearFocus()
+                      showPresetMenu = true
+                    }
+                    .testTag("mode_preset_chip"),
+              ) {
+                Row(
+                  modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                  ) {
-                    StatusShape(status = StatusType.OK, size = 7.dp)
-                    Text(
-                      text = runSettings.activeModeName,
-                      style = MaterialTheme.typography.labelLarge,
-                      color = RiviaTextPrimary,
-                    )
-                  }
-                }
-
-                DropdownMenu(
-                  expanded = showPresetMenu,
-                  onDismissRequest = { showPresetMenu = false },
-                  modifier = Modifier.background(RiviaSurface1),
-                ) {
-                  modePresets.forEach { preset ->
-                    DropdownMenuItem(
-                      text = {
-                        Column {
-                          Text(
-                            text = preset.name,
-                            color = RiviaTextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                          )
-                          Text(
-                            text = "${preset.model} · ${preset.thinkingLevel}",
-                            color = RiviaTextSecondary,
-                            fontFamily = ChivoMonoFontFamily,
-                            fontSize = 11.sp,
-                          )
-                        }
-                      },
-                      trailingIcon = {
-                        IconButton(
-                          onClick = {
-                            showPresetMenu = false
-                            onEditModePreset(preset)
-                          },
-                          modifier = Modifier.minimumInteractiveComponentSize(),
-                        ) {
-                          Icon(
-                            imageVector = Icons.Outlined.Edit,
-                            contentDescription = "Edit ${preset.name} preset",
-                            tint = RiviaIconDefault,
-                            modifier = Modifier.size(16.dp),
-                          )
-                        }
-                      },
-                      onClick = {
-                        showPresetMenu = false
-                        onSelectModePreset(preset)
-                      },
-                    )
-                  }
+                  StatusShape(status = StatusType.OK, size = 7.dp)
+                  Text(
+                    text = runSettings.activeModeName,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = RiviaTextPrimary,
+                  )
                 }
               }
-            } else {
-              // Dev Mode chip: picks between Fast, Balanced, Deep, and Live (typed)
-              val activeTestState =
-                profileTestStates[normRiviaProfile] ?: ProfileTestState.NOT_RUN
-              val (symbol, tint) = profileTestIndicator(activeTestState)
 
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Box {
-                  Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = RiviaSurface2,
-                    border = BorderStroke(1.dp, RiviaBorder),
-                    modifier =
-                      Modifier.minimumInteractiveComponentSize()
-                        .clip(RoundedCornerShape(18.dp))
-                        .clickable { showPresetMenu = true }
-                        .testTag("rivia_mode_chip"),
-                  ) {
-                    Row(
-                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                      verticalAlignment = Alignment.CenterVertically,
-                      horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                      Text(
-                        text = symbol,
-                        color = tint,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                      )
-                      Text(
-                        text = LayerConfigManager.displayProfileLabel(activeRiviaProfile),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = RiviaTextPrimary,
-                      )
-                    }
-                  }
-
-                  DropdownMenu(
-                    expanded = showPresetMenu,
-                    onDismissRequest = { showPresetMenu = false },
-                    modifier = Modifier.background(RiviaSurface1),
-                  ) {
-                    val riviaModes = listOf("fast", "balanced", "deep", "live_typed")
-                    riviaModes.forEach { modeKey ->
-                      val normKey = LayerConfigManager.normalizeProfileKey(modeKey)
-                      val profCfg = loadedBundle?.engine?.profiles?.get(normKey)
-                      val tState = profileTestStates[normKey] ?: ProfileTestState.NOT_RUN
-                      val (sym, symColor) = profileTestIndicator(tState)
-
-                      DropdownMenuItem(
-                        text = {
-                          Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                          ) {
-                            Text(sym, color = symColor, fontWeight = FontWeight.Bold)
-                            Column {
-                              Text(
-                                text = LayerConfigManager.displayProfileLabel(modeKey),
-                                color = RiviaTextPrimary,
-                                fontWeight = FontWeight.SemiBold,
-                              )
-                              if (profCfg != null) {
-                                Text(
-                                  text = "${profCfg.model} · ${profCfg.thinking_level}",
-                                  color = RiviaTextSecondary,
-                                  fontFamily = ChivoMonoFontFamily,
-                                  fontSize = 11.sp,
-                                )
-                              }
-                            }
-                          }
-                        },
+              DropdownMenu(
+                expanded = showPresetMenu,
+                onDismissRequest = { showPresetMenu = false },
+                modifier = Modifier.background(RiviaSurface1),
+              ) {
+                modePresets.forEach { preset ->
+                  DropdownMenuItem(
+                    text = {
+                      Column {
+                        Text(
+                          text = preset.name,
+                          color = RiviaTextPrimary,
+                          fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                          text = "${preset.model} · ${preset.thinkingLevel}",
+                          color = RiviaTextSecondary,
+                          fontFamily = ChivoMonoFontFamily,
+                          fontSize = 11.sp,
+                        )
+                      }
+                    },
+                    trailingIcon = {
+                      IconButton(
                         onClick = {
                           showPresetMenu = false
-                          onSelectRiviaProfile(modeKey)
+                          onEditModePreset(preset)
                         },
-                      )
-                    }
-                  }
-                }
-
-                IconButton(
-                  onClick = { onOpenLayers("engine") },
-                  modifier =
-                    Modifier.size(36.dp)
-                      .minimumInteractiveComponentSize()
-                      .testTag("rivia_mode_edit_engine_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Outlined.Edit,
-                    contentDescription = "Edit Engine profiles in Layers",
-                    tint = RiviaIconDefault,
-                    modifier = Modifier.size(16.dp),
+                        modifier = Modifier.minimumInteractiveComponentSize(),
+                      ) {
+                        Icon(
+                          imageVector = Icons.Outlined.Edit,
+                          contentDescription = "Edit ${preset.name} preset",
+                          tint = RiviaIconDefault,
+                          modifier = Modifier.size(16.dp),
+                        )
+                      }
+                    },
+                    onClick = {
+                      showPresetMenu = false
+                      onSelectModePreset(preset)
+                    },
                   )
                 }
               }
@@ -2255,42 +2282,27 @@ private fun ChatConversationPane(
                 )
               }
 
-              // Gear / Info button: shown in Dev (Chat info) and Labs (Run settings + Layers shortcut)
-              if (appUiMode == AppUiMode.LABS) {
-                IconButton(
-                  onClick = { onOpenLayers(null) },
-                  modifier =
-                    Modifier.minimumInteractiveComponentSize().testTag("labs_top_bar_layers_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Outlined.Science,
-                    contentDescription = "Open Labs Sandbox Layers",
-                    tint = RiviaIconDefault,
-                  )
-                }
-                IconButton(
-                  onClick = onOpenRunSettings,
-                  modifier =
-                    Modifier.minimumInteractiveComponentSize().testTag("run_settings_gear_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Outlined.Tune,
-                    contentDescription = "Open Run settings for this Labs chat",
-                    tint = RiviaIconDefault,
-                  )
-                }
-              } else if (appUiMode == AppUiMode.DEV) {
-                IconButton(
-                  onClick = onOpenChatInfo,
-                  modifier =
-                    Modifier.minimumInteractiveComponentSize().testTag("run_settings_gear_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Outlined.Info,
-                    contentDescription = "Open Chat info for this Rivia chat",
-                    tint = RiviaTextTertiary,
-                  )
-                }
+              IconButton(
+                onClick = { onOpenLayers(null) },
+                modifier =
+                  Modifier.minimumInteractiveComponentSize().testTag("labs_top_bar_layers_button"),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.Science,
+                  contentDescription = "Open Labs Sandbox Layers",
+                  tint = RiviaIconDefault,
+                )
+              }
+              IconButton(
+                onClick = onOpenRunSettings,
+                modifier =
+                  Modifier.minimumInteractiveComponentSize().testTag("run_settings_gear_button"),
+              ) {
+                Icon(
+                  imageVector = Icons.Outlined.Tune,
+                  contentDescription = "Open Run settings for this Labs chat",
+                  tint = RiviaIconDefault,
+                )
               }
             }
           }
@@ -2733,8 +2745,38 @@ private fun ChatConversationPane(
               },
               onLiveClick = onOpenLiveMode,
               onDictateClick = {
+                dictationOpenedFromComposer = false
                 isInDictationPanel = true
               },
+            )
+          }
+
+          if (composerAlpha.value > 0f || isInTypedChat) {
+            ChatComposerBar(
+              modifier =
+                Modifier.graphicsLayer {
+                  alpha = composerAlpha.value
+                },
+              text = composerText,
+              onTextChange = { composerText = it },
+              isStreaming = isStreaming,
+              onSend = {
+                val toSend = composerText
+                composerText = ""
+                onSendMessage(toSend)
+              },
+              onStop = onStopStreaming,
+              onOpenLive = onOpenLiveMode,
+              onOpenDictation = {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                requestKeyboardFocusNow = false
+                focusComposerOnReveal = false
+                dictationOpenedFromComposer = true
+                isInDictationPanel = true
+              },
+              focusOnLaunch = requestKeyboardFocusNow,
+              onFocusConsumed = { requestKeyboardFocusNow = false },
             )
           }
 
@@ -2755,42 +2797,31 @@ private fun ChatConversationPane(
                 requestKeyboardFocusNow = false
                 focusComposerOnReveal = false
                 startDictationOnReveal = false
-                composerText = ""
-                showComposerInEmptyChat = false
+                if (dictationOpenedFromComposer || messages.isNotEmpty()) {
+                  showComposerInEmptyChat = true
+                } else {
+                  composerText = ""
+                  showComposerInEmptyChat = false
+                }
+                dictationOpenedFromComposer = false
                 isInDictationPanel = false
               },
               onDone = { finalDictatedText ->
-                composerText = finalDictatedText
+                composerText =
+                  if (dictationOpenedFromComposer && composerText.isNotBlank()) {
+                    if (finalDictatedText.isNotBlank()) {
+                      "${composerText.trimEnd()} $finalDictatedText"
+                    } else {
+                      composerText
+                    }
+                  } else {
+                    finalDictatedText
+                  }
                 showComposerInEmptyChat = true
                 focusComposerOnReveal = true
+                dictationOpenedFromComposer = false
                 isInDictationPanel = false
               },
-            )
-          }
-
-          if (composerAlpha.value > 0f || isInTypedChat) {
-            ChatComposerBar(
-              modifier =
-                Modifier.graphicsLayer {
-                  alpha = composerAlpha.value
-                },
-              text = composerText,
-              onTextChange = { composerText = it },
-              isStreaming = isStreaming,
-              sttLanguage = sttLanguage,
-              preferOnDeviceStt = preferOnDeviceStt,
-              onSend = {
-                val toSend = composerText
-                composerText = ""
-                onSendMessage(toSend)
-              },
-              onStop = onStopStreaming,
-              onOpenLive = onOpenLiveMode,
-              onDictationError = onDictationError,
-              focusOnLaunch = requestKeyboardFocusNow,
-              onFocusConsumed = { requestKeyboardFocusNow = false },
-              startDictationOnLaunch = startDictationOnReveal,
-              onStartDictationConsumed = { startDictationOnReveal = false },
             )
           }
 
@@ -2878,9 +2909,8 @@ private fun ChatConversationPane(
                     requestKeyboardFocusNow = false
                     focusComposerOnReveal = false
                     startDictationOnReveal = false
+                    dictationOpenedFromComposer = false
                     isInDictationPanel = false
-                    composerText = ""
-                    showComposerInEmptyChat = false
                     onEndLiveMode()
                   },
                   modifier =
@@ -2984,9 +3014,17 @@ private fun SphereDictationPanel(
 
           override fun onError(error: Int) {
             voiceLevel = 0f
-            onDictationError(
-              "Dictation failed: ${speechErrorDescription(error)} (code $error)"
-            )
+            if (
+              isActive &&
+                (error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                  error == SpeechRecognizer.ERROR_NO_MATCH)
+            ) {
+              startDictation()
+            } else if (error != SpeechRecognizer.ERROR_CLIENT) {
+              onDictationError(
+                "Dictation failed: ${speechErrorDescription(error)} (code $error)"
+              )
+            }
           }
 
           override fun onPartialResults(partialResults: Bundle?) {
@@ -3010,6 +3048,9 @@ private fun SphereDictationPanel(
               dictatedText = baseTextBeforeDictation + finalSpoken
             }
             voiceLevel = 0f
+            if (isActive) {
+              startDictation()
+            }
           }
 
           override fun onEvent(eventType: Int, params: Bundle?) {}
@@ -4069,158 +4110,21 @@ private fun ChatComposerBar(
   text: String,
   onTextChange: (String) -> Unit,
   isStreaming: Boolean,
-  sttLanguage: String,
-  preferOnDeviceStt: Boolean,
   onSend: () -> Unit,
   onStop: () -> Unit,
   onOpenLive: () -> Unit,
-  onDictationError: (String) -> Unit,
+  onOpenDictation: () -> Unit,
   focusOnLaunch: Boolean = false,
   onFocusConsumed: () -> Unit = {},
-  startDictationOnLaunch: Boolean = false,
-  onStartDictationConsumed: () -> Unit = {},
 ) {
-  val context = LocalContext.current
   val focusRequester = remember { FocusRequester() }
   val keyboardController = LocalSoftwareKeyboardController.current
-  var isDictating by remember { mutableStateOf(false) }
-  var baseTextBeforeDictation by remember { mutableStateOf("") }
-  var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
-
-  DisposableEffect(Unit) {
-    onDispose {
-      speechRecognizer?.destroy()
-      speechRecognizer = null
-    }
-  }
-
-  fun speechErrorDescription(code: Int): String =
-    when (code) {
-      SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-      SpeechRecognizer.ERROR_CLIENT -> "Client speech error"
-      SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient microphone permissions"
-      SpeechRecognizer.ERROR_NETWORK -> "Network error"
-      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-      SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
-      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
-      SpeechRecognizer.ERROR_SERVER -> "Speech server error"
-      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard"
-      else -> "Speech error"
-    }
-
-  fun startDictation() {
-    if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-      onDictationError(
-        "Speech recognition service is not available on this device."
-      )
-      return
-    }
-    try {
-      speechRecognizer?.destroy()
-      val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-      speechRecognizer = recognizer
-      baseTextBeforeDictation = if (text.isBlank()) "" else "$text "
-      isDictating = true
-
-      recognizer.setRecognitionListener(
-        object : RecognitionListener {
-          override fun onReadyForSpeech(params: Bundle?) {}
-
-          override fun onBeginningOfSpeech() {}
-
-          override fun onRmsChanged(rmsdB: Float) {}
-
-          override fun onBufferReceived(buffer: ByteArray?) {}
-
-          override fun onEndOfSpeech() {
-            isDictating = false
-          }
-
-          override fun onError(error: Int) {
-            isDictating = false
-            onDictationError(
-              "Dictation failed: ${speechErrorDescription(error)} (code $error)"
-            )
-          }
-
-          override fun onPartialResults(partialResults: Bundle?) {
-            val partial =
-              partialResults
-                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                ?.firstOrNull()
-                .orEmpty()
-            if (partial.isNotBlank()) {
-              onTextChange(baseTextBeforeDictation + partial)
-            }
-          }
-
-          override fun onResults(results: Bundle?) {
-            val finalSpoken =
-              results
-                ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                ?.firstOrNull()
-                .orEmpty()
-            if (finalSpoken.isNotBlank()) {
-              onTextChange(baseTextBeforeDictation + finalSpoken)
-            }
-            isDictating = false
-          }
-
-          override fun onEvent(eventType: Int, params: Bundle?) {}
-        }
-      )
-
-      val intent =
-        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-          putExtra(
-            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-          )
-          putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-          putExtra(RecognizerIntent.EXTRA_LANGUAGE, sttLanguage)
-          if (preferOnDeviceStt) {
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-          }
-        }
-      recognizer.startListening(intent)
-    } catch (e: Exception) {
-      isDictating = false
-      onDictationError(
-        "Could not start speech recognition: ${e.message ?: e.javaClass.simpleName}"
-      )
-    }
-  }
-
-  val micPermissionLauncher =
-    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-      if (granted) {
-        startDictation()
-      } else {
-        onDictationError("Microphone permission (RECORD_AUDIO) was denied for dictation.")
-      }
-    }
 
   LaunchedEffect(focusOnLaunch) {
     if (focusOnLaunch) {
       onFocusConsumed()
       focusRequester.requestFocus()
       keyboardController?.show()
-    }
-  }
-
-  LaunchedEffect(startDictationOnLaunch) {
-    if (startDictationOnLaunch) {
-      onStartDictationConsumed()
-      val hasPerm =
-        ContextCompat.checkSelfPermission(
-          context,
-          Manifest.permission.RECORD_AUDIO,
-        ) == PackageManager.PERMISSION_GRANTED
-      if (hasPerm) {
-        startDictation()
-      } else {
-        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-      }
     }
   }
 
@@ -4266,25 +4170,9 @@ private fun ChatComposerBar(
             ),
         )
 
-        // Mic button for dictation into the field (Surface 2 fill, text-primary icon)
+        // Mic button for dictation (always opens SphereDictationPanel)
         IconButton(
-          onClick = {
-            if (isDictating) {
-              speechRecognizer?.stopListening()
-              isDictating = false
-            } else {
-              val hasPerm =
-                ContextCompat.checkSelfPermission(
-                  context,
-                  Manifest.permission.RECORD_AUDIO,
-                ) == PackageManager.PERMISSION_GRANTED
-              if (hasPerm) {
-                startDictation()
-              } else {
-                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-              }
-            }
-          },
+          onClick = onOpenDictation,
           modifier =
             Modifier.size(40.dp)
               .minimumInteractiveComponentSize()
@@ -4294,8 +4182,8 @@ private fun ChatComposerBar(
         ) {
           Icon(
             imageVector = Icons.Default.Mic,
-            contentDescription = if (isDictating) "Stop dictation" else "Dictate into message field",
-            tint = if (isDictating) RiviaIconActive else RiviaTextPrimary,
+            contentDescription = "Dictate into message field",
+            tint = RiviaTextPrimary,
           )
         }
 

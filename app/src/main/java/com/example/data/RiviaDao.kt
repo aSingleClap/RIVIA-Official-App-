@@ -232,6 +232,9 @@ interface RiviaDao {
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   suspend fun insertLayerTestRunsIgnore(runs: List<LayerTestRunEntity>): List<Long>
 
+  @Query("DELETE FROM layer_test_runs")
+  suspend fun clearAllLayerTestRuns()
+
   // Rule Events (display query keeps LIMIT 20; export query returns all rows)
   @Query("SELECT * FROM rule_events ORDER BY timestamp DESC LIMIT 20")
   fun observeRecentRuleEvents(): Flow<List<RuleEventEntity>>

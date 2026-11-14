@@ -80,6 +80,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -91,6 +93,7 @@ import com.example.data.RuleEventEntity
 import com.example.model.EngineLayerConfig
 import com.example.model.EngineProfileConfig
 import com.example.model.HardRuleConfig
+import com.example.model.HardRulesLayerConfig
 import com.example.model.LayerCardUiMeta
 import com.example.model.LayerConfigManager
 import com.example.model.LayerStatus
@@ -99,6 +102,9 @@ import com.example.model.ProfileTestState
 import com.example.model.RunSettings
 import com.example.model.TestDefConfig
 import androidx.compose.material3.TabRowDefaults
+import com.example.ui.components.InfoHelpIconButton
+import com.example.ui.components.RiviaSettingsGuide
+import com.example.ui.components.SettingHelpBottomSheet
 import com.example.ui.theme.AppUiMode
 import com.example.ui.theme.ChivoMonoFontFamily as MonoFontFamily
 import com.example.ui.theme.RiviaBorder
@@ -182,11 +188,10 @@ fun LayersScreen(
     }
   }
 
-  // Dialog states
+  // Dialog & help sheet states
   var viewFileDialogLayer by remember { mutableStateOf<String?>(null) }
-  var startDraftConfirmLayer by remember { mutableStateOf<String?>(null) }
-  var lockExportDialogData by remember { mutableStateOf<Pair<String, String>?>(null) }
   var logRunTestDef by remember { mutableStateOf<TestDefConfig?>(null) }
+  var activeHelpTopicId by remember { mutableStateOf<String?>(null) }
 
   val availableModels =
     remember(cachedModels) {
@@ -334,9 +339,10 @@ fun LayersScreen(
           contentPadding = PaddingValues(16.dp),
           verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-          // 0. Top summary bar: 8-char fingerprint and test state for fast, balanced, deep, live
+          // 0. Top summary bar
           item {
             TopFingerprintSummaryBar(
+              appUiMode = appUiMode,
               fingerprints = fingerprints,
               testStates = testStates,
             )
@@ -353,21 +359,22 @@ fun LayersScreen(
                 onToggleExpanded = {
                   expandedSections["persona"] = !(expandedSections["persona"] ?: true)
                 },
-                hasFailingTests = testStates.values.any { it == ProfileTestState.FAILED },
+                onShowInfo = { activeHelpTopicId = "layer_persona" },
+                onToggleEnabled = { viewModel.setLayerEnabled("persona", it) },
+                onToggleLocked = { viewModel.setLayerLocked("persona", it) },
                 onSaveDraft = { newText ->
-                  viewModel.savePersonaDraft(newText).onFailure { viewModel.showError(it.message ?: "Invalid persona") }
+                  viewModel
+                    .savePersonaDraft(newText)
+                    .onSuccess { viewModel.showNotice("Saved Persona layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Invalid persona") }
                 },
-                onRequestStartDraft = { startDraftConfirmLayer = "persona" },
-                onDiscardDraft = { viewModel.discardLayerDraft("persona") },
-                onCancelPendingLock = { viewModel.cancelPendingLayerLock("persona") },
-                onLockIt = {
-                  coroutineScope.launch {
-                    val exported = viewModel.prepareLayerLockExport("persona")
-                    if (exported != null) {
-                      lockExportDialogData = "persona.json" to exported
-                    }
-                  }
+                onClearLayer = {
+                  viewModel
+                    .clearLayer("persona")
+                    .onSuccess { viewModel.showNotice("Cleared Persona layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Persona") }
                 },
+                onRevertLayer = { viewModel.discardLayerDraft("persona") },
                 onViewFile = { viewFileDialogLayer = "persona" },
               )
             }
@@ -384,23 +391,22 @@ fun LayersScreen(
                 onToggleExpanded = {
                   expandedSections["style"] = !(expandedSections["style"] ?: true)
                 },
-                hasFailingTests = testStates.values.any { it == ProfileTestState.FAILED },
+                onShowInfo = { activeHelpTopicId = "layer_style" },
+                onToggleEnabled = { viewModel.setLayerEnabled("style", it) },
+                onToggleLocked = { viewModel.setLayerLocked("style", it) },
                 onSaveDraft = { newText, newVoice ->
-                  viewModel.saveStyleDraft(newText, newVoice).onFailure {
-                    viewModel.showError(it.message ?: "Invalid style")
-                  }
+                  viewModel
+                    .saveStyleDraft(newText, newVoice)
+                    .onSuccess { viewModel.showNotice("Saved Style layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Invalid style") }
                 },
-                onRequestStartDraft = { startDraftConfirmLayer = "style" },
-                onDiscardDraft = { viewModel.discardLayerDraft("style") },
-                onCancelPendingLock = { viewModel.cancelPendingLayerLock("style") },
-                onLockIt = {
-                  coroutineScope.launch {
-                    val exported = viewModel.prepareLayerLockExport("style")
-                    if (exported != null) {
-                      lockExportDialogData = "style.json" to exported
-                    }
-                  }
+                onClearLayer = {
+                  viewModel
+                    .clearLayer("style")
+                    .onSuccess { viewModel.showNotice("Cleared Style layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Style") }
                 },
+                onRevertLayer = { viewModel.discardLayerDraft("style") },
                 onViewFile = { viewFileDialogLayer = "style" },
               )
             }
@@ -411,6 +417,7 @@ fun LayersScreen(
             val meta = cardMetas["engine"]
             if (meta != null) {
               EngineLayerCard(
+                appUiMode = appUiMode,
                 meta = meta,
                 bundle = loaded,
                 availableModels = availableModels,
@@ -418,23 +425,22 @@ fun LayersScreen(
                 onToggleExpanded = {
                   expandedSections["engine"] = !(expandedSections["engine"] ?: true)
                 },
-                hasFailingTests = testStates.values.any { it == ProfileTestState.FAILED },
+                onShowInfo = { activeHelpTopicId = "layer_engine" },
+                onToggleEnabled = { viewModel.setLayerEnabled("engine", it) },
+                onToggleLocked = { viewModel.setLayerLocked("engine", it) },
                 onSaveDraft = { newEngine ->
-                  viewModel.saveEngineDraft(newEngine).onFailure {
-                    viewModel.showError(it.message ?: "Invalid engine config")
-                  }
+                  viewModel
+                    .saveEngineDraft(newEngine)
+                    .onSuccess { viewModel.showNotice("Saved Engine layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Invalid engine config") }
                 },
-                onRequestStartDraft = { startDraftConfirmLayer = "engine" },
-                onDiscardDraft = { viewModel.discardLayerDraft("engine") },
-                onCancelPendingLock = { viewModel.cancelPendingLayerLock("engine") },
-                onLockIt = {
-                  coroutineScope.launch {
-                    val exported = viewModel.prepareLayerLockExport("engine")
-                    if (exported != null) {
-                      lockExportDialogData = "engine.json" to exported
-                    }
-                  }
+                onClearLayer = {
+                  viewModel
+                    .clearLayer("engine")
+                    .onSuccess { viewModel.showNotice("Cleared Engine layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Engine") }
                 },
+                onRevertLayer = { viewModel.discardLayerDraft("engine") },
                 onViewFile = { viewFileDialogLayer = "engine" },
                 onValidationError = { msg -> viewModel.showError(msg) },
               )
@@ -455,21 +461,25 @@ fun LayersScreen(
                 onToggleExpanded = {
                   expandedSections["hard_rules"] = !(expandedSections["hard_rules"] ?: true)
                 },
-                hasFailingTests = testStates.values.any { it == ProfileTestState.FAILED },
+                onShowInfo = { activeHelpTopicId = "layer_hard_rules" },
+                onToggleEnabled = { viewModel.setLayerEnabled("hard_rules", it) },
+                onToggleLocked = { viewModel.setLayerLocked("hard_rules", it) },
                 onSpokenMaxChange = { viewModel.setSpokenMaxSentences(it) },
                 onAddWatchWord = { viewModel.addH11WatchWord(it) },
                 onRemoveWatchWord = { viewModel.removeH11WatchWord(it) },
-                onRequestStartDraft = { startDraftConfirmLayer = "hard_rules" },
-                onDiscardDraft = { viewModel.discardLayerDraft("hard_rules") },
-                onCancelPendingLock = { viewModel.cancelPendingLayerLock("hard_rules") },
-                onLockIt = {
-                  coroutineScope.launch {
-                    val exported = viewModel.prepareLayerLockExport("hard_rules")
-                    if (exported != null) {
-                      lockExportDialogData = "hard_rules.json" to exported
-                    }
-                  }
+                onSaveDraft = { updatedRules ->
+                  viewModel
+                    .saveHardRulesDraft(updatedRules)
+                    .onSuccess { viewModel.showNotice("Saved Hard rules layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Invalid hard rules") }
                 },
+                onClearLayer = {
+                  viewModel
+                    .clearLayer("hard_rules")
+                    .onSuccess { viewModel.showNotice("Cleared Hard rules layer.") }
+                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Hard rules") }
+                },
+                onRevertLayer = { viewModel.discardLayerDraft("hard_rules") },
                 onViewFile = { viewFileDialogLayer = "hard_rules" },
               )
             }
@@ -478,7 +488,22 @@ fun LayersScreen(
           // 5. Tests Card (H10 pushback, H7 spoken length stay in Dev only)
           if (appUiMode == AppUiMode.DEV) {
             item {
+              val testsMeta =
+                cardMetas["tests"]
+                  ?: LayerCardUiMeta(
+                    layerKey = "tests",
+                    fileName = "tests.json",
+                    version = loaded.tests.version,
+                    updated = loaded.tests.updated,
+                    status = LayerStatus.LOCKED,
+                    sourceSubtitle = "from build",
+                    hasDraft = false,
+                    bundledLocked = true,
+                    enabled = true,
+                    isLocked = true,
+                  )
               TestsLayerCard(
+                meta = testsMeta,
                 bundle = loaded,
                 fingerprints = fingerprints,
                 testRuns = testRuns,
@@ -486,6 +511,12 @@ fun LayersScreen(
                 onToggleExpanded = {
                   expandedSections["tests"] = !(expandedSections["tests"] ?: true)
                 },
+                onShowInfo = { activeHelpTopicId = "layer_tests" },
+                onToggleEnabled = { viewModel.setLayerEnabled("tests", it) },
+                onToggleLocked = { viewModel.setLayerLocked("tests", it) },
+                onClearLayer = { viewModel.clearLayer("tests") },
+                onSaveLayer = { viewModel.showNotice("Saved Tests layer.") },
+                onRevertLayer = { viewModel.discardLayerDraft("tests") },
                 onOpenLogRun = { testDef -> logRunTestDef = testDef },
                 onViewFile = { viewFileDialogLayer = "tests" },
               )
@@ -496,38 +527,11 @@ fun LayersScreen(
     }
   }
 
-  // Start draft confirmation dialog when a layer is Locked
-  startDraftConfirmLayer?.let { layerKey ->
-    AlertDialog(
-      onDismissRequest = { startDraftConfirmLayer = null },
-      containerColor = RiviaSurface1,
-      title = { Text("Start a draft for $layerKey?", color = RiviaTextPrimary) },
-      text = {
-        Text(
-          "This layer is currently Locked in the build. Starting a draft lets you edit it on the phone until you discard the draft or lock a new version.",
-          color = RiviaSecondaryText,
-        )
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            viewModel.startDraftFromLocked(layerKey)
-            startDraftConfirmLayer = null
-          },
-          colors =
-            ButtonDefaults.buttonColors(
-              containerColor = RiviaTeal,
-              contentColor = RiviaOnAccent,
-            ),
-        ) {
-          Text("Start draft", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { startDraftConfirmLayer = null }) {
-          Text("Cancel", color = RiviaSecondaryText)
-        }
-      },
+  // Layer Info Help Sheet
+  if (activeHelpTopicId != null) {
+    SettingHelpBottomSheet(
+      topic = RiviaSettingsGuide.findTopic(activeHelpTopicId!!),
+      onDismiss = { activeHelpTopicId = null },
     )
   }
 
@@ -592,123 +596,10 @@ fun LayersScreen(
     )
   }
 
-  // Lock it export dialog (Clarification #5: Copy button copies instruction line + JSON together)
-  lockExportDialogData?.let { (fileName, exportedJson) ->
-    val instructionLine = "Replace app/src/main/assets/config/$fileName with exactly this JSON, verbatim:"
-    val combinedPayload = LayerConfigManager.formatLockCopyPayload(fileName, exportedJson)
-
-    AlertDialog(
-      onDismissRequest = { lockExportDialogData = null },
-      containerColor = RiviaSurface1,
-      title = {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-          Icon(
-            Icons.Default.Lock,
-            contentDescription = null,
-            tint = RiviaIconDefault,
-            modifier = Modifier.size(18.dp),
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text("Lock $fileName", style = MaterialTheme.typography.titleMedium, color = RiviaTextPrimary)
-        }
-      },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-          Text(
-            text = instructionLine,
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaAmber,
-            fontWeight = FontWeight.SemiBold,
-          )
-          Surface(
-            color = RiviaPanelSurface,
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, RiviaBorder),
-            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
-          ) {
-            SelectionContainer {
-              Text(
-                text = exportedJson,
-                fontFamily = MonoFontFamily,
-                fontSize = 11.sp,
-                color = RiviaTextPrimary,
-                modifier =
-                  Modifier.padding(12.dp)
-                    .verticalScroll(rememberScrollState())
-                    .horizontalScroll(rememberScrollState()),
-              )
-            }
-          }
-          Text(
-            text = "Your phone draft stays active until the next build with this exact JSON lands.",
-            style = MaterialTheme.typography.labelSmall,
-            color = RiviaSecondaryText,
-          )
-        }
-      },
-      confirmButton = {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          OutlinedButton(
-            onClick = {
-              val sendIntent =
-                Intent(Intent.ACTION_SEND).apply {
-                  type = "text/plain"
-                  putExtra(Intent.EXTRA_SUBJECT, "Lock $fileName")
-                  putExtra(Intent.EXTRA_TEXT, combinedPayload)
-                }
-              context.startActivity(Intent.createChooser(sendIntent, "Share $fileName"))
-            },
-            border = BorderStroke(1.dp, RiviaBorder),
-            colors =
-              ButtonDefaults.outlinedButtonColors(
-                containerColor = RiviaPanelSurface,
-                contentColor = RiviaTextPrimary,
-              ),
-            modifier = Modifier.testTag("lock_share_button"),
-          ) {
-            Icon(
-              Icons.Default.Share,
-              contentDescription = null,
-              tint = RiviaIconDefault,
-              modifier = Modifier.size(16.dp),
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Share", color = RiviaTextPrimary)
-          }
-          Button(
-            onClick = {
-              clipboardManager.setText(AnnotatedString(combinedPayload))
-              viewModel.showNotice("Copied instruction and $fileName JSON.")
-            },
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = RiviaTeal,
-                contentColor = RiviaOnAccent,
-              ),
-            modifier = Modifier.testTag("lock_copy_button"),
-          ) {
-            Icon(
-              Icons.Default.ContentCopy,
-              contentDescription = null,
-              tint = RiviaOnAccent,
-              modifier = Modifier.size(16.dp),
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Copy", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
-          }
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { lockExportDialogData = null }) {
-          Text("Done", color = RiviaSecondaryText)
-        }
-      },
-    )
-  }
-
   // Log a run dialog for Tests card
   logRunTestDef?.let { testDef ->
     LogTestRunDialog(
+      appUiMode = appUiMode,
       testDef = testDef,
       fingerprints = fingerprints,
       onDismiss = { logRunTestDef = null },
@@ -728,9 +619,16 @@ fun LayersScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun TopFingerprintSummaryBar(
+  appUiMode: AppUiMode = AppUiMode.LABS,
   fingerprints: Map<String, String>,
   testStates: Map<String, ProfileTestState>,
 ) {
+  val profilesToShow =
+    if (appUiMode == AppUiMode.LABS) {
+      LayerConfigManager.REQUIRED_PROFILES
+    } else {
+      listOf("live")
+    }
   Surface(
     color = RiviaPanelSurface,
     shape = RoundedCornerShape(14.dp),
@@ -741,7 +639,9 @@ internal fun TopFingerprintSummaryBar(
       verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
       Text(
-        text = "Profile Fingerprints & Test State",
+        text =
+          if (appUiMode == AppUiMode.LABS) "Profile Fingerprints & Test State"
+          else "Rivia Fingerprint & Test State",
         style = MaterialTheme.typography.labelMedium,
         color = RiviaSecondaryText,
       )
@@ -750,7 +650,7 @@ internal fun TopFingerprintSummaryBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
-        for (prof in LayerConfigManager.REQUIRED_PROFILES) {
+        for (prof in profilesToShow) {
           val fp = fingerprints[prof] ?: "--------"
           val state = testStates[prof] ?: ProfileTestState.NOT_RUN
           val (symbol, tint) = profileTestIndicator(state)
@@ -773,7 +673,9 @@ internal fun TopFingerprintSummaryBar(
               )
               Column {
                 Text(
-                  text = LayerConfigManager.displayProfileLabel(prof),
+                  text =
+                    if (appUiMode == AppUiMode.LABS) LayerConfigManager.displayProfileLabel(prof)
+                    else "Rivia",
                   style = MaterialTheme.typography.labelMedium,
                   fontWeight = FontWeight.SemiBold,
                 )
@@ -814,18 +716,18 @@ private fun LayerCardHeader(
   meta: LayerCardUiMeta,
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
-  hasFailingTests: Boolean,
-  onRequestStartDraft: () -> Unit,
-  onDiscardDraft: () -> Unit,
-  onCancelPendingLock: () -> Unit,
-  onLockIt: () -> Unit,
+  onShowInfo: () -> Unit,
+  onToggleEnabled: (Boolean) -> Unit,
+  onToggleLocked: (Boolean) -> Unit,
+  onClear: () -> Unit,
+  onSave: () -> Unit,
+  onRevert: () -> Unit,
   onViewFile: () -> Unit,
 ) {
   val (statusSymbol, statusColor) = layerStatusIndicator(meta.status)
-  val canLock = meta.status == LayerStatus.TESTED && !hasFailingTests
-  val isLockPending = !meta.lockPendingSha256.isNullOrBlank()
+  val isEditable = !meta.isLocked && meta.enabled
 
-  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+  Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
     Row(
       modifier =
         Modifier.fillMaxWidth()
@@ -839,15 +741,26 @@ private fun LayerCardHeader(
           horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-          Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-          )
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+          ) {
+            Text(
+              text = title,
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.SemiBold,
+            )
+            InfoHelpIconButton(
+              contentDescription = "About $title layer and examples",
+              onClick = onShowInfo,
+              modifier = Modifier.testTag("info_layer_${meta.layerKey}"),
+            )
+          }
           Surface(
             color = statusColor.copy(alpha = 0.14f),
             shape = RoundedCornerShape(50),
             border = BorderStroke(1.dp, statusColor.copy(alpha = 0.5f)),
+            modifier = Modifier.align(Alignment.CenterVertically).testTag("status_badge_${meta.layerKey}"),
           ) {
             Text(
               text = "$statusSymbol ${meta.status.label}",
@@ -857,16 +770,16 @@ private fun LayerCardHeader(
               modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             )
           }
-          if (isLockPending) {
+          if (!meta.enabled) {
             Surface(
-              color = RiviaAmber.copy(alpha = 0.14f),
+              color = RiviaSurface3,
               shape = RoundedCornerShape(50),
-              border = BorderStroke(1.dp, RiviaAmber.copy(alpha = 0.5f)),
-              modifier = Modifier.testTag("lock_pending_badge_${meta.layerKey}"),
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier = Modifier.align(Alignment.CenterVertically),
             ) {
               Text(
-                text = "◆ Lock pending",
-                color = RiviaAmber,
+                text = "Disabled",
+                color = RiviaSecondaryText,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -919,81 +832,141 @@ private fun LayerCardHeader(
       enter = expandVertically() + fadeIn(),
       exit = shrinkVertically() + fadeOut(),
     ) {
-      FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        if (meta.status == LayerStatus.LOCKED) {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Enable/Disable toggle & Locked/Unlocked toggle
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Surface(
+            color = MaterialTheme.colorScheme.background,
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier = Modifier.weight(1f),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = if (meta.enabled) "Enabled" else "Disabled",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (meta.enabled) RiviaTextPrimary else RiviaSecondaryText,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Switch(
+                checked = meta.enabled,
+                onCheckedChange = onToggleEnabled,
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("toggle_enable_${meta.layerKey}"),
+              )
+            }
+          }
+
+          Surface(
+            color = MaterialTheme.colorScheme.background,
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier = Modifier.weight(1f),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = if (meta.isLocked) "Locked" else "Unlocked",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (meta.isLocked) RiviaTeal else RiviaAmber,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Switch(
+                checked = meta.isLocked,
+                onCheckedChange = onToggleLocked,
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("toggle_lock_${meta.layerKey}"),
+              )
+            }
+          }
+        }
+
+        // Clear, Save, Revert, and View file buttons
+        FlowRow(
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
           OutlinedButton(
-            onClick = onRequestStartDraft,
+            onClick = onClear,
+            enabled = isEditable,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             border = BorderStroke(1.dp, RiviaBorder),
             colors =
               ButtonDefaults.outlinedButtonColors(
                 containerColor = RiviaPanelSurface,
                 contentColor = RiviaTextPrimary,
+                disabledContainerColor = RiviaPanelSurface,
+                disabledContentColor = RiviaTextTertiary,
               ),
-            modifier = Modifier.testTag("start_draft_${meta.layerKey}"),
+            modifier = Modifier.testTag("clear_layer_${meta.layerKey}"),
           ) {
-            Text("Start draft", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
+            Text(
+              "Clear",
+              style = MaterialTheme.typography.labelSmall,
+              color = if (isEditable) RiviaTextPrimary else RiviaTextTertiary,
+            )
           }
-        }
-        if (meta.hasDraft) {
+
+          Button(
+            onClick = onSave,
+            enabled = isEditable,
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            colors =
+              ButtonDefaults.buttonColors(
+                containerColor = RiviaTeal,
+                contentColor = RiviaOnAccent,
+                disabledContainerColor = RiviaSurface3,
+                disabledContentColor = RiviaTextTertiary,
+              ),
+            modifier = Modifier.testTag("save_layer_${meta.layerKey}"),
+          ) {
+            Text(
+              "Save",
+              style = MaterialTheme.typography.labelSmall,
+              color = if (isEditable) RiviaOnAccent else RiviaTextTertiary,
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
+
           OutlinedButton(
-            onClick = onDiscardDraft,
+            onClick = onRevert,
+            enabled = isEditable,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             border = BorderStroke(1.dp, RiviaBorder),
             colors =
               ButtonDefaults.outlinedButtonColors(
                 containerColor = RiviaPanelSurface,
                 contentColor = RiviaTextPrimary,
+                disabledContainerColor = RiviaPanelSurface,
+                disabledContentColor = RiviaTextTertiary,
               ),
-            modifier = Modifier.testTag("discard_draft_${meta.layerKey}"),
+            modifier = Modifier.testTag("revert_layer_${meta.layerKey}"),
           ) {
-            Text("Discard draft", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
+            Text(
+              "Revert",
+              style = MaterialTheme.typography.labelSmall,
+              color = if (isEditable) RiviaTextPrimary else RiviaTextTertiary,
+            )
           }
-        }
-        if (isLockPending) {
-          OutlinedButton(
-            onClick = onCancelPendingLock,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            border = BorderStroke(1.dp, RiviaAmber.copy(alpha = 0.6f)),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = RiviaAmber),
-            modifier = Modifier.testTag("cancel_pending_lock_${meta.layerKey}"),
+
+          TextButton(
+            onClick = onViewFile,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+            colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
+            modifier = Modifier.testTag("view_file_${meta.layerKey}"),
           ) {
-            Text("Cancel pending lock", style = MaterialTheme.typography.labelSmall)
+            Text("View file", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
           }
-        }
-        OutlinedButton(
-          onClick = onLockIt,
-          enabled = canLock,
-          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-          colors =
-            ButtonDefaults.outlinedButtonColors(
-              containerColor = RiviaPanelSurface,
-              contentColor = RiviaTextPrimary,
-              disabledContainerColor = RiviaPanelSurface,
-              disabledContentColor = RiviaTextTertiary,
-            ),
-          border = BorderStroke(1.dp, RiviaBorder),
-          modifier = Modifier.testTag("lock_it_${meta.layerKey}"),
-        ) {
-          Icon(
-            Icons.Default.Lock,
-            contentDescription = null,
-            tint = if (canLock) RiviaIconDefault else RiviaTextTertiary,
-            modifier = Modifier.size(14.dp),
-          )
-          Spacer(modifier = Modifier.width(4.dp))
-          Text("Lock it", style = MaterialTheme.typography.labelSmall)
-        }
-        TextButton(
-          onClick = onViewFile,
-          contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-          colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
-          modifier = Modifier.testTag("view_file_${meta.layerKey}"),
-        ) {
-          Text("View file", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
         }
       }
     }
@@ -1006,16 +979,16 @@ private fun PersonaLayerCard(
   bundle: LoadedLayersBundle,
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
-  hasFailingTests: Boolean,
+  onShowInfo: () -> Unit,
+  onToggleEnabled: (Boolean) -> Unit,
+  onToggleLocked: (Boolean) -> Unit,
   onSaveDraft: (String) -> Unit,
-  onRequestStartDraft: () -> Unit,
-  onDiscardDraft: () -> Unit,
-  onCancelPendingLock: () -> Unit,
-  onLockIt: () -> Unit,
+  onClearLayer: () -> Unit,
+  onRevertLayer: () -> Unit,
   onViewFile: () -> Unit,
 ) {
   var textValue by remember(bundle.persona.text) { mutableStateOf(bundle.persona.text) }
-  val isReadOnly = meta.status == LayerStatus.LOCKED
+  val isReadOnly = meta.isLocked || !meta.enabled
   val wordsCount =
     remember(textValue) {
       val t = textValue.trim()
@@ -1036,11 +1009,18 @@ private fun PersonaLayerCard(
         meta = meta,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        hasFailingTests = hasFailingTests,
-        onRequestStartDraft = onRequestStartDraft,
-        onDiscardDraft = onDiscardDraft,
-        onCancelPendingLock = onCancelPendingLock,
-        onLockIt = onLockIt,
+        onShowInfo = onShowInfo,
+        onToggleEnabled = onToggleEnabled,
+        onToggleLocked = onToggleLocked,
+        onClear = {
+          textValue = ""
+          onClearLayer()
+        },
+        onSave = { onSaveDraft(textValue) },
+        onRevert = {
+          textValue = bundle.bundledPersona.text
+          onRevertLayer()
+        },
         onViewFile = onViewFile,
       )
 
@@ -1060,8 +1040,9 @@ private fun PersonaLayerCard(
 
           OutlinedTextField(
             value = textValue,
-            onValueChange = { textValue = it },
+            onValueChange = { if (!isReadOnly) textValue = it },
             readOnly = isReadOnly,
+            enabled = meta.enabled,
             label = { Text("Persona text") },
             placeholder = { Text("While empty, Persona is Dormant and adds nothing to the prompt.") },
             modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp).testTag("persona_text_input"),
@@ -1078,23 +1059,6 @@ private fun PersonaLayerCard(
               fontSize = 11.sp,
               color = RiviaSecondaryText,
             )
-            if (!isReadOnly && textValue != bundle.persona.text) {
-              Button(
-                onClick = { onSaveDraft(textValue) },
-                colors =
-                  ButtonDefaults.buttonColors(
-                    containerColor = RiviaTeal,
-                    contentColor = RiviaOnAccent,
-                  ),
-              ) {
-                Text(
-                  "Save draft",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = RiviaOnAccent,
-                  fontWeight = FontWeight.SemiBold,
-                )
-              }
-            }
           }
         }
       }
@@ -1109,18 +1073,18 @@ private fun StyleLayerCard(
   bundle: LoadedLayersBundle,
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
-  hasFailingTests: Boolean,
+  onShowInfo: () -> Unit,
+  onToggleEnabled: (Boolean) -> Unit,
+  onToggleLocked: (Boolean) -> Unit,
   onSaveDraft: (String, String) -> Unit,
-  onRequestStartDraft: () -> Unit,
-  onDiscardDraft: () -> Unit,
-  onCancelPendingLock: () -> Unit,
-  onLockIt: () -> Unit,
+  onClearLayer: () -> Unit,
+  onRevertLayer: () -> Unit,
   onViewFile: () -> Unit,
 ) {
   var selectedTab by remember { mutableIntStateOf(0) }
   var typedStyleText by remember(bundle.style.text) { mutableStateOf(bundle.style.text) }
   var voiceStyleText by remember(bundle.style.voice) { mutableStateOf(bundle.style.voice) }
-  val isReadOnly = meta.status == LayerStatus.LOCKED
+  val isReadOnly = meta.isLocked || !meta.enabled
 
   val activeText = if (selectedTab == 0) typedStyleText else voiceStyleText
   val wordsCount =
@@ -1143,11 +1107,20 @@ private fun StyleLayerCard(
         meta = meta,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        hasFailingTests = hasFailingTests,
-        onRequestStartDraft = onRequestStartDraft,
-        onDiscardDraft = onDiscardDraft,
-        onCancelPendingLock = onCancelPendingLock,
-        onLockIt = onLockIt,
+        onShowInfo = onShowInfo,
+        onToggleEnabled = onToggleEnabled,
+        onToggleLocked = onToggleLocked,
+        onClear = {
+          typedStyleText = ""
+          voiceStyleText = ""
+          onClearLayer()
+        },
+        onSave = { onSaveDraft(typedStyleText, voiceStyleText) },
+        onRevert = {
+          typedStyleText = bundle.bundledStyle.text
+          voiceStyleText = bundle.bundledStyle.voice
+          onRevertLayer()
+        },
         onViewFile = onViewFile,
       )
 
@@ -1197,16 +1170,18 @@ private fun StyleLayerCard(
           if (selectedTab == 0) {
             OutlinedTextField(
               value = typedStyleText,
-              onValueChange = { typedStyleText = it },
+              onValueChange = { if (!isReadOnly) typedStyleText = it },
               readOnly = isReadOnly,
+              enabled = meta.enabled,
               label = { Text("Typed style (style.text)") },
               modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp).testTag("style_text_input"),
             )
           } else {
             OutlinedTextField(
               value = voiceStyleText,
-              onValueChange = { voiceStyleText = it },
+              onValueChange = { if (!isReadOnly) voiceStyleText = it },
               readOnly = isReadOnly,
+              enabled = meta.enabled,
               label = { Text("Voice style (style.voice)") },
               modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp).testTag("style_voice_input"),
             )
@@ -1223,26 +1198,6 @@ private fun StyleLayerCard(
               fontSize = 11.sp,
               color = RiviaSecondaryText,
             )
-            if (
-              !isReadOnly &&
-                (typedStyleText != bundle.style.text || voiceStyleText != bundle.style.voice)
-            ) {
-              Button(
-                onClick = { onSaveDraft(typedStyleText, voiceStyleText) },
-                colors =
-                  ButtonDefaults.buttonColors(
-                    containerColor = RiviaTeal,
-                    contentColor = RiviaOnAccent,
-                  ),
-              ) {
-                Text(
-                  "Save draft",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = RiviaOnAccent,
-                  fontWeight = FontWeight.SemiBold,
-                )
-              }
-            }
           }
         }
       }
@@ -1253,25 +1208,26 @@ private fun StyleLayerCard(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EngineLayerCard(
+  appUiMode: AppUiMode = AppUiMode.LABS,
   meta: LayerCardUiMeta,
   bundle: LoadedLayersBundle,
   availableModels: List<String>,
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
-  hasFailingTests: Boolean,
+  onShowInfo: () -> Unit,
+  onToggleEnabled: (Boolean) -> Unit,
+  onToggleLocked: (Boolean) -> Unit,
   onSaveDraft: (EngineLayerConfig) -> Unit,
-  onRequestStartDraft: () -> Unit,
-  onDiscardDraft: () -> Unit,
-  onCancelPendingLock: () -> Unit,
-  onLockIt: () -> Unit,
+  onClearLayer: () -> Unit,
+  onRevertLayer: () -> Unit,
   onViewFile: () -> Unit,
   onValidationError: (String) -> Unit,
 ) {
-  val engine = bundle.engine
-  val isReadOnly = meta.status == LayerStatus.LOCKED
+  var draftEngine by remember(bundle.engine) { mutableStateOf(bundle.engine) }
+  val isReadOnly = meta.isLocked || !meta.enabled
   var maxTokensInput by
-    remember(engine.max_output_tokens) {
-      mutableStateOf(engine.max_output_tokens?.toString() ?: "")
+    remember(bundle.engine.max_output_tokens) {
+      mutableStateOf(bundle.engine.max_output_tokens?.toString() ?: "")
     }
 
   Surface(
@@ -1288,11 +1244,45 @@ private fun EngineLayerCard(
         meta = meta,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        hasFailingTests = hasFailingTests,
-        onRequestStartDraft = onRequestStartDraft,
-        onDiscardDraft = onDiscardDraft,
-        onCancelPendingLock = onCancelPendingLock,
-        onLockIt = onLockIt,
+        onShowInfo = onShowInfo,
+        onToggleEnabled = onToggleEnabled,
+        onToggleLocked = onToggleLocked,
+        onClear = {
+          maxTokensInput = ""
+          draftEngine =
+            bundle.bundledEngine.copy(
+              locked = false,
+              default_profile = "balanced",
+              thought_summaries = "auto",
+              max_output_tokens = null,
+              service_tier = "standard",
+              store = true,
+              safety = JsonPrimitive("model_default"),
+            )
+          onClearLayer()
+        },
+        onSave = {
+          val trimmed = maxTokensInput.trim()
+          if (trimmed.isEmpty()) {
+            val updated = draftEngine.copy(max_output_tokens = null)
+            draftEngine = updated
+            onSaveDraft(updated)
+          } else {
+            val parsed = trimmed.toIntOrNull()
+            if (parsed == null || parsed < 1) {
+              onValidationError("engine.json: max_output_tokens must be null or a positive whole number")
+            } else {
+              val updated = draftEngine.copy(max_output_tokens = parsed)
+              draftEngine = updated
+              onSaveDraft(updated)
+            }
+          }
+        },
+        onRevert = {
+          draftEngine = bundle.bundledEngine
+          maxTokensInput = bundle.bundledEngine.max_output_tokens?.toString() ?: ""
+          onRevertLayer()
+        },
         onViewFile = onViewFile,
       )
 
@@ -1302,65 +1292,77 @@ private fun EngineLayerCard(
         exit = shrinkVertically() + fadeOut(),
       ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-          // Profile rows: fast, balanced, deep, live
-          for (profKey in LayerConfigManager.REQUIRED_PROFILES) {
+          val profilesToEdit =
+            if (appUiMode == AppUiMode.LABS) {
+              LayerConfigManager.REQUIRED_PROFILES
+            } else {
+              listOf("live")
+            }
+          for (profKey in profilesToEdit) {
             val profCfg =
-              engine.profiles[profKey]
+              draftEngine.profiles[profKey]
                 ?: EngineProfileConfig(model = "gemini-3.8-flash", thinking_level = "low")
             EngineProfileEditorRow(
               profileKey = profKey,
+              displayLabelOverride = if (appUiMode == AppUiMode.LABS) null else "Rivia model",
               profileConfig = profCfg,
               availableModels = availableModels,
               readOnly = isReadOnly,
               onUpdateProfile = { updatedProf ->
-                val updatedMap = engine.profiles.toMutableMap().apply { put(profKey, updatedProf) }
-                onSaveDraft(engine.copy(profiles = updatedMap))
+                val updatedMap = draftEngine.profiles.toMutableMap().apply { put(profKey, updatedProf) }
+                val updated = draftEngine.copy(profiles = updatedMap)
+                draftEngine = updated
+                onSaveDraft(updated)
               },
             )
           }
 
           HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
-          // Default profile selector
-          Text(
-            text = "Default profile",
-            style = MaterialTheme.typography.labelMedium,
-            color = RiviaSecondaryText,
-          )
-          FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (profKey in LayerConfigManager.REQUIRED_PROFILES) {
-              val isSelected = engine.default_profile == profKey
-              FilterChip(
-                selected = isSelected,
-                onClick = {
-                  if (!isReadOnly) {
-                    onSaveDraft(engine.copy(default_profile = profKey))
-                  }
-                },
-                enabled = !isReadOnly,
-                colors =
-                  FilterChipDefaults.filterChipColors(
-                    containerColor = RiviaPanelSurface,
-                    labelColor = RiviaTextPrimary,
-                    selectedContainerColor = RiviaTeal,
-                    selectedLabelColor = RiviaOnAccent,
-                    disabledContainerColor = RiviaPanelSurface,
-                    disabledLabelColor = RiviaTextTertiary,
-                    disabledSelectedContainerColor = RiviaTeal,
-                  ),
-                border =
-                  BorderStroke(
-                    width = 1.dp,
-                    color = if (isSelected) RiviaTeal else RiviaBorder,
-                  ),
-                label = {
-                  Text(
-                    profKey,
-                    color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                  )
-                },
-              )
+          if (appUiMode == AppUiMode.LABS) {
+            // Default profile selector (Labs only)
+            Text(
+              text = "Default profile",
+              style = MaterialTheme.typography.labelMedium,
+              color = RiviaSecondaryText,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              for (profKey in LayerConfigManager.REQUIRED_PROFILES) {
+                val isSelected = draftEngine.default_profile == profKey
+                FilterChip(
+                  selected = isSelected,
+                  onClick = {
+                    if (!isReadOnly) {
+                      val updated = draftEngine.copy(default_profile = profKey)
+                      draftEngine = updated
+                      onSaveDraft(updated)
+                    }
+                  },
+                  enabled = !isReadOnly,
+                  colors =
+                    FilterChipDefaults.filterChipColors(
+                      containerColor = RiviaPanelSurface,
+                      labelColor = RiviaTextPrimary,
+                      selectedContainerColor = RiviaTeal,
+                      selectedLabelColor = RiviaOnAccent,
+                      disabledContainerColor = RiviaPanelSurface,
+                      disabledLabelColor = RiviaTextTertiary,
+                      disabledSelectedContainerColor = RiviaTeal,
+                    ),
+                  border =
+                    BorderStroke(
+                      width = 1.dp,
+                      color = if (isSelected) RiviaTeal else RiviaBorder,
+                    ),
+                  label = {
+                    Text(
+                      profKey,
+                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                      fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                    )
+                  },
+                )
+              }
             }
           }
 
@@ -1373,11 +1375,15 @@ private fun EngineLayerCard(
             Text("Thought summaries", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               for (opt in listOf("auto", "none")) {
-                val isSelected = engine.thought_summaries == opt
+                val isSelected = draftEngine.thought_summaries == opt
                 FilterChip(
                   selected = isSelected,
                   onClick = {
-                    if (!isReadOnly) onSaveDraft(engine.copy(thought_summaries = opt))
+                    if (!isReadOnly) {
+                      val updated = draftEngine.copy(thought_summaries = opt)
+                      draftEngine = updated
+                      onSaveDraft(updated)
+                    }
                   },
                   enabled = !isReadOnly,
                   colors =
@@ -1415,11 +1421,15 @@ private fun EngineLayerCard(
             Text("Service tier", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               for (tier in listOf("standard", "priority")) {
-                val isSelected = engine.service_tier == tier
+                val isSelected = draftEngine.service_tier == tier
                 FilterChip(
                   selected = isSelected,
                   onClick = {
-                    if (!isReadOnly) onSaveDraft(engine.copy(service_tier = tier))
+                    if (!isReadOnly) {
+                      val updated = draftEngine.copy(service_tier = tier)
+                      draftEngine = updated
+                      onSaveDraft(updated)
+                    }
                   },
                   enabled = !isReadOnly,
                   colors =
@@ -1456,8 +1466,14 @@ private fun EngineLayerCard(
           ) {
             Text("Store interactions on server", style = MaterialTheme.typography.bodySmall)
             Switch(
-              checked = engine.store,
-              onCheckedChange = { if (!isReadOnly) onSaveDraft(engine.copy(store = it)) },
+              checked = draftEngine.store,
+              onCheckedChange = {
+                if (!isReadOnly) {
+                  val updated = draftEngine.copy(store = it)
+                  draftEngine = updated
+                  onSaveDraft(updated)
+                }
+              },
               enabled = !isReadOnly,
               colors = riviaSwitchColors(),
             )
@@ -1471,37 +1487,13 @@ private fun EngineLayerCard(
           ) {
             OutlinedTextField(
               value = maxTokensInput,
-              onValueChange = { maxTokensInput = it },
+              onValueChange = { if (!isReadOnly) maxTokensInput = it },
               readOnly = isReadOnly,
+              enabled = meta.enabled,
               singleLine = true,
               label = { Text("max_output_tokens (blank = null)") },
               modifier = Modifier.weight(1f),
             )
-            if (!isReadOnly && maxTokensInput != (engine.max_output_tokens?.toString() ?: "")) {
-              OutlinedButton(
-                onClick = {
-                  val trimmed = maxTokensInput.trim()
-                  if (trimmed.isEmpty()) {
-                    onSaveDraft(engine.copy(max_output_tokens = null))
-                  } else {
-                    val parsed = trimmed.toIntOrNull()
-                    if (parsed == null || parsed < 1) {
-                      onValidationError("engine.json: max_output_tokens must be null or a positive whole number")
-                    } else {
-                      onSaveDraft(engine.copy(max_output_tokens = parsed))
-                    }
-                  }
-                },
-                border = BorderStroke(1.dp, RiviaBorder),
-                colors =
-                  ButtonDefaults.outlinedButtonColors(
-                    containerColor = RiviaPanelSurface,
-                    contentColor = RiviaTextPrimary,
-                  ),
-              ) {
-                Text("Apply", color = RiviaTextPrimary)
-              }
-            }
           }
 
           // Safety mode summary ("model_default" vs custom list)
@@ -1512,13 +1504,16 @@ private fun EngineLayerCard(
           ) {
             Text("Safety", style = MaterialTheme.typography.bodySmall)
             val isModelDefault =
-              engine.safety is JsonPrimitive && engine.safety.content == "model_default"
+              draftEngine.safety is JsonPrimitive &&
+                (draftEngine.safety as JsonPrimitive).content == "model_default"
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               FilterChip(
                 selected = isModelDefault,
                 onClick = {
                   if (!isReadOnly) {
-                    onSaveDraft(engine.copy(safety = JsonPrimitive("model_default")))
+                    val updated = draftEngine.copy(safety = JsonPrimitive("model_default"))
+                    draftEngine = updated
+                    onSaveDraft(updated)
                   }
                 },
                 enabled = !isReadOnly,
@@ -1561,7 +1556,9 @@ private fun EngineLayerCard(
                           )
                         )
                       )
-                    onSaveDraft(engine.copy(safety = defaultCustom))
+                    val updated = draftEngine.copy(safety = defaultCustom)
+                    draftEngine = updated
+                    onSaveDraft(updated)
                   }
                 },
                 enabled = !isReadOnly,
@@ -1600,6 +1597,7 @@ private fun EngineLayerCard(
 @Composable
 private fun EngineProfileEditorRow(
   profileKey: String,
+  displayLabelOverride: String? = null,
   profileConfig: EngineProfileConfig,
   availableModels: List<String>,
   readOnly: Boolean,
@@ -1624,19 +1622,25 @@ private fun EngineProfileEditorRow(
         verticalArrangement = Arrangement.spacedBy(6.dp),
       ) {
         Text(
-          text = LayerConfigManager.displayProfileLabel(profileKey),
+          text = displayLabelOverride ?: LayerConfigManager.displayProfileLabel(profileKey),
           style = MaterialTheme.typography.labelLarge,
           color = RiviaTextPrimary,
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier.align(Alignment.CenterVertically),
         )
+        val keyboardController = LocalSoftwareKeyboardController.current
+        val focusManager = LocalFocusManager.current
         Box(modifier = Modifier.align(Alignment.CenterVertically)) {
           Surface(
             color = RiviaPanelSurface,
             shape = RoundedCornerShape(8.dp),
             border = BorderStroke(1.dp, RiviaBorder),
             modifier =
-              Modifier.clickable(enabled = !readOnly) { modelMenuExpanded = true },
+              Modifier.clickable(enabled = !readOnly) {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                modelMenuExpanded = true
+              },
           ) {
             Text(
               text = profileConfig.model,
@@ -1746,18 +1750,21 @@ private fun HardRulesLayerCard(
   recentRuleEvents: List<RuleEventEntity>,
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
-  hasFailingTests: Boolean,
+  onShowInfo: () -> Unit,
+  onToggleEnabled: (Boolean) -> Unit,
+  onToggleLocked: (Boolean) -> Unit,
   onSpokenMaxChange: (Int) -> Unit,
   onAddWatchWord: (String) -> Unit,
   onRemoveWatchWord: (String) -> Unit,
-  onRequestStartDraft: () -> Unit,
-  onDiscardDraft: () -> Unit,
-  onCancelPendingLock: () -> Unit,
-  onLockIt: () -> Unit,
+  onSaveDraft: (HardRulesLayerConfig) -> Unit,
+  onClearLayer: () -> Unit,
+  onRevertLayer: () -> Unit,
   onViewFile: () -> Unit,
 ) {
   var newWatchWord by remember { mutableStateOf("") }
-  val sortedRules = remember(bundle.hardRules.rules) { bundle.hardRules.rules.sortedBy { it.priority } }
+  var draftRules by remember(bundle.hardRules.rules) { mutableStateOf(bundle.hardRules.rules) }
+  val isReadOnly = meta.isLocked || !meta.enabled
+  val sortedRules = remember(draftRules) { draftRules.sortedBy { it.priority } }
   val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
 
   Surface(
@@ -1774,11 +1781,25 @@ private fun HardRulesLayerCard(
         meta = meta,
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
-        hasFailingTests = hasFailingTests,
-        onRequestStartDraft = onRequestStartDraft,
-        onDiscardDraft = onDiscardDraft,
-        onCancelPendingLock = onCancelPendingLock,
-        onLockIt = onLockIt,
+        onShowInfo = onShowInfo,
+        onToggleEnabled = onToggleEnabled,
+        onToggleLocked = onToggleLocked,
+        onClear = {
+          newWatchWord = ""
+          draftRules =
+            draftRules.map { r ->
+              if (r.enforced_by != "code" || r.id == "H2") r.copy(active = false) else r
+            }
+          onClearLayer()
+        },
+        onSave = {
+          onSaveDraft(bundle.hardRules.copy(locked = false, rules = draftRules))
+        },
+        onRevert = {
+          newWatchWord = ""
+          draftRules = bundle.bundledHardRules.rules
+          onRevertLayer()
+        },
         onViewFile = onViewFile,
       )
 
@@ -1817,13 +1838,17 @@ private fun HardRulesLayerCard(
                   val isSelected = spokenMaxSentences == n
                   FilterChip(
                     selected = isSelected,
-                    onClick = { onSpokenMaxChange(n) },
+                    onClick = { if (!isReadOnly) onSpokenMaxChange(n) },
+                    enabled = !isReadOnly,
                     colors =
                       FilterChipDefaults.filterChipColors(
                         containerColor = RiviaPanelSurface,
                         labelColor = RiviaTextPrimary,
                         selectedContainerColor = RiviaTeal,
                         selectedLabelColor = RiviaOnAccent,
+                        disabledContainerColor = RiviaPanelSurface,
+                        disabledLabelColor = RiviaTextTertiary,
+                        disabledSelectedContainerColor = RiviaTeal,
                       ),
                     border =
                       BorderStroke(
@@ -1844,14 +1869,27 @@ private fun HardRulesLayerCard(
             }
           }
 
-          // Read-only list of all rules in priority order
+          // List of all rules in priority order
           Text(
             text = "Invariants in priority order (1 first)",
             style = MaterialTheme.typography.labelMedium,
             color = RiviaSecondaryText,
           )
           for (rule in sortedRules) {
-            HardRuleItemRow(rule = rule, spokenMaxSentences = spokenMaxSentences)
+            val canToggleRule =
+              !isReadOnly &&
+                (rule.enforced_by != "code" || rule.id in LayerConfigManager.SUPPORTED_CODE_RULE_HANDLERS)
+            HardRuleItemRow(
+              rule = rule,
+              spokenMaxSentences = spokenMaxSentences,
+              canToggle = canToggleRule,
+              onToggleActive = { newActive ->
+                draftRules =
+                  draftRules.map { r ->
+                    if (r.id == rule.id) r.copy(active = newActive) else r
+                  }
+              },
+            )
           }
 
           HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
@@ -1869,24 +1907,27 @@ private fun HardRulesLayerCard(
           ) {
             OutlinedTextField(
               value = newWatchWord,
-              onValueChange = { newWatchWord = it },
+              onValueChange = { if (!isReadOnly) newWatchWord = it },
+              readOnly = isReadOnly,
+              enabled = meta.enabled,
               singleLine = true,
               label = { Text("Add watch word or phrase") },
               modifier = Modifier.weight(1f).testTag("h11_watch_word_input"),
             )
             IconButton(
               onClick = {
-                if (newWatchWord.isNotBlank()) {
+                if (!isReadOnly && newWatchWord.isNotBlank()) {
                   onAddWatchWord(newWatchWord)
                   newWatchWord = ""
                 }
               },
+              enabled = !isReadOnly,
               modifier = Modifier.testTag("h11_add_watch_word_button"),
             ) {
               Icon(
                 Icons.Default.Add,
                 contentDescription = "Add watch word",
-                tint = RiviaIconDefault,
+                tint = if (!isReadOnly) RiviaIconDefault else RiviaTextTertiary,
               )
             }
           }
@@ -1907,13 +1948,15 @@ private fun HardRulesLayerCard(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                   ) {
                     Text(w, style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
-                    Icon(
-                      Icons.Default.Close,
-                      contentDescription = "Remove $w",
-                      tint = RiviaIconDefault,
-                      modifier =
-                        Modifier.size(14.dp).clickable { onRemoveWatchWord(w) },
-                    )
+                    if (!isReadOnly) {
+                      Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove $w",
+                        tint = RiviaIconDefault,
+                        modifier =
+                          Modifier.size(14.dp).clickable { onRemoveWatchWord(w) },
+                      )
+                    }
                   }
                 }
               }
@@ -1966,6 +2009,8 @@ private fun HardRulesLayerCard(
 private fun HardRuleItemRow(
   rule: HardRuleConfig,
   spokenMaxSentences: Int,
+  canToggle: Boolean = false,
+  onToggleActive: ((Boolean) -> Unit)? = null,
 ) {
   Surface(
     color = MaterialTheme.colorScheme.background,
@@ -1987,15 +2032,28 @@ private fun HardRuleItemRow(
           style = MaterialTheme.typography.labelLarge,
           color = RiviaTextPrimary,
           fontWeight = FontWeight.SemiBold,
+          modifier = Modifier.weight(1f),
         )
-        Text(
-          text =
-            if (rule.active) "active (${rule.enforced_by})"
-            else "inactive (${rule.status.ifBlank { "deferred" }})",
-          fontFamily = MonoFontFamily,
-          fontSize = 10.sp,
-          color = if (rule.active) RiviaTextPrimary else RiviaSecondaryText,
-        )
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Text(
+            text =
+              if (rule.active) "active (${rule.enforced_by})"
+              else "inactive (${rule.status.ifBlank { "deferred" }})",
+            fontFamily = MonoFontFamily,
+            fontSize = 10.sp,
+            color = if (rule.active) RiviaTextPrimary else RiviaSecondaryText,
+          )
+          if (canToggle && onToggleActive != null) {
+            Checkbox(
+              checked = rule.active,
+              onCheckedChange = onToggleActive,
+              modifier = Modifier.size(20.dp).testTag("toggle_rule_${rule.id}"),
+            )
+          }
+        }
       }
       Text(
         text = "channels: ${rule.channels.joinToString(", ")}",
@@ -2023,11 +2081,18 @@ private fun HardRuleItemRow(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TestsLayerCard(
+  meta: LayerCardUiMeta,
   bundle: LoadedLayersBundle,
   fingerprints: Map<String, String>,
   testRuns: List<LayerTestRunEntity>,
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
+  onShowInfo: () -> Unit,
+  onToggleEnabled: (Boolean) -> Unit,
+  onToggleLocked: (Boolean) -> Unit,
+  onClearLayer: () -> Unit,
+  onSaveLayer: () -> Unit,
+  onRevertLayer: () -> Unit,
   onOpenLogRun: (TestDefConfig) -> Unit,
   onViewFile: () -> Unit,
 ) {
@@ -2040,40 +2105,19 @@ private fun TestsLayerCard(
       modifier = Modifier.padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .clickable(onClick = onToggleExpanded)
-            .testTag("layer_header_tests"),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = "Tests",
-            style = MaterialTheme.typography.titleMedium,
-            color = RiviaTextPrimary,
-            fontWeight = FontWeight.SemiBold,
-          )
-          Text(
-            text = "v${bundle.tests.version} · ${bundle.tests.updated}",
-            fontFamily = MonoFontFamily,
-            fontSize = 11.sp,
-            color = RiviaSecondaryText,
-          )
-        }
-        IconButton(
-          onClick = onToggleExpanded,
-          modifier = Modifier.testTag("toggle_layer_tests"),
-        ) {
-          Icon(
-            imageVector =
-              if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription = if (expanded) "Collapse Tests" else "Expand Tests",
-            tint = RiviaSecondaryText,
-          )
-        }
-      }
+      LayerCardHeader(
+        title = "Tests",
+        meta = meta,
+        expanded = expanded,
+        onToggleExpanded = onToggleExpanded,
+        onShowInfo = onShowInfo,
+        onToggleEnabled = onToggleEnabled,
+        onToggleLocked = onToggleLocked,
+        onClear = onClearLayer,
+        onSave = onSaveLayer,
+        onRevert = onRevertLayer,
+        onViewFile = onViewFile,
+      )
 
       AnimatedVisibility(
         visible = expanded,
@@ -2081,16 +2125,6 @@ private fun TestsLayerCard(
         exit = shrinkVertically() + fadeOut(),
       ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-          Row(modifier = Modifier.fillMaxWidth()) {
-            TextButton(
-              onClick = onViewFile,
-              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-              colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
-              modifier = Modifier.testTag("view_file_tests"),
-            ) {
-              Text("View file", style = MaterialTheme.typography.labelSmall, color = RiviaTextPrimary)
-            }
-          }
 
           for (testDef in bundle.tests.tests) {
             Surface(
@@ -2194,13 +2228,19 @@ private fun TestsLayerCard(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LogTestRunDialog(
+  appUiMode: AppUiMode = AppUiMode.LABS,
   testDef: TestDefConfig,
   fingerprints: Map<String, String>,
   onDismiss: () -> Unit,
   onSaveRun: (profile: String, passed: Boolean, detailsJson: String) -> Unit,
 ) {
-  val initialProf = testDef.required_profiles.firstOrNull() ?: "balanced"
-  var selectedProfile by remember { mutableStateOf(initialProf) }
+  val initialProf =
+    if (appUiMode == AppUiMode.LABS) {
+      testDef.required_profiles.firstOrNull() ?: "balanced"
+    } else {
+      "live"
+    }
+  var selectedProfile by remember(appUiMode) { mutableStateOf(initialProf) }
   val normProfile = LayerConfigManager.normalizeProfileKey(selectedProfile)
   val currentFp = fingerprints[normProfile] ?: "--------"
 
@@ -2230,40 +2270,48 @@ private fun LogTestRunDialog(
         modifier = Modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
-        Text(
-          text = "Select profile (saves on current fingerprint $currentFp):",
-          style = MaterialTheme.typography.labelMedium,
-          color = RiviaSecondaryText,
-        )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          val profileChoices =
-            (testDef.required_profiles + listOf("live_typed")).distinct()
-          for (profChoice in profileChoices) {
-            val isSelected = selectedProfile == profChoice
-            FilterChip(
-              selected = isSelected,
-              onClick = { selectedProfile = profChoice },
-              colors =
-                FilterChipDefaults.filterChipColors(
-                  containerColor = RiviaPanelSurface,
-                  labelColor = RiviaTextPrimary,
-                  selectedContainerColor = RiviaTeal,
-                  selectedLabelColor = RiviaOnAccent,
-                ),
-              border =
-                BorderStroke(
-                  width = 1.dp,
-                  color = if (isSelected) RiviaTeal else RiviaBorder,
-                ),
-              label = {
-                Text(
-                  LayerConfigManager.displayProfileLabel(profChoice),
-                  color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
-                  fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                )
-              },
-            )
+        if (appUiMode == AppUiMode.LABS) {
+          Text(
+            text = "Select profile (saves on current fingerprint $currentFp):",
+            style = MaterialTheme.typography.labelMedium,
+            color = RiviaSecondaryText,
+          )
+          FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            val profileChoices =
+              (testDef.required_profiles + listOf("live_typed")).distinct()
+            for (profChoice in profileChoices) {
+              val isSelected = selectedProfile == profChoice
+              FilterChip(
+                selected = isSelected,
+                onClick = { selectedProfile = profChoice },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    containerColor = RiviaPanelSurface,
+                    labelColor = RiviaTextPrimary,
+                    selectedContainerColor = RiviaTeal,
+                    selectedLabelColor = RiviaOnAccent,
+                  ),
+                border =
+                  BorderStroke(
+                    width = 1.dp,
+                    color = if (isSelected) RiviaTeal else RiviaBorder,
+                  ),
+                label = {
+                  Text(
+                    LayerConfigManager.displayProfileLabel(profChoice),
+                    color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                  )
+                },
+              )
+            }
           }
+        } else {
+          Text(
+            text = "Saves on current Rivia fingerprint $currentFp",
+            style = MaterialTheme.typography.labelMedium,
+            color = RiviaSecondaryText,
+          )
         }
 
         if (testDef.kind == "h10") {

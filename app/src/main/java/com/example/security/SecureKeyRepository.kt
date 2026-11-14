@@ -143,6 +143,11 @@ class SecureKeyRepository(private val context: Context) {
     private val LABS_SANDBOX_CALL_STOP_LISTENING_ON_PIPE_CLOSE =
       booleanPreferencesKey("labs_sandbox_call_stop_listening_on_pipe_close")
 
+    private val DISABLED_LAYERS = stringPreferencesKey("disabled_layers")
+    private val LABS_DISABLED_LAYERS = stringPreferencesKey("labs_disabled_layers")
+    private val LAYER_LOCK_OVERRIDES = stringPreferencesKey("layer_lock_overrides")
+    private val LABS_LAYER_LOCK_OVERRIDES = stringPreferencesKey("labs_layer_lock_overrides")
+
     fun redactText(
       input: String,
       geminiKey: String,
@@ -465,5 +470,87 @@ class SecureKeyRepository(private val context: Context) {
 
   suspend fun savePresetsJson(json: String) {
     context.secureKeyDataStore.edit { prefs -> prefs[PRESETS_JSON] = json }
+  }
+
+  val disabledLayersFlow: Flow<Set<String>> =
+    context.secureKeyDataStore.data.map { prefs ->
+      val isLabs = prefs[ACTIVE_UI_MODE] == "LABS"
+      val raw = if (isLabs) prefs[LABS_DISABLED_LAYERS] else prefs[DISABLED_LAYERS]
+      raw
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.toSet()
+        ?: emptySet()
+    }
+
+  val layerLockOverridesFlow: Flow<Map<String, Boolean>> =
+    context.secureKeyDataStore.data.map { prefs ->
+      val isLabs = prefs[ACTIVE_UI_MODE] == "LABS"
+      val raw = if (isLabs) prefs[LABS_LAYER_LOCK_OVERRIDES] else prefs[LAYER_LOCK_OVERRIDES]
+      val map = mutableMapOf<String, Boolean>()
+      raw
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.contains(":") }
+        ?.forEach { entry ->
+          val parts = entry.split(":", limit = 2)
+          val k = parts[0].trim()
+          val v = parts[1].trim().toBooleanStrictOrNull()
+          if (k.isNotEmpty() && v != null) {
+            map[k] = v
+          }
+        }
+      map
+    }
+
+  suspend fun setLayerEnabled(layerKey: String, enabled: Boolean) {
+    val cleanKey = layerKey.trim()
+    if (cleanKey.isEmpty()) return
+    context.secureKeyDataStore.edit { prefs ->
+      val isLabs = prefs[ACTIVE_UI_MODE] == "LABS"
+      val prefKey = if (isLabs) LABS_DISABLED_LAYERS else DISABLED_LAYERS
+      val current =
+        prefs[prefKey]
+          ?.split(",")
+          ?.map { it.trim() }
+          ?.filter { it.isNotEmpty() }
+          ?.toMutableSet()
+          ?: mutableSetOf()
+      if (enabled) {
+        current.remove(cleanKey)
+      } else {
+        current.add(cleanKey)
+      }
+      prefs[prefKey] = current.joinToString(",")
+    }
+  }
+
+  suspend fun setLayerLockOverride(layerKey: String, locked: Boolean?) {
+    val cleanKey = layerKey.trim()
+    if (cleanKey.isEmpty()) return
+    context.secureKeyDataStore.edit { prefs ->
+      val isLabs = prefs[ACTIVE_UI_MODE] == "LABS"
+      val prefKey = if (isLabs) LABS_LAYER_LOCK_OVERRIDES else LAYER_LOCK_OVERRIDES
+      val current = mutableMapOf<String, Boolean>()
+      prefs[prefKey]
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.contains(":") }
+        ?.forEach { entry ->
+          val parts = entry.split(":", limit = 2)
+          val k = parts[0].trim()
+          val v = parts[1].trim().toBooleanStrictOrNull()
+          if (k.isNotEmpty() && v != null) {
+            current[k] = v
+          }
+        }
+      if (locked == null) {
+        current.remove(cleanKey)
+      } else {
+        current[cleanKey] = locked
+      }
+      prefs[prefKey] = current.entries.joinToString(",") { "${it.key}:${it.value}" }
+    }
   }
 }
