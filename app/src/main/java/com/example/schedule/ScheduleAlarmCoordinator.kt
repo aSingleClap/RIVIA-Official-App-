@@ -240,7 +240,7 @@ object ScheduleAlarmCoordinator {
 
       val notification =
         NotificationCompat.Builder(context.applicationContext, SCHEDULE_ALERTS_CHANNEL_ID)
-          .setSmallIcon(R.mipmap.ic_launcher)
+          .setSmallIcon(R.drawable.ic_notification_orb)
           .setContentTitle(title)
           .setContentText(text)
           .setStyle(NotificationCompat.BigTextStyle().bigText(text))
