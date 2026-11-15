@@ -122,6 +122,8 @@ dependencies {
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.work.runtime.ktx)
+  implementation(libs.play.services.location)
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.common)
   implementation(libs.kotlinx.coroutines.android)

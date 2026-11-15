@@ -20,6 +20,7 @@ import com.example.data.LayerLockEntity
 import com.example.data.LayerSettingsEntity
 import com.example.data.LayerTestRunEntity
 import com.example.data.MessageEntity
+import com.example.data.PendingArrivalCallEntity
 import com.example.data.RequestLogEntity
 import com.example.data.RiviaDao
 import com.example.data.RiviaDatabase
@@ -27,6 +28,8 @@ import com.example.data.RuleEventEntity
 import com.example.data.ScheduleAlertEntity
 import com.example.data.TurnDispatchLogEntity
 import com.example.data.VoiceEmotionLogEntity
+import com.example.data.ZoneConfigEntity
+import com.example.data.ZoneEventEntity
 import com.example.model.EngineLayerConfig
 import com.example.model.HardRulesLayerConfig
 import com.example.model.LayerCardUiMeta
@@ -55,6 +58,7 @@ import com.example.security.SecureKeyRepository
 import com.example.security.VoicePreferences
 import com.example.schedule.ApplyAlertsResult
 import com.example.schedule.ScheduleAlarmCoordinator
+import com.example.schedule.ZoneLocationCoordinator
 import com.example.service.LiveSessionManager
 import com.example.service.TurnRecognizerDiagnostics
 import com.example.ui.theme.AppUiMode
@@ -1220,6 +1224,42 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       .observeScheduleAlerts()
       .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+  // App Pass C: Geofence zones, last 20 enter/exit events, offline arrival queue, and permission states
+  val zoneConfigs: StateFlow<List<ZoneConfigEntity>> =
+    dao
+      .observeZoneConfigs()
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val recentZoneEvents: StateFlow<List<ZoneEventEntity>> =
+    dao
+      .observeRecentZoneEvents()
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val pendingArrivalCalls: StateFlow<List<PendingArrivalCallEntity>> =
+    dao
+      .observePendingArrivalCalls()
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  private val _hasForegroundLocationPermission =
+    MutableStateFlow(ZoneLocationCoordinator.hasForegroundLocationPermission(application))
+  val hasForegroundLocationPermission: StateFlow<Boolean> =
+    _hasForegroundLocationPermission.asStateFlow()
+
+  private val _hasBackgroundLocationPermission =
+    MutableStateFlow(ZoneLocationCoordinator.hasBackgroundLocationPermission(application))
+  val hasBackgroundLocationPermission: StateFlow<Boolean> =
+    _hasBackgroundLocationPermission.asStateFlow()
+
+  private val _hasBatteryExemption =
+    MutableStateFlow(ZoneLocationCoordinator.isIgnoringBatteryOptimizations(application))
+  val hasBatteryExemption: StateFlow<Boolean> = _hasBatteryExemption.asStateFlow()
+
+  private val _zoneSyncRunning = MutableStateFlow(false)
+  val zoneSyncRunning: StateFlow<Boolean> = _zoneSyncRunning.asStateFlow()
+
+  private val _zoneSyncStatusText = MutableStateFlow<String?>(null)
+  val zoneSyncStatusText: StateFlow<String?> = _zoneSyncStatusText.asStateFlow()
+
   // Session cache of exposed tablet tool schemas from tools/list
   private val _tabletToolsCache = MutableStateFlow<List<TabletToolDef>>(emptyList())
   val tabletToolsCache: StateFlow<List<TabletToolDef>> = _tabletToolsCache.asStateFlow()
@@ -1253,10 +1293,22 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   val isLoadingVoices: StateFlow<Boolean> = _isLoadingVoices.asStateFlow()
 
   init {
-    // 0. Ensure the high-importance leave-by alerts channel exists and re-arm any pending future alarms
+    // 0. Ensure the high-importance leave-by alerts channel exists, re-arm any pending future alarms,
+    // and initialize the 5 canonical geofence zones + periodic WorkManager jobs
     ScheduleAlarmCoordinator.ensureNotificationChannel(application)
+    ZoneLocationCoordinator.ensurePeriodicWorkersScheduled(application)
     viewModelScope.launch(Dispatchers.IO) {
       runCatching { ScheduleAlarmCoordinator.rearmPendingAlertsFromRoom(application) }
+      runCatching {
+        ZoneLocationCoordinator.ensureDefaultZoneRowsInRoom(application)
+        val outcome =
+          ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(
+            context = application,
+            reason = "app_start",
+          )
+        _zoneSyncStatusText.value = outcome.summary
+        ZoneLocationCoordinator.flushPendingArrivalCalls(application)
+      }
     }
 
     // 1. Load bundled layer configs and reconcile lock hashes before observing state
@@ -3914,6 +3966,50 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           _tabletArrivalResultText.value = redactedMsg
           showError(redactedMsg)
         }
+      }
+    }
+  }
+
+  fun refreshZonePermissionsState() {
+    val appCtx = getApplication<Application>()
+    val fg = ZoneLocationCoordinator.hasForegroundLocationPermission(appCtx)
+    val bg = ZoneLocationCoordinator.hasBackgroundLocationPermission(appCtx)
+    val bat = ZoneLocationCoordinator.isIgnoringBatteryOptimizations(appCtx)
+    val wasBg = _hasBackgroundLocationPermission.value
+    _hasForegroundLocationPermission.value = fg
+    _hasBackgroundLocationPermission.value = bg
+    _hasBatteryExemption.value = bat
+    if (bg && !wasBg) {
+      refreshZonesFromTabletNow(reason = "bg_permission_granted")
+    }
+  }
+
+  fun onLocationPermissionsUpdated(hasFg: Boolean, hasBg: Boolean, hasBattery: Boolean) {
+    val wasBg = _hasBackgroundLocationPermission.value
+    _hasForegroundLocationPermission.value = hasFg
+    _hasBackgroundLocationPermission.value = hasBg
+    _hasBatteryExemption.value = hasBattery
+    if (hasBg && !wasBg) {
+      refreshZonesFromTabletNow(reason = "bg_permission_granted")
+    }
+  }
+
+  fun refreshZonesFromTabletNow(reason: String = "manual_sync") {
+    if (_zoneSyncRunning.value) return
+    viewModelScope.launch {
+      _zoneSyncRunning.value = true
+      try {
+        val appCtx = getApplication<Application>()
+        refreshZonePermissionsState()
+        val outcome =
+          withContext(Dispatchers.IO) {
+            ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(appCtx, reason = reason)
+          }
+        _zoneSyncStatusText.value = keyRepository.redact(outcome.summary)
+      } catch (e: Throwable) {
+        _zoneSyncStatusText.value = keyRepository.redact(e.message ?: "Zone sync failed")
+      } finally {
+        _zoneSyncRunning.value = false
       }
     }
   }

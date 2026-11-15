@@ -422,6 +422,62 @@ interface RiviaDao {
     }
   }
 
+  // Zone Configs (App Pass C: Five canonical geofence places from app_places)
+  @Query("SELECT * FROM zone_configs ORDER BY id ASC")
+  fun observeZoneConfigs(): Flow<List<ZoneConfigEntity>>
+
+  @Query("SELECT * FROM zone_configs ORDER BY id ASC")
+  suspend fun getAllZoneConfigs(): List<ZoneConfigEntity>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsertZoneConfigs(configs: List<ZoneConfigEntity>)
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun upsertZoneConfig(config: ZoneConfigEntity)
+
+  // Zone Events (App Pass C: Enter/Exit logs, last 20 shown on Dev Zones card)
+  @Query("SELECT * FROM zone_events ORDER BY event_time_ms DESC, id DESC LIMIT 20")
+  fun observeRecentZoneEvents(): Flow<List<ZoneEventEntity>>
+
+  @Query(
+    """
+    SELECT * FROM zone_events
+    WHERE place_id = :placeId AND is_bounce = 0
+    ORDER BY event_time_ms DESC, id DESC
+    LIMIT 1
+    """
+  )
+  suspend fun getLastNonBounceEventForPlace(placeId: String): ZoneEventEntity?
+
+  @Query(
+    """
+    SELECT * FROM zone_events
+    WHERE transition = 'EXIT' AND is_bounce = 0
+    ORDER BY event_time_ms DESC, id DESC
+    LIMIT 1
+    """
+  )
+  suspend fun getLastNonBounceExitEvent(): ZoneEventEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertZoneEvent(event: ZoneEventEntity): Long
+
+  @Update
+  suspend fun updateZoneEvent(event: ZoneEventEntity)
+
+  // Pending Arrival Calls (App Pass C: Offline queue for app_arrival)
+  @Query("SELECT * FROM pending_arrival_calls ORDER BY event_time_ms ASC, id ASC")
+  fun observePendingArrivalCalls(): Flow<List<PendingArrivalCallEntity>>
+
+  @Query("SELECT * FROM pending_arrival_calls ORDER BY event_time_ms ASC, id ASC")
+  suspend fun getAllPendingArrivalCalls(): List<PendingArrivalCallEntity>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertPendingArrivalCall(call: PendingArrivalCallEntity): Long
+
+  @Query("DELETE FROM pending_arrival_calls WHERE id = :id")
+  suspend fun deletePendingArrivalCallById(id: Long)
+
   /**
    * Runs the entire backup import inside a single SQLite transaction:
    * - Uses OnConflictStrategy.IGNORE for chats, messages, layer_drafts, layer_locks, layer_test_runs, layer_settings

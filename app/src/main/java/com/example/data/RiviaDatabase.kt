@@ -23,8 +23,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
       VoiceEmotionLogEntity::class,
       TurnDispatchLogEntity::class,
       ScheduleAlertEntity::class,
+      ZoneConfigEntity::class,
+      ZoneEventEntity::class,
+      PendingArrivalCallEntity::class,
     ],
-  version = 8,
+  version = 9,
   exportSchema = true,
 )
 abstract class RiviaDatabase : RoomDatabase() {
@@ -262,6 +265,64 @@ abstract class RiviaDatabase : RoomDatabase() {
         }
       }
 
+    val MIGRATION_8_9: Migration =
+      object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+          db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `zone_configs` (
+              `id` TEXT NOT NULL,
+              `spoken_name` TEXT NOT NULL,
+              `lat` REAL,
+              `lng` REAL,
+              `radius_m` REAL NOT NULL,
+              `registered` INTEGER NOT NULL,
+              `status_note` TEXT NOT NULL,
+              `updated_at` INTEGER NOT NULL,
+              PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+          )
+          db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `zone_events` (
+              `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              `place_id` TEXT NOT NULL,
+              `spoken_name` TEXT NOT NULL,
+              `transition` TEXT NOT NULL,
+              `event_time_ms` INTEGER NOT NULL,
+              `source` TEXT NOT NULL,
+              `is_bounce` INTEGER NOT NULL,
+              `ride_id` TEXT,
+              `arrival_status` TEXT NOT NULL
+            )
+            """.trimIndent()
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_zone_events_event_time_ms` ON `zone_events` (`event_time_ms`)"
+          )
+          db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_zone_events_place_id` ON `zone_events` (`place_id`)"
+          )
+          db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `pending_arrival_calls` (
+              `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              `place_id` TEXT NOT NULL,
+              `event_time_ms` INTEGER NOT NULL,
+              `source` TEXT NOT NULL,
+              `ride_id` TEXT,
+              `ride_from_place` TEXT,
+              `ride_departed_epoch_sec` INTEGER,
+              `ride_arrived_epoch_sec` INTEGER,
+              `zone_event_id` INTEGER NOT NULL,
+              `created_at` INTEGER NOT NULL
+            )
+            """.trimIndent()
+          )
+        }
+      }
+
     // Future schema changes must add explicit Migration(from, to) objects here;
     // fallbackToDestructiveMigration is never used so chats are never wiped.
     private val ALL_MIGRATIONS: Array<Migration> =
@@ -273,6 +334,7 @@ abstract class RiviaDatabase : RoomDatabase() {
         MIGRATION_5_6,
         MIGRATION_6_7,
         MIGRATION_7_8,
+        MIGRATION_8_9,
       )
 
     fun getInstance(context: Context): RiviaDatabase {

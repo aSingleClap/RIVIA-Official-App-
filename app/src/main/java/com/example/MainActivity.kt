@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.components.LocationPermissionGate
 import com.example.ui.screens.BotsScreen
 import com.example.ui.screens.ChatScreen
 import com.example.ui.screens.ComingSoonScreen
@@ -50,7 +51,13 @@ class MainActivity : ComponentActivity() {
     setContent {
       val appUiMode by viewModel.appUiMode.collectAsStateWithLifecycle()
       RiviaTheme(appUiMode = appUiMode) {
-        RiviaAppRoot(viewModel = viewModel)
+        LocationPermissionGate(
+          onPermissionsUpdated = { hasFg, hasBg, hasBattery ->
+            viewModel.onLocationPermissionsUpdated(hasFg, hasBg, hasBattery)
+          }
+        ) {
+          RiviaAppRoot(viewModel = viewModel)
+        }
       }
     }
   }
@@ -58,6 +65,7 @@ class MainActivity : ComponentActivity() {
   override fun onResume() {
     super.onResume()
     viewModel.rearmPendingScheduleAlertsIfPermitted()
+    viewModel.refreshZonePermissionsState()
   }
 }
 

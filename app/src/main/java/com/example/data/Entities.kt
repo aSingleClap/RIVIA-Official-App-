@@ -237,3 +237,57 @@ data class ScheduleAlertEntity(
   @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
 )
 
+/**
+ * App Pass C (PR 7 & PR 8): Registered geofence zone metadata from `app_places`.
+ * Coordinates come exclusively at runtime from `app_places` and are never hard-coded.
+ */
+@Entity(tableName = "zone_configs")
+data class ZoneConfigEntity(
+  @PrimaryKey val id: String,
+  @ColumnInfo(name = "spoken_name") val spokenName: String,
+  @ColumnInfo(name = "lat") val lat: Double? = null,
+  @ColumnInfo(name = "lng") val lng: Double? = null,
+  @ColumnInfo(name = "radius_m") val radiusM: Float = 150f,
+  @ColumnInfo(name = "registered") val registered: Boolean = false,
+  @ColumnInfo(name = "status_note") val statusNote: String = "Not registered",
+  @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * App Pass C (PR 7 & PR 8): Enter and Exit zone events (geofence or 15-minute fallback).
+ */
+@Entity(
+  tableName = "zone_events",
+  indices = [Index(value = ["place_id"]), Index(value = ["event_time_ms"])],
+)
+data class ZoneEventEntity(
+  @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+  @ColumnInfo(name = "place_id") val placeId: String,
+  @ColumnInfo(name = "spoken_name") val spokenName: String,
+  @ColumnInfo(name = "transition") val transition: String, // "ENTER" or "EXIT"
+  @ColumnInfo(name = "event_time_ms") val eventTimeMs: Long,
+  @ColumnInfo(name = "source") val source: String, // "geofence" or "fallback"
+  @ColumnInfo(name = "is_bounce") val isBounce: Boolean = false,
+  @ColumnInfo(name = "ride_id") val rideId: String? = null,
+  @ColumnInfo(name = "arrival_status") val arrivalStatus: String = "",
+)
+
+/**
+ * App Pass C (PR 8): Offline queue for `app_arrival` calls when the phone is offline.
+ */
+@Entity(tableName = "pending_arrival_calls")
+data class PendingArrivalCallEntity(
+  @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+  @ColumnInfo(name = "place_id") val placeId: String,
+  @ColumnInfo(name = "event_time_ms") val eventTimeMs: Long,
+  @ColumnInfo(name = "source") val source: String = "geofence",
+  @ColumnInfo(name = "ride_id") val rideId: String? = null,
+  @ColumnInfo(name = "ride_from_place") val rideFromPlace: String? = null,
+  @ColumnInfo(name = "ride_departed_epoch_sec") val rideDepartedEpochSec: Long? = null,
+  @ColumnInfo(name = "ride_arrived_epoch_sec") val rideArrivedEpochSec: Long? = null,
+  @ColumnInfo(name = "zone_event_id") val zoneEventId: Long = 0L,
+  @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+)
+
+
+

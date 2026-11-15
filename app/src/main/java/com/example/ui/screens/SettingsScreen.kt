@@ -1354,6 +1354,14 @@ private fun KeysAndBackupTab(
           }
         }
       }
+
+      // App Pass C Step 6: Dev-mode Zones card next to the Tablet card
+      item {
+        DevZonesCardSection(
+          viewModel = viewModel,
+          onCommitTabletSettings = { commitTabletIfChanged() },
+        )
+      }
     }
 
     // Export / Import Chats JSON
@@ -4447,3 +4455,491 @@ private fun RequestLogItemCard(
     }
   }
 }
+
+@Composable
+private fun DevZonesCardSection(
+  viewModel: RiviaViewModel,
+  onCommitTabletSettings: () -> Unit,
+) {
+  val context = LocalContext.current
+  val focusManager = LocalFocusManager.current
+
+  val zoneConfigs by viewModel.zoneConfigs.collectAsStateWithLifecycle()
+  val recentZoneEvents by viewModel.recentZoneEvents.collectAsStateWithLifecycle()
+  val pendingArrivals by viewModel.pendingArrivalCalls.collectAsStateWithLifecycle()
+  val hasFgPerm by viewModel.hasForegroundLocationPermission.collectAsStateWithLifecycle()
+  val hasBgPerm by viewModel.hasBackgroundLocationPermission.collectAsStateWithLifecycle()
+  val hasBatteryExemption by viewModel.hasBatteryExemption.collectAsStateWithLifecycle()
+  val zoneSyncRunning by viewModel.zoneSyncRunning.collectAsStateWithLifecycle()
+  val zoneSyncStatusText by viewModel.zoneSyncStatusText.collectAsStateWithLifecycle()
+
+  val fgLauncher =
+    rememberLauncherForActivityResult(
+      ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+      viewModel.refreshZonePermissionsState()
+    }
+
+  val bgLauncher =
+    rememberLauncherForActivityResult(
+      ActivityResultContracts.RequestPermission()
+    ) {
+      viewModel.refreshZonePermissionsState()
+    }
+
+  val configById = remember(zoneConfigs) { zoneConfigs.associateBy { it.id } }
+  val orderedPlaces =
+    remember(configById) {
+      com.example.schedule.ZoneLocationCoordinator.CANONICAL_PLACES.map { spec ->
+        configById[spec.id]
+          ?: com.example.data.ZoneConfigEntity(
+            id = spec.id,
+            spokenName = spec.defaultSpokenName,
+            lat = null,
+            lng = null,
+            radiusM = com.example.schedule.ZoneLocationCoordinator.DEFAULT_RADIUS_METERS,
+            registered = false,
+            statusNote = "Not synced yet",
+            updatedAt = 0L,
+          )
+      }
+    }
+
+  val missingPinIds =
+    remember(orderedPlaces) {
+      orderedPlaces.filter { it.lat == null || it.lng == null }.map { it.id }
+    }
+
+  val eventFormatter =
+    remember { SimpleDateFormat("MM-dd HH:mm:ss", Locale.US) }
+
+  SettingsCardSection(
+    title = "Zones",
+  ) {
+    Text(
+      text =
+        "Five geofence zones from app_places (home, farm, gym, pf, hmc). Only arrive/leave events and arrival times are sent to the tablet; no location trail is stored.",
+      style = MaterialTheme.typography.bodySmall,
+      color = RiviaMutedText,
+    )
+
+    // 1. Permission Status (Allow all the time + Battery exemption + Samsung note)
+    Surface(
+      shape = RoundedCornerShape(12.dp),
+      color = RiviaSurface2,
+      border = BorderStroke(1.dp, RiviaBorder),
+      modifier = Modifier.fillMaxWidth().testTag("dev_zones_permissions_box"),
+    ) {
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Text(
+          text = "Permissions & Battery",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = RiviaTextPrimary,
+        )
+
+        // Allow all the time row
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.weight(1f),
+          ) {
+            StatusShape(
+              status =
+                if (hasFgPerm && hasBgPerm) StatusType.OK
+                else if (hasFgPerm) StatusType.WARNING
+                else StatusType.ERROR,
+              size = 8.dp,
+            )
+            Text(
+              text =
+                when {
+                  hasFgPerm && hasBgPerm -> "Location: Allow all the time (granted)"
+                  hasFgPerm -> "Location: Only while using app (missing Allow all the time)"
+                  else -> "Location: Missing foreground & background permission"
+                },
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = ChivoMonoFontFamily,
+              color = if (hasFgPerm && hasBgPerm) RiviaTextSecondary else RiviaWarningAmber,
+            )
+          }
+
+          if (!hasFgPerm || !hasBgPerm) {
+            TextButton(
+              onClick = {
+                if (!hasFgPerm) {
+                  fgLauncher.launch(
+                    arrayOf(
+                      Manifest.permission.ACCESS_FINE_LOCATION,
+                      Manifest.permission.ACCESS_COARSE_LOCATION,
+                    )
+                  )
+                } else {
+                  runCatching {
+                    bgLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                  }.onFailure {
+                    runCatching {
+                      context.startActivity(
+                        com.example.schedule.ZoneLocationCoordinator.buildAppDetailsSettingsIntent(
+                          context
+                        )
+                      )
+                    }
+                  }
+                }
+              },
+              modifier = Modifier.testTag("zones_fix_location_permission_button"),
+            ) {
+              Text(
+                if (!hasFgPerm) "Grant fg" else "Allow all time",
+                color = RiviaMint,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+          }
+        }
+
+        // Battery exemption row
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.weight(1f),
+          ) {
+            StatusShape(
+              status = if (hasBatteryExemption) StatusType.OK else StatusType.WARNING,
+              size = 8.dp,
+            )
+            Text(
+              text =
+                if (hasBatteryExemption) "Battery exemption: Unrestricted (granted)"
+                else "Battery exemption: Missing (restricted/optimized)",
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = ChivoMonoFontFamily,
+              color = if (hasBatteryExemption) RiviaTextSecondary else RiviaWarningAmber,
+            )
+          }
+
+          if (!hasBatteryExemption) {
+            TextButton(
+              onClick = {
+                runCatching {
+                  context.startActivity(
+                    com.example.schedule.ZoneLocationCoordinator
+                      .buildRequestIgnoreBatteryOptimizationsIntent(context)
+                  )
+                }.onFailure {
+                  runCatching {
+                    context.startActivity(
+                      com.example.schedule.ZoneLocationCoordinator.buildAppDetailsSettingsIntent(
+                        context
+                      )
+                    )
+                  }
+                }
+              },
+              modifier = Modifier.testTag("zones_fix_battery_exemption_button"),
+            ) {
+              Text(
+                "Allow",
+                color = RiviaMint,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+          }
+        }
+
+        Text(
+          text = com.example.schedule.ZoneLocationCoordinator.SAMSUNG_NEVER_SLEEPING_NOTE,
+          style = MaterialTheme.typography.bodySmall,
+          color = RiviaMutedText,
+          fontSize = 11.sp,
+        )
+      }
+    }
+
+    // 2. Five Zones List (id, spoken name, radius, registered / missing pin)
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+        Text(
+          text = "Five Places (app_places)",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = RiviaTextPrimary,
+        )
+        val statusLine =
+          zoneSyncStatusText
+            ?: if (missingPinIds.isNotEmpty()) {
+              "Missing pins: ${missingPinIds.joinToString(", ")}"
+            } else {
+              "All 5 places have pins"
+            }
+        Text(
+          text = statusLine,
+          style = MaterialTheme.typography.labelSmall,
+          fontFamily = ChivoMonoFontFamily,
+          color = RiviaMutedText,
+          modifier = Modifier.testTag("dev_zones_sync_status_text"),
+        )
+      }
+
+      OutlinedButton(
+        onClick = {
+          focusManager.clearFocus()
+          onCommitTabletSettings()
+          viewModel.refreshZonesFromTabletNow("dev_zones_card")
+        },
+        enabled = !zoneSyncRunning,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, RiviaBorder),
+        colors =
+          ButtonDefaults.outlinedButtonColors(
+            containerColor = RiviaSurface2,
+            contentColor = RiviaTextPrimary,
+          ),
+        modifier =
+          Modifier.minimumInteractiveComponentSize()
+            .testTag("sync_zones_from_tablet_button"),
+      ) {
+        Text(
+          if (zoneSyncRunning) "Syncing..." else "Sync zones",
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+    }
+
+    Column(
+      modifier = Modifier.fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      for (zone in orderedPlaces) {
+        val hasPin = zone.lat != null && zone.lng != null
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = RiviaSurface2,
+          border = BorderStroke(1.dp, RiviaBorder),
+          modifier = Modifier.fillMaxWidth().testTag("dev_zone_row_${zone.id}"),
+        ) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                StatusShape(
+                  status =
+                    when {
+                      zone.registered -> StatusType.OK
+                      hasPin -> StatusType.WARNING
+                      else -> StatusType.ERROR
+                    },
+                  size = 8.dp,
+                )
+                Text(
+                  text = "${zone.id} · \"${zone.spokenName}\"",
+                  fontFamily = ChivoMonoFontFamily,
+                  fontWeight = FontWeight.SemiBold,
+                  color = RiviaTextPrimary,
+                  fontSize = 13.sp,
+                )
+              }
+              Text(
+                text =
+                  if (hasPin) {
+                    "Radius: ${zone.radiusM.toInt()} m · ${if (zone.registered) "Registered" else zone.statusNote}"
+                  } else {
+                    "Radius: ${zone.radiusM.toInt()} m · Missing pin (${zone.statusNote})"
+                  },
+                fontFamily = ChivoMonoFontFamily,
+                color =
+                  when {
+                    zone.registered -> RiviaTextSecondary
+                    hasPin -> RiviaWarningAmber
+                    else -> RiviaErrorRed
+                  },
+                fontSize = 11.sp,
+              )
+            }
+
+            Surface(
+              shape = RoundedCornerShape(50),
+              color =
+                when {
+                  zone.registered -> RiviaMint.copy(alpha = 0.16f)
+                  hasPin -> RiviaWarningAmber.copy(alpha = 0.16f)
+                  else -> RiviaErrorRed.copy(alpha = 0.16f)
+                },
+            ) {
+              Text(
+                text =
+                  when {
+                    zone.registered -> "REGISTERED"
+                    hasPin -> "UNREGISTERED"
+                    else -> "NO PIN"
+                  },
+                fontFamily = ChivoMonoFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.sp,
+                color =
+                  when {
+                    zone.registered -> RiviaMint
+                    hasPin -> RiviaWarningAmber
+                    else -> RiviaErrorRed
+                  },
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+              )
+            }
+          }
+        }
+      }
+    }
+
+    if (pendingArrivals.isNotEmpty()) {
+      Text(
+        text = "Offline queue: ${pendingArrivals.size} pending app_arrival call(s) waiting for connection",
+        fontFamily = ChivoMonoFontFamily,
+        fontSize = 11.sp,
+        color = RiviaWarningAmber,
+      )
+    }
+
+    HorizontalDivider(color = RiviaBorder, thickness = 1.dp)
+
+    // 3. Last 20 Enter/Exit Events with times, "fallback" badge, and "bounce" badge
+    Text(
+      text = "Last 20 Enter / Exit Events (${recentZoneEvents.size})",
+      style = MaterialTheme.typography.labelMedium,
+      fontWeight = FontWeight.SemiBold,
+      color = RiviaTextPrimary,
+    )
+
+    if (recentZoneEvents.isEmpty()) {
+      Text(
+        text = "No geofence or fallback enter/exit events recorded yet.",
+        style = MaterialTheme.typography.bodySmall,
+        color = RiviaMutedText,
+        modifier = Modifier.testTag("dev_zones_empty_events"),
+      )
+    } else {
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        for (ev in recentZoneEvents) {
+          val formattedTime =
+            runCatching { eventFormatter.format(Date(ev.eventTimeMs)) }
+              .getOrDefault("${ev.eventTimeMs}")
+          Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = RiviaSurface2,
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier = Modifier.fillMaxWidth().testTag("dev_zone_event_${ev.id}"),
+          ) {
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                  Text(
+                    text = "${ev.transition} · ${ev.placeId} (${ev.spokenName})",
+                    fontFamily = ChivoMonoFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    color =
+                      when {
+                        ev.isBounce -> RiviaWarningAmber
+                        ev.transition == "ENTER" -> RiviaMint
+                        else -> RiviaTextPrimary
+                      },
+                  )
+                  if (ev.source == "fallback") {
+                    Surface(
+                      shape = RoundedCornerShape(50),
+                      color = Color(0xFF8AB4F8).copy(alpha = 0.2f),
+                    ) {
+                      Text(
+                        text = "fallback",
+                        fontFamily = ChivoMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        color = Color(0xFF8AB4F8),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                      )
+                    }
+                  }
+                  if (ev.isBounce) {
+                    Surface(
+                      shape = RoundedCornerShape(50),
+                      color = RiviaWarningAmber.copy(alpha = 0.2f),
+                    ) {
+                      Text(
+                        text = "bounce",
+                        fontFamily = ChivoMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        color = RiviaWarningAmber,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                      )
+                    }
+                  }
+                }
+
+                Text(
+                  text = formattedTime,
+                  fontFamily = ChivoMonoFontFamily,
+                  fontSize = 11.sp,
+                  color = RiviaMutedText,
+                )
+              }
+
+              val metaParts = buildList {
+                add("status=${ev.arrivalStatus}")
+                if (!ev.rideId.isNullOrBlank()) {
+                  add("ride=${ev.rideId}")
+                }
+              }
+              Text(
+                text = metaParts.joinToString(" · "),
+                fontFamily = ChivoMonoFontFamily,
+                fontSize = 11.sp,
+                color = RiviaMutedText,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
