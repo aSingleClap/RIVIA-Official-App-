@@ -379,13 +379,14 @@ class GeminiInteractionsClient {
       }
 
       // Section 4: Tablet tools (Labs chats only).
-      // Expose every tool from tools/list that has a description and input schema, except ask_bot, check_reply and post_reply.
+      // Expose every tool from tools/list that has a description and input schema, except ask_bot, check_reply, post_reply, and any tool whose name starts with app_.
       if (settings.tabletToolsEnabled && !tabletToolDefs.isNullOrEmpty()) {
         for (toolDef in tabletToolDefs) {
           if (
             toolDef.name != "ask_bot" &&
               toolDef.name != "check_reply" &&
               toolDef.name != "post_reply" &&
+              !toolDef.name.startsWith("app_") &&
               toolDef.description.isNotBlank() &&
               toolDef.inputSchemaJson.isNotBlank()
           ) {

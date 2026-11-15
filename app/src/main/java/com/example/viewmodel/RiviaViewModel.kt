@@ -3668,6 +3668,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
               it.name != "ask_bot" &&
                 it.name != "check_reply" &&
                 it.name != "post_reply" &&
+                !it.name.startsWith("app_") &&
                 it.description.isNotBlank() &&
                 it.inputSchemaJson.isNotBlank()
             }
@@ -3708,7 +3709,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
 
   /**
    * Ensures exposed tablet tool schemas (every tool from tools/list with a description and input schema,
-   * except ask_bot, check_reply and post_reply) are cached in memory for the session.
+   * except ask_bot, check_reply, post_reply, and any tool whose name starts with app_) are cached in memory for the session.
    */
   private suspend fun ensureTabletToolsLoaded(): List<TabletToolDef>? {
     val cached = _tabletToolsCache.value
@@ -3744,6 +3745,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
             it.name != "ask_bot" &&
               it.name != "check_reply" &&
               it.name != "post_reply" &&
+              !it.name.startsWith("app_") &&
               it.description.isNotBlank() &&
               it.inputSchemaJson.isNotBlank()
           }
