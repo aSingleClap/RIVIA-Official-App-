@@ -46,6 +46,27 @@ class AudioPlayerManager(
   private val keyRepository: SecureKeyRepository,
   private val elevenLabsClient: ElevenLabsClient,
 ) {
+  companion object {
+    @Volatile private var INSTANCE: AudioPlayerManager? = null
+
+    fun getInstance(
+      context: Context,
+      keyRepository: SecureKeyRepository = SecureKeyRepository(context.applicationContext),
+      elevenLabsClient: ElevenLabsClient = ElevenLabsClient(),
+    ): AudioPlayerManager {
+      return INSTANCE
+        ?: synchronized(this) {
+          INSTANCE
+            ?: AudioPlayerManager(
+                context = context.applicationContext,
+                keyRepository = keyRepository,
+                elevenLabsClient = elevenLabsClient,
+              )
+              .also { INSTANCE = it }
+        }
+    }
+  }
+
   private val mainHandler = Handler(Looper.getMainLooper())
   private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 

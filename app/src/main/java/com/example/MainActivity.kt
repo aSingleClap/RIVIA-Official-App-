@@ -54,6 +54,11 @@ class MainActivity : ComponentActivity() {
       }
     }
   }
+
+  override fun onResume() {
+    super.onResume()
+    viewModel.rearmPendingScheduleAlertsIfPermitted()
+  }
 }
 
 @Composable

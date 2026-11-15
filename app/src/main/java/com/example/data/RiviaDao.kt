@@ -392,6 +392,36 @@ interface RiviaDao {
   @Update
   suspend fun updateTurnDispatchLog(log: TurnDispatchLogEntity)
 
+  // Schedule Alerts (App Pass B: Exact leave-by alarms)
+  @Query("SELECT * FROM schedule_alerts ORDER BY trigger_at_ms ASC")
+  fun observeScheduleAlerts(): Flow<List<ScheduleAlertEntity>>
+
+  @Query("SELECT * FROM schedule_alerts ORDER BY trigger_at_ms ASC")
+  suspend fun getAllScheduleAlerts(): List<ScheduleAlertEntity>
+
+  @Query("SELECT * FROM schedule_alerts WHERE id = :id LIMIT 1")
+  suspend fun getScheduleAlertById(id: String): ScheduleAlertEntity?
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE)
+  suspend fun insertScheduleAlerts(alerts: List<ScheduleAlertEntity>)
+
+  @Query("DELETE FROM schedule_alerts WHERE id = :id")
+  suspend fun deleteScheduleAlertById(id: String)
+
+  @Query("DELETE FROM schedule_alerts WHERE trigger_at_ms <= :cutoffMs")
+  suspend fun deleteExpiredScheduleAlerts(cutoffMs: Long)
+
+  @Query("DELETE FROM schedule_alerts")
+  suspend fun clearAllScheduleAlerts()
+
+  @Transaction
+  suspend fun replaceAllScheduleAlerts(alerts: List<ScheduleAlertEntity>) {
+    clearAllScheduleAlerts()
+    if (alerts.isNotEmpty()) {
+      insertScheduleAlerts(alerts)
+    }
+  }
+
   /**
    * Runs the entire backup import inside a single SQLite transaction:
    * - Uses OnConflictStrategy.IGNORE for chats, messages, layer_drafts, layer_locks, layer_test_runs, layer_settings

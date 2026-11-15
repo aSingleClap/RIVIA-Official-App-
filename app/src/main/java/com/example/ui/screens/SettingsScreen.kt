@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -810,6 +812,9 @@ private fun KeysAndBackupTab(
   val tabletTestRunning by viewModel.tabletTestRunning.collectAsStateWithLifecycle()
   val tabletTestResultText by viewModel.tabletTestResultText.collectAsStateWithLifecycle()
   val tabletTestIsError by viewModel.tabletTestIsError.collectAsStateWithLifecycle()
+  val tabletArrivalRunning by viewModel.tabletArrivalRunning.collectAsStateWithLifecycle()
+  val tabletArrivalResultText by viewModel.tabletArrivalResultText.collectAsStateWithLifecycle()
+  val tabletArrivalIsError by viewModel.tabletArrivalIsError.collectAsStateWithLifecycle()
   val cachedModels by viewModel.cachedModels.collectAsStateWithLifecycle()
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
   val isLoadingModels by viewModel.isLoadingModels.collectAsStateWithLifecycle()
@@ -858,6 +863,48 @@ private fun KeysAndBackupTab(
   }
 
   DisposableEffect(Unit) { onDispose { commitBothRef() } }
+
+  var pendingArrivalAfterPermission by remember { mutableStateOf(false) }
+
+  val exactAlarmSettingsLauncher =
+    rememberLauncherForActivityResult(
+      ActivityResultContracts.StartActivityForResult()
+    ) {
+      if (com.example.schedule.ScheduleAlarmCoordinator.canScheduleExactAlarms(context)) {
+        viewModel.rearmPendingScheduleAlertsIfPermitted()
+        if (pendingArrivalAfterPermission) {
+          pendingArrivalAfterPermission = false
+          viewModel.testTabletArrival(tabletUrlDraft, tabletTokenDraft)
+        }
+      } else {
+        pendingArrivalAfterPermission = false
+        viewModel.noteExactAlarmPermissionMissingForArrival()
+      }
+    }
+
+  fun proceedWithExactAlarmCheckAndArrival() {
+    if (!com.example.schedule.ScheduleAlarmCoordinator.canScheduleExactAlarms(context)) {
+      pendingArrivalAfterPermission = true
+      viewModel.noteExactAlarmPermissionMissingForArrival()
+      runCatching {
+        exactAlarmSettingsLauncher.launch(
+          com.example.schedule.ScheduleAlarmCoordinator.buildRequestExactAlarmPermissionIntent(
+            context
+          )
+        )
+      }
+    } else {
+      pendingArrivalAfterPermission = false
+      viewModel.testTabletArrival(tabletUrlDraft, tabletTokenDraft)
+    }
+  }
+
+  val notifPermissionForArrivalLauncher =
+    rememberLauncherForActivityResult(
+      ActivityResultContracts.RequestPermission()
+    ) {
+      proceedWithExactAlarmCheckAndArrival()
+    }
 
   val exportLauncher =
     rememberLauncherForActivityResult(
@@ -1233,6 +1280,73 @@ private fun KeysAndBackupTab(
             ) {
               Text(
                 if (tabletTestRunning) "Testing..." else "Test",
+                color = RiviaTextPrimary,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+          }
+
+          HorizontalDivider(color = RiviaBorder, thickness = 1.dp)
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              modifier = Modifier.weight(1f).padding(end = 12.dp),
+            ) {
+              StatusShape(
+                status =
+                  when {
+                    tabletArrivalIsError -> StatusType.ERROR
+                    !tabletArrivalResultText.isNullOrBlank() -> StatusType.OK
+                    else -> StatusType.WARNING
+                  },
+                size = 8.dp,
+              )
+              Text(
+                text =
+                  tabletArrivalResultText
+                    ?: "Calls app_arrival (title=\"test\")",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = ChivoMonoFontFamily,
+                color = if (tabletArrivalIsError) RiviaErrorRed else RiviaMutedText,
+                modifier = Modifier.testTag("tablet_arrival_inline_result"),
+              )
+            }
+
+            OutlinedButton(
+              onClick = {
+                focusManager.clearFocus()
+                commitTabletIfChanged()
+                if (
+                  Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    !com.example.schedule.ScheduleAlarmCoordinator.hasPostNotificationsPermission(
+                      context
+                    )
+                ) {
+                  notifPermissionForArrivalLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                  proceedWithExactAlarmCheckAndArrival()
+                }
+              },
+              enabled = !tabletArrivalRunning,
+              shape = RoundedCornerShape(14.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              colors =
+                ButtonDefaults.outlinedButtonColors(
+                  containerColor = RiviaSurface2,
+                  contentColor = RiviaTextPrimary,
+                ),
+              modifier =
+                Modifier.minimumInteractiveComponentSize()
+                  .testTag("test_tablet_arrival_button"),
+            ) {
+              Text(
+                if (tabletArrivalRunning) "Testing..." else "Test arrival",
                 color = RiviaTextPrimary,
                 fontWeight = FontWeight.SemiBold,
               )

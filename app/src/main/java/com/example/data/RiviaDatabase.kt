@@ -22,8 +22,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
       LayerSettingsEntity::class,
       VoiceEmotionLogEntity::class,
       TurnDispatchLogEntity::class,
+      ScheduleAlertEntity::class,
     ],
-  version = 7,
+  version = 8,
   exportSchema = true,
 )
 abstract class RiviaDatabase : RoomDatabase() {
@@ -239,6 +240,28 @@ abstract class RiviaDatabase : RoomDatabase() {
         }
       }
 
+    val MIGRATION_7_8: Migration =
+      object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+          db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `schedule_alerts` (
+              `id` TEXT NOT NULL,
+              `epoch_seconds` INTEGER NOT NULL,
+              `trigger_at_ms` INTEGER NOT NULL,
+              `local_time` TEXT NOT NULL,
+              `spoken_time` TEXT NOT NULL,
+              `iso_time` TEXT NOT NULL,
+              `fallback_text` TEXT NOT NULL,
+              `message_json` TEXT NOT NULL,
+              `created_at` INTEGER NOT NULL,
+              PRIMARY KEY(`id`)
+            )
+            """.trimIndent()
+          )
+        }
+      }
+
     // Future schema changes must add explicit Migration(from, to) objects here;
     // fallbackToDestructiveMigration is never used so chats are never wiped.
     private val ALL_MIGRATIONS: Array<Migration> =
@@ -249,6 +272,7 @@ abstract class RiviaDatabase : RoomDatabase() {
         MIGRATION_4_5,
         MIGRATION_5_6,
         MIGRATION_6_7,
+        MIGRATION_7_8,
       )
 
     fun getInstance(context: Context): RiviaDatabase {

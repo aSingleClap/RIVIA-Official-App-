@@ -24,6 +24,7 @@ import com.example.data.RequestLogEntity
 import com.example.data.RiviaDao
 import com.example.data.RiviaDatabase
 import com.example.data.RuleEventEntity
+import com.example.data.ScheduleAlertEntity
 import com.example.data.TurnDispatchLogEntity
 import com.example.data.VoiceEmotionLogEntity
 import com.example.model.EngineLayerConfig
@@ -52,6 +53,8 @@ import com.example.plugin.RiviaInternalBridge
 import com.example.security.LabMicTestPreferences
 import com.example.security.SecureKeyRepository
 import com.example.security.VoicePreferences
+import com.example.schedule.ApplyAlertsResult
+import com.example.schedule.ScheduleAlarmCoordinator
 import com.example.service.LiveSessionManager
 import com.example.service.TurnRecognizerDiagnostics
 import com.example.ui.theme.AppUiMode
@@ -854,7 +857,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   val keyRepository = SecureKeyRepository(application)
   val geminiClient = GeminiInteractionsClient()
   val elevenLabsClient = ElevenLabsClient()
-  val audioPlayerManager = AudioPlayerManager(application, keyRepository, elevenLabsClient)
+  val audioPlayerManager = AudioPlayerManager.getInstance(application, keyRepository, elevenLabsClient)
   val emotionModelManager = EmotionModelManager(application)
   val sileroVadManager = SileroVadManager(application)
 
@@ -1203,6 +1206,20 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   private val _tabletTestIsError = MutableStateFlow(false)
   val tabletTestIsError: StateFlow<Boolean> = _tabletTestIsError.asStateFlow()
 
+  private val _tabletArrivalRunning = MutableStateFlow(false)
+  val tabletArrivalRunning: StateFlow<Boolean> = _tabletArrivalRunning.asStateFlow()
+
+  private val _tabletArrivalResultText = MutableStateFlow<String?>(null)
+  val tabletArrivalResultText: StateFlow<String?> = _tabletArrivalResultText.asStateFlow()
+
+  private val _tabletArrivalIsError = MutableStateFlow(false)
+  val tabletArrivalIsError: StateFlow<Boolean> = _tabletArrivalIsError.asStateFlow()
+
+  val scheduleAlerts: StateFlow<List<ScheduleAlertEntity>> =
+    dao
+      .observeScheduleAlerts()
+      .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
   // Session cache of exposed tablet tool schemas from tools/list
   private val _tabletToolsCache = MutableStateFlow<List<TabletToolDef>>(emptyList())
   val tabletToolsCache: StateFlow<List<TabletToolDef>> = _tabletToolsCache.asStateFlow()
@@ -1236,6 +1253,12 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   val isLoadingVoices: StateFlow<Boolean> = _isLoadingVoices.asStateFlow()
 
   init {
+    // 0. Ensure the high-importance leave-by alerts channel exists and re-arm any pending future alarms
+    ScheduleAlarmCoordinator.ensureNotificationChannel(application)
+    viewModelScope.launch(Dispatchers.IO) {
+      runCatching { ScheduleAlarmCoordinator.rearmPendingAlertsFromRoom(application) }
+    }
+
     // 1. Load bundled layer configs and reconcile lock hashes before observing state
     initializeLayersAndLocks(application)
 
@@ -2860,6 +2883,12 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                     )
                   }
                 logTabletCallOutcome(tool = fnCall.name, outcome = outcome)
+                if (outcome is TabletCallOutcome.Success && outcome.ok) {
+                  val alertRes = applyTabletAlertsFromOutcome(outcome)
+                  if (alertRes?.exactAlarmPermissionMissing == true) {
+                    showError("Exact alarm permission is off in system settings; leave-by alarm saved to Room.")
+                  }
+                }
 
                 val toolResultJsonString =
                   when (outcome) {
@@ -3701,6 +3730,188 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           _tabletToolsUnavailable.value = true
           _tabletTestIsError.value = true
           _tabletTestResultText.value = redactedMsg
+          showError(redactedMsg)
+        }
+      }
+    }
+  }
+
+  /**
+   * Shared function to apply the `alerts` field from any successful tablet reply where `ok` is true
+   * and `alerts` is non-null. Called from both the Labs `tools/call` success path and the Dev-mode
+   * `Test arrival` button.
+   */
+  suspend fun applyTabletAlertsFromOutcome(
+    outcome: TabletCallOutcome<JSONObject>,
+  ): ApplyAlertsResult? {
+    if (outcome !is TabletCallOutcome.Success || !outcome.ok) return null
+    val structured = outcome.value
+    if (structured.has("ok") && !structured.optBoolean("ok", false)) return null
+    return ScheduleAlarmCoordinator.applyAlertsFromTabletReply(
+      context = getApplication(),
+      structured = structured,
+    )
+  }
+
+  fun noteExactAlarmPermissionMissingForArrival() {
+    _tabletArrivalIsError.value = true
+    _tabletArrivalResultText.value =
+      "Allow Alarms & reminders for Rivia in system settings, then tap Test arrival."
+  }
+
+  fun rearmPendingScheduleAlertsIfPermitted() {
+    viewModelScope.launch(Dispatchers.IO) {
+      val app = getApplication<Application>()
+      if (ScheduleAlarmCoordinator.canScheduleExactAlarms(app)) {
+        val armed = ScheduleAlarmCoordinator.rearmPendingAlertsFromRoom(app)
+        if (armed > 0 && _tabletArrivalIsError.value) {
+          _tabletArrivalIsError.value = false
+          _tabletArrivalResultText.value = "ok · Armed $armed pending alert(s)"
+        }
+      }
+    }
+  }
+
+  /**
+   * App Pass B Step 9: Dev-mode "Test arrival" button on the Settings Tablet card.
+   * Calls `app_arrival` with `title = "test"` using the stored Server URL and App token,
+   * then runs the shared `applyTabletAlertsFromOutcome` function on the reply.
+   */
+  fun testTabletArrival(customRawUrl: String? = null, customRawToken: String? = null) {
+    viewModelScope.launch {
+      val app = getApplication<Application>()
+      if (!ScheduleAlarmCoordinator.canScheduleExactAlarms(app)) {
+        noteExactAlarmPermissionMissingForArrival()
+        return@launch
+      }
+
+      _tabletArrivalRunning.value = true
+      _tabletArrivalResultText.value = null
+      _tabletArrivalIsError.value = false
+
+      val cleanUrl =
+        customRawUrl?.let { SecureKeyRepository.normalizeNoWhitespace(it) }
+          ?: keyRepository.getTabletServerUrl()
+      val cleanToken =
+        customRawToken?.let { SecureKeyRepository.normalizeNoWhitespace(it) }
+          ?: keyRepository.getTabletAppToken()
+
+      if (!TabletMcpClient.isValidServerUrl(cleanUrl)) {
+        _tabletArrivalRunning.value = false
+        _tabletArrivalIsError.value = true
+        val msg = "Server URL must start with https:// and end in /app/mcp."
+        _tabletArrivalResultText.value = msg
+        showError(msg)
+        return@launch
+      }
+      if (cleanToken.isBlank()) {
+        _tabletArrivalRunning.value = false
+        _tabletArrivalIsError.value = true
+        val msg = "Tablet app token is not set."
+        _tabletArrivalResultText.value = msg
+        showError(msg)
+        return@launch
+      }
+
+      if (customRawUrl != null) keyRepository.saveTabletServerUrl(cleanUrl)
+      if (customRawToken != null) keyRepository.saveTabletAppToken(cleanToken)
+
+      // Populate live schema from tools/list first so filterArgumentsForTool matches the live app_arrival schema
+      val listOutcome =
+        withContext(Dispatchers.IO) {
+          tabletMcpClient.listTools(serverUrl = cleanUrl, appToken = cleanToken)
+        }
+      val appArrivalSchemaObj: JSONObject? =
+        when (listOutcome) {
+          is TabletCallOutcome.Success -> {
+            listOutcome.value
+              .firstOrNull { it.name == "app_arrival" }
+              ?.let { def ->
+                runCatching { JSONObject(def.inputSchemaJson) }.getOrNull()
+              }
+          }
+          is TabletCallOutcome.Failure -> null
+        }
+
+      val args =
+        JSONObject().apply {
+          put("title", "test")
+          // Only include time if the live app_arrival schema explicitly requires "time"; never send place
+          if (appArrivalSchemaObj != null) {
+            val reqArr = appArrivalSchemaObj.optJSONArray("required")
+            var timeRequired = false
+            if (reqArr != null) {
+              for (i in 0 until reqArr.length()) {
+                if (reqArr.optString(i) == "time") {
+                  timeRequired = true
+                  break
+                }
+              }
+            }
+            if (timeRequired) {
+              val timeProp =
+                appArrivalSchemaObj.optJSONObject("properties")?.optJSONObject("time")
+              val timeType = timeProp?.optString("type", "string").orEmpty()
+              when (timeType) {
+                "integer", "number" -> put("time", System.currentTimeMillis() / 1000L)
+                else ->
+                  put(
+                    "time",
+                    java.time.OffsetDateTime.now()
+                      .format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                  )
+              }
+            }
+          }
+        }
+
+      val outcome =
+        withContext(Dispatchers.IO) {
+          tabletMcpClient.callTool(
+            serverUrl = cleanUrl,
+            appToken = cleanToken,
+            toolName = "app_arrival",
+            arguments = args,
+          )
+        }
+      logTabletCallOutcome(tool = "app_arrival", outcome = outcome)
+      _tabletArrivalRunning.value = false
+
+      when (outcome) {
+        is TabletCallOutcome.Success -> {
+          val structured = outcome.value
+          val envelopeOk =
+            outcome.ok && (!structured.has("ok") || structured.optBoolean("ok", false))
+          if (!envelopeOk) {
+            val errObj = structured.optJSONObject("error")
+            val rawErr =
+              errObj?.optString("msg", "")?.takeIf { it.isNotBlank() }
+                ?: structured.optString("message", "").takeIf { it.isNotBlank() }
+                ?: "app_arrival returned ok=false"
+            val redacted = keyRepository.redact(rawErr)
+            _tabletArrivalIsError.value = true
+            _tabletArrivalResultText.value = redacted
+            showError(redacted)
+          } else {
+            val alertRes = applyTabletAlertsFromOutcome(outcome)
+            if (alertRes?.exactAlarmPermissionMissing == true) {
+              noteExactAlarmPermissionMissingForArrival()
+            } else {
+              _tabletArrivalIsError.value = false
+              val summary =
+                when {
+                  alertRes == null -> "ok"
+                  alertRes.changed -> "ok · ${alertRes.summary}"
+                  else -> "ok · no alerts in reply"
+                }
+              _tabletArrivalResultText.value = summary
+            }
+          }
+        }
+        is TabletCallOutcome.Failure -> {
+          val redactedMsg = keyRepository.redact(outcome.message)
+          _tabletArrivalIsError.value = true
+          _tabletArrivalResultText.value = redactedMsg
           showError(redactedMsg)
         }
       }

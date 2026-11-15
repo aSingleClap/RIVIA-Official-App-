@@ -219,3 +219,21 @@ data class TurnDispatchLogEntity(
   @ColumnInfo(name = "error") val error: String? = null,
   @ColumnInfo(name = "timings_json") val timingsJson: String = "{}",
 )
+
+/**
+ * App Pass B (JOB-001 part 2): Persisted schedule / leave-by alerts from the tablet scheduler
+ * so pending alarms survive process death, device reboot, and app updates.
+ */
+@Entity(tableName = "schedule_alerts")
+data class ScheduleAlertEntity(
+  @PrimaryKey val id: String,
+  @ColumnInfo(name = "epoch_seconds") val epochSeconds: Long,
+  @ColumnInfo(name = "trigger_at_ms") val triggerAtMs: Long,
+  @ColumnInfo(name = "local_time") val localTime: String = "",
+  @ColumnInfo(name = "spoken_time") val spokenTime: String = "",
+  @ColumnInfo(name = "iso_time") val isoTime: String = "",
+  @ColumnInfo(name = "fallback_text") val fallbackText: String,
+  @ColumnInfo(name = "message_json") val messageJson: String = "{}",
+  @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+)
+
