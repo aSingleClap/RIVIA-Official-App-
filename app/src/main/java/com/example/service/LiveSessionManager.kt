@@ -89,7 +89,7 @@ data class LiveTurnDispatchContext(
  */
 object LiveSessionManager {
   const val TAG = "LiveSessionManager"
-  const val H9_SPOKEN_FALLBACK_LINE = "No reply came back. It's in the log."
+  const val H9_SPOKEN_FALLBACK_LINE = "No reply came back. Try again."
   const val PIPE_CLOSE_FALLBACK_TIMEOUT_MS = 3000L
   const val PIPE_DRAIN_BEFORE_STOP_MS = 120L
   const val EMOTION_BARRIER_TIMEOUT_MS = 300L
@@ -196,7 +196,7 @@ object LiveSessionManager {
         _uiState.value =
           _uiState.value.copy(
             orbState = OrbState.IDLE,
-            errorCaption = throwable.message ?: "Live session error",
+            errorCaption = throwable.message ?: "Something went wrong. Try again.",
           )
       }
     }
@@ -1611,7 +1611,7 @@ object LiveSessionManager {
           turnHadError = true
           userTurnFinalizingOrExecuting = false
           player.stopPlayback()
-          handleNonSilenceError(e.message ?: "Live turn failed")
+          handleNonSilenceError(e.message ?: "Something went wrong. Try again.")
         }
       }
     if (MicSharingRecorder.bargeInEnabled) {
@@ -1640,7 +1640,7 @@ object LiveSessionManager {
           orbState = OrbState.IDLE,
           errorCaption =
             if (stopAfterThree) {
-              "$errorMessage · Paused after 3 errors in a row. Tap the orb to resume."
+              "$errorMessage Paused after 3 tries. Tap the orb to try again."
             } else {
               errorMessage
             },
@@ -1714,15 +1714,15 @@ object LiveSessionManager {
 
   private fun speechErrorToString(error: Int): String =
     when (error) {
-      SpeechRecognizer.ERROR_AUDIO -> "SpeechRecognizer error: Audio recording error"
-      SpeechRecognizer.ERROR_CLIENT -> "SpeechRecognizer error: Client side error"
+      SpeechRecognizer.ERROR_AUDIO -> "The microphone stopped working. Try again."
+      SpeechRecognizer.ERROR_CLIENT -> "Couldn't hear that. Try again."
       SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-        "SpeechRecognizer error: Insufficient microphone permissions"
-      SpeechRecognizer.ERROR_NETWORK -> "SpeechRecognizer error: Network error"
-      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "SpeechRecognizer error: Network timeout"
-      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "SpeechRecognizer error: Recognizer busy"
-      SpeechRecognizer.ERROR_SERVER -> "SpeechRecognizer error: Server error"
-      SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "SpeechRecognizer error: Too many requests"
-      else -> "SpeechRecognizer error (code $error)"
+        "Rivia needs the microphone. Allow it in settings."
+      SpeechRecognizer.ERROR_NETWORK -> "I can't reach the internet right now."
+      SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "I can't reach the internet right now."
+      SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Couldn't hear that. Try again."
+      SpeechRecognizer.ERROR_SERVER -> "Couldn't hear that. Try again."
+      SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "Couldn't hear that. Try again."
+      else -> "Couldn't hear that. Try again."
     }
 }

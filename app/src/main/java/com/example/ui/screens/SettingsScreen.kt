@@ -1755,7 +1755,7 @@ private fun SettingsSubPickerHost(
                 )
                 Text(
                   text =
-                    "Make sure your ElevenLabs API key is saved in Keys, then tap Refresh above to fetch your custom and cloned voices.",
+                    "No voices yet. Make sure the voice key is saved (Dev mode → Settings → Keys), then tap Refresh.",
                   color = RiviaTextSecondary,
                   fontSize = 13.sp,
                 )
@@ -2153,78 +2153,6 @@ private fun VoiceSettingsTab(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(modifier = Modifier.fillMaxWidth()) {
-            if (isDevOrLabs) {
-              // Read aloud row -> opens separate vertical list screen with model descriptions
-              Row(
-                modifier =
-                  Modifier.fillMaxWidth()
-                    .clickable { onOpenSubPicker(SettingsSubPicker.READ_ALOUD_MODEL) }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-              ) {
-                Column(
-                  modifier = Modifier.weight(1f).padding(end = 12.dp),
-                  verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                  Text(
-                    text = "Read aloud",
-                    color = RiviaTextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                  )
-                  Text(
-                    text = friendlyElevenModelName(voicePrefs.readAloudModelId),
-                    color = RiviaTextSecondary,
-                    fontSize = 13.sp,
-                  )
-                }
-                Icon(
-                  imageVector = Icons.Default.KeyboardArrowDown,
-                  contentDescription = "Select Read aloud model",
-                  tint = RiviaTextSecondary,
-                  modifier = Modifier.size(20.dp),
-                )
-              }
-
-              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
-
-              // Live conversations row -> opens separate vertical list screen with model descriptions
-              Row(
-                modifier =
-                  Modifier.fillMaxWidth()
-                    .clickable { onOpenSubPicker(SettingsSubPicker.LIVE_MODEL) }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-              ) {
-                Column(
-                  modifier = Modifier.weight(1f).padding(end = 12.dp),
-                  verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                  Text(
-                    text = "Live conversations",
-                    color = RiviaTextPrimary,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                  )
-                  Text(
-                    text = friendlyElevenModelName(voicePrefs.liveModelId),
-                    color = RiviaTextSecondary,
-                    fontSize = 13.sp,
-                  )
-                }
-                Icon(
-                  imageVector = Icons.Default.KeyboardArrowDown,
-                  contentDescription = "Select Live conversations model",
-                  tint = RiviaTextSecondary,
-                  modifier = Modifier.size(20.dp),
-                )
-              }
-
-              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
-            }
-
             // Pause before Rivia answers (Short 0.8 s / Normal 1.2 s / Long 1.8 s)
             Column(
               modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
@@ -2749,7 +2677,7 @@ private fun VoiceSettingsTab(
                 fontWeight = FontWeight.SemiBold,
               )
               Text(
-                text = "Voice ID, clone tuning, audio quality",
+                text = "Voice models, voice ID, audio quality",
                 color = RiviaTextSecondary,
                 fontSize = 13.sp,
               )
@@ -2771,6 +2699,76 @@ private fun VoiceSettingsTab(
                   .padding(start = 16.dp, end = 16.dp, bottom = 14.dp),
               verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+              // Voice model for reading row -> opens separate vertical list screen with model descriptions
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .clickable { onOpenSubPicker(SettingsSubPicker.READ_ALOUD_MODEL) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Column(
+                  modifier = Modifier.weight(1f).padding(end = 12.dp),
+                  verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Voice model for reading",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = friendlyElevenModelName(voicePrefs.readAloudModelId),
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Icon(
+                  imageVector = Icons.Default.KeyboardArrowDown,
+                  contentDescription = "Select voice model for reading",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+              // Voice model for Live row -> opens separate vertical list screen with model descriptions
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .clickable { onOpenSubPicker(SettingsSubPicker.LIVE_MODEL) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Column(
+                  modifier = Modifier.weight(1f).padding(end = 12.dp),
+                  verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Voice model for Live",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = friendlyElevenModelName(voicePrefs.liveModelId),
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                  )
+                }
+                Icon(
+                  imageVector = Icons.Default.KeyboardArrowDown,
+                  contentDescription = "Select voice model for Live",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(20.dp),
+                )
+              }
+
+              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
               // Voice ID + Copy
               Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(

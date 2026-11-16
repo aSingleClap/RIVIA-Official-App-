@@ -226,7 +226,9 @@ class ElevenLabsClient {
     withContext(Dispatchers.IO) {
       if (apiKey.isBlank()) {
         return@withContext Result.failure(
-          IllegalArgumentException("ElevenLabs API key is missing. Add it in Settings.")
+          IllegalArgumentException(
+            "Rivia's voice key is missing. Add it in Dev mode → Settings → Keys."
+          )
         )
       }
       val voiceId = voicePrefs.voiceId.trim()

@@ -149,7 +149,7 @@ fun LiveModeScreen(
       } else {
         // Correction 8: if RECORD_AUDIO is denied, don't start LiveVoiceService and say why.
         micPermissionDeniedReason =
-          "Microphone permission (RECORD_AUDIO) was denied. Live voice mode cannot start without microphone access to hear you."
+          "Rivia needs the microphone to hear you in Live."
       }
     }
 
@@ -249,9 +249,9 @@ fun LiveModeScreen(
         Text(
           text =
             when {
-              micPermissionDeniedReason != null -> "Permission Required"
+              micPermissionDeniedReason != null -> "Microphone needed"
               liveState.pausedForPhoneCall -> "Paused (Phone Call Active)"
-              liveState.stoppedAfterThreeErrors -> "Paused (Tap Orb to Resume)"
+              liveState.stoppedAfterThreeErrors -> "Paused after errors. Tap the orb to try again."
               liveState.isPaused -> "Paused"
               liveState.isMuted -> "Muted"
               liveState.orbState == OrbState.SPEAKING -> "Rivia Speaking"
@@ -329,7 +329,7 @@ fun LiveModeScreen(
         Text(
           text =
             if (isSpeaking) "Tap the orb to interrupt and speak"
-            else if (liveState.stoppedAfterThreeErrors) "Tap the orb to resume listening"
+            else if (liveState.stoppedAfterThreeErrors) "Tap the orb to try again"
             else "Hands-free Live Voice",
           style = MaterialTheme.typography.labelMedium,
           color = RiviaMutedText,

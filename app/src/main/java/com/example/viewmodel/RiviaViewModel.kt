@@ -3295,7 +3295,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         if (assistantMsg.content.isBlank()) {
           assistantMsg.copy(
             status = "error",
-            errorMessage = "Request stopped before reply arrived (${totalMs / 1000}s).",
+            errorMessage = "Stopped before Rivia answered.",
             totalTimeMs = totalMs,
           )
         } else {

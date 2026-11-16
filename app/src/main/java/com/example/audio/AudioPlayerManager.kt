@@ -8,6 +8,7 @@ import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -85,7 +86,8 @@ class AudioPlayerManager(
   private val exceptionHandler =
     CoroutineExceptionHandler { _, throwable ->
       if (throwable !is CancellationException) {
-        _lastAudioError.value = throwable.message ?: "Voice playback error"
+        Log.e("AudioPlayerManager", "Voice playback error: ${throwable.message}", throwable)
+        _lastAudioError.value = throwable.message ?: "Couldn't play Rivia's voice. Try again."
         _isSpeaking.value = false
         _speakingMessageId.value = null
       }
@@ -216,7 +218,8 @@ class AudioPlayerManager(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-              _lastAudioError.value = "Audio playback error: ${error.message}"
+              Log.e("AudioPlayerManager", "Audio playback error: ${error.message}", error)
+              _lastAudioError.value = "Couldn't play Rivia's voice. Try again."
               if (allChunksEnqueued) {
                 onAllPlaybackCompletedOnMain()
               }
@@ -365,7 +368,7 @@ class AudioPlayerManager(
             val apiKey = keyRepository.getElevenLabsKey()
             val voicePrefs = keyRepository.voicePreferencesFlow.first()
             if (apiKey.isBlank()) {
-              val msg = "ElevenLabs API key is not set. Add it in Settings."
+              val msg = "Rivia's voice key is missing. Add it in Dev mode → Settings → Keys."
               _lastAudioError.value = msg
               _speakingMessageId.value = null
               onError?.invoke(msg)
@@ -374,7 +377,7 @@ class AudioPlayerManager(
             }
             if (voicePrefs.voiceId.isBlank()) {
               val msg =
-                "No ElevenLabs Voice selected. Choose your custom voice in Settings > Voice."
+                "No voice picked for Rivia. Go to Settings → Voice → Her voice → Change."
               _lastAudioError.value = msg
               _speakingMessageId.value = null
               onError?.invoke(msg)
@@ -436,7 +439,9 @@ class AudioPlayerManager(
                   }
                 },
                 onFailure = { err ->
-                  val msg = err.message ?: "ElevenLabs synthesis failed"
+                  Log.e("AudioPlayerManager", "ElevenLabs synthesis failed: ${err.message}", err)
+                  val msg =
+                    err.message ?: "Rivia's voice service didn't answer. Check your internet."
                   _lastAudioError.value = msg
                   onError?.invoke(msg)
                   allChunksEnqueued = true
@@ -463,7 +468,8 @@ class AudioPlayerManager(
           } catch (e: CancellationException) {
             throw e
           } catch (e: Throwable) {
-            val msg = e.message ?: "Voice synthesis error"
+            Log.e("AudioPlayerManager", "Voice synthesis error: ${e.message}", e)
+            val msg = e.message ?: "Couldn't play Rivia's voice. Try again."
             _lastAudioError.value = msg
             onError?.invoke(msg)
             allChunksEnqueued = true
@@ -473,7 +479,8 @@ class AudioPlayerManager(
           }
         }
     } catch (e: Throwable) {
-      val msg = e.message ?: "Voice playback error"
+      Log.e("AudioPlayerManager", "Voice playback error: ${e.message}", e)
+      val msg = e.message ?: "Couldn't play Rivia's voice. Try again."
       _lastAudioError.value = msg
       _isSpeaking.value = false
       _speakingMessageId.value = null
@@ -530,8 +537,9 @@ class AudioPlayerManager(
 
                 if (apiKey.isBlank() || voicePrefs.voiceId.isBlank()) {
                   onError(
-                    if (apiKey.isBlank()) "ElevenLabs API key is missing."
-                    else "ElevenLabs Voice ID is not configured in Settings > Voice."
+                    if (apiKey.isBlank())
+                      "Rivia's voice key is missing. Add it in Dev mode → Settings → Keys."
+                    else "No voice picked for Rivia. Go to Settings → Voice → Her voice → Change."
                   )
                   allChunksEnqueued = true
                   onLiveTurnStreamSentencesCompleted?.invoke()
@@ -582,7 +590,10 @@ class AudioPlayerManager(
                     }
                   },
                   onFailure = { err ->
-                    onError(err.message ?: "ElevenLabs synthesis failed")
+                    Log.e("AudioPlayerManager", "ElevenLabs synthesis failed: ${err.message}", err)
+                    onError(
+                      err.message ?: "Rivia's voice service didn't answer. Check your internet."
+                    )
                     allChunksEnqueued = true
                     onLiveTurnStreamSentencesCompleted?.invoke()
                     if (!firstChunkStarted) {
@@ -594,14 +605,16 @@ class AudioPlayerManager(
             } catch (e: CancellationException) {
               throw e
             } catch (e: Throwable) {
-              onError(e.message ?: "Live voice playback error")
+              Log.e("AudioPlayerManager", "Live voice playback error: ${e.message}", e)
+              onError(e.message ?: "Couldn't play Rivia's voice. Try again.")
               allChunksEnqueued = true
               onLiveTurnStreamSentencesCompleted?.invoke()
               onAllPlaybackCompletedOnMain(hadAudioStarted = firstChunkStarted)
             }
           }
       } catch (e: Throwable) {
-        onError(e.message ?: "Live audio stream initialization error")
+        Log.e("AudioPlayerManager", "Live audio stream initialization error: ${e.message}", e)
+        onError(e.message ?: "Couldn't play Rivia's voice. Try again.")
       }
     }
   }

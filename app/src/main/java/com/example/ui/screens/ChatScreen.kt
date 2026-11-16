@@ -1707,7 +1707,7 @@ private fun ChatConversationPane(
         LiveVoiceService.start(context)
       } else {
         micPermissionDeniedReason =
-          "Microphone permission (RECORD_AUDIO) was denied. Live voice mode cannot start without microphone access to hear you."
+          "Rivia needs the microphone to hear you in Live."
       }
     }
 
@@ -2541,7 +2541,7 @@ private fun ChatConversationPane(
           ) {
             StatusShape(status = StatusType.WARNING, size = 10.dp)
             Text(
-              text = "Paste your Gemini and ElevenLabs API keys in Settings to get started.",
+              text = "Rivia needs two keys before she can talk. Tap Set up keys.",
               style = MaterialTheme.typography.bodySmall,
               color = RiviaTextPrimary,
             )
@@ -2574,7 +2574,7 @@ private fun ChatConversationPane(
               )
               Spacer(modifier = Modifier.width(6.dp))
               Text(
-                text = if (appUiMode == AppUiMode.RIVIA) "Dev Settings" else "Settings",
+                text = if (appUiMode == AppUiMode.RIVIA) "Set up keys" else "Settings",
                 color = RiviaTextPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -2767,9 +2767,9 @@ private fun ChatConversationPane(
                 Text(
                   text =
                     when {
-                      micPermissionDeniedReason != null -> "Permission Required"
+                      micPermissionDeniedReason != null -> "Microphone needed"
                       liveState.pausedForPhoneCall -> "Paused (Phone Call Active)"
-                      liveState.stoppedAfterThreeErrors -> "Paused (Tap Orb to Resume)"
+                      liveState.stoppedAfterThreeErrors -> "Paused after errors. Tap the orb to try again."
                       liveState.isPaused -> "Paused"
                       liveState.isMuted -> "Muted"
                       liveState.orbState == OrbState.SPEAKING -> "Rivia Speaking"
@@ -2820,7 +2820,7 @@ private fun ChatConversationPane(
                 Text(
                   text =
                     if (isLiveSpeaking) "Tap the orb to interrupt and speak"
-                    else if (liveState.stoppedAfterThreeErrors) "Tap the orb to resume listening"
+                    else if (liveState.stoppedAfterThreeErrors) "Tap the orb to try again"
                     else "Hands-free Live Voice",
                   style = MaterialTheme.typography.labelMedium,
                   color = RiviaMutedText,
@@ -3184,10 +3184,10 @@ private fun SphereDictationPanel(
       SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient microphone permissions"
       SpeechRecognizer.ERROR_NETWORK -> "Network error"
       SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-      SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
+      SpeechRecognizer.ERROR_NO_MATCH -> "Didn't catch anything"
       SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy"
       SpeechRecognizer.ERROR_SERVER -> "Speech server error"
-      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech heard"
+      SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch anything"
       else -> "Speech error"
     }
 
@@ -3231,7 +3231,7 @@ private fun SphereDictationPanel(
               startDictation()
             } else if (error != SpeechRecognizer.ERROR_CLIENT) {
               onDictationError(
-                "Dictation failed: ${speechErrorDescription(error)} (code $error)"
+                "${speechErrorDescription(error)}. Try again."
               )
             }
           }
@@ -3282,7 +3282,7 @@ private fun SphereDictationPanel(
     } catch (e: Exception) {
       voiceLevel = 0f
       onDictationError(
-        "Could not start speech recognition: ${e.message ?: e.javaClass.simpleName}"
+        "Couldn't start listening. Try again."
       )
     }
   }
@@ -3294,7 +3294,7 @@ private fun SphereDictationPanel(
           startDictation()
         }
       } else {
-        onDictationError("Microphone permission (RECORD_AUDIO) was denied for dictation.")
+        onDictationError("Rivia needs the microphone to take dictation.")
       }
     }
 
@@ -3828,7 +3828,7 @@ internal fun AssistantMessageBubble(
           ) {
             StatusShape(status = StatusType.WARNING, size = 8.dp)
             Text(
-              text = "Background interaction ${message.status}...",
+              text = "Still working on it…",
               style = MaterialTheme.typography.labelMedium,
               fontFamily = ChivoMonoFontFamily,
               color = RiviaWarningAmber,
@@ -3864,7 +3864,9 @@ internal fun AssistantMessageBubble(
           ) {
             StatusShape(status = statusShapeType, size = 12.dp)
             Text(
-              text = message.errorMessage,
+              text =
+                if (isH9NoReplyNotice) "No reply came back. Try again."
+                else message.errorMessage,
               style = MaterialTheme.typography.bodySmall,
               color = statusColor,
               modifier =
