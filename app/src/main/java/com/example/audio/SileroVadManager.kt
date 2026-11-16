@@ -30,7 +30,7 @@ data class SileroVadConfig(
   val startProbThreshold: Float = 0.50f,
   val startSpeechMs: Int = 250,
   val endProbThreshold: Float = 0.35f,
-  val endSilenceMs: Int = 700,
+  val endSilenceMs: Int = 1200,
   val sampleRateHz: Int = 16000,
   val chunkSamples: Int = 512,
 ) {

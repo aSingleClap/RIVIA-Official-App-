@@ -7,6 +7,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
@@ -569,14 +571,18 @@ object MicSharingRecorder {
   private val _modeBRuntimeNote = MutableStateFlow<String?>(null)
   val modeBRuntimeNote: StateFlow<String?> = _modeBRuntimeNote.asStateFlow()
 
+  @Volatile var bargeInEnabled: Boolean = true
+
   private var activeAudioRecord: AudioRecord? = null
+  private var aec: AcousticEchoCanceler? = null
+  private var ns: NoiseSuppressor? = null
   private val isCapturing = AtomicBoolean(false)
   private val pipeWritingAllowed = AtomicBoolean(false)
   private val livePlaybackActive = AtomicBoolean(false)
   private val dropFramesUntilElapsedMs = AtomicLong(0L)
   private var captureJob: Job? = null
   private var currentMode: String = "B"
-  private var currentAudioSource: String = "VOICE_RECOGNITION"
+  private var currentAudioSource: String = "VOICE_COMMUNICATION"
   private var currentInputDevice: String = "unknown"
   private var currentPcmBuffer: ByteArrayOutputStream? = null
   private var currentTrimmedAudio: TrimmedTurnAudio? = null
@@ -637,9 +643,11 @@ object MicSharingRecorder {
   }
 
   /**
-   * Returns true while Rivia's audio is playing in Live or within 400 ms after it ends.
+   * Returns true while Rivia's audio is playing in Live or within 400 ms after it ends,
+   * unless bargeInEnabled is true.
    */
   fun shouldDropLiveMicFrames(): Boolean {
+    if (bargeInEnabled) return false
     if (livePlaybackActive.get()) return true
     val until = dropFramesUntilElapsedMs.get()
     return until > 0L && android.os.SystemClock.elapsedRealtime() < until
@@ -874,28 +882,60 @@ object MicSharingRecorder {
       }
       val bufferSizeInBytes = (minBufSize * 2).coerceAtLeast(SAMPLE_RATE_HZ * 2)
 
-      // Requirement 6: Record with AudioSource.VOICE_RECOGNITION (peaks were hitting 1.00 with MIC)
+      // Step 1: Try MediaRecorder.AudioSource.VOICE_COMMUNICATION first for hardware echo cancellation,
+      // then fall back to VOICE_RECOGNITION, then MIC.
       var recorder =
         createInitializedAudioRecord(
-          MediaRecorder.AudioSource.VOICE_RECOGNITION,
+          MediaRecorder.AudioSource.VOICE_COMMUNICATION,
           bufferSizeInBytes,
         )
       if (recorder != null) {
-        currentAudioSource = "VOICE_RECOGNITION"
+        currentAudioSource = "VOICE_COMMUNICATION"
       } else {
         recorder =
           createInitializedAudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             bufferSizeInBytes,
           )
         if (recorder != null) {
-          currentAudioSource = "MIC"
+          currentAudioSource = "VOICE_RECOGNITION"
+        } else {
+          recorder =
+            createInitializedAudioRecord(
+              MediaRecorder.AudioSource.MIC,
+              bufferSizeInBytes,
+            )
+          if (recorder != null) {
+            currentAudioSource = "MIC"
+          }
         }
       }
       if (recorder == null) {
         currentCaptureError = "AudioRecord failed to initialize (STATE_UNINITIALIZED)"
         return effectiveMode
       }
+
+      runCatching { aec?.release() }
+      aec = null
+      runCatching { ns?.release() }
+      ns = null
+      val id = recorder.audioSessionId
+      runCatching {
+        if (AcousticEchoCanceler.isAvailable()) {
+          aec = AcousticEchoCanceler.create(id)?.apply { enabled = true }
+        }
+      }
+      runCatching {
+        if (NoiseSuppressor.isAvailable()) {
+          ns = NoiseSuppressor.create(id)?.apply { enabled = true }
+        }
+      }
+      val aecOn = runCatching { aec?.enabled == true }.getOrDefault(false)
+      val nsOn = runCatching { ns?.enabled == true }.getOrDefault(false)
+      Log.i(
+        TAG,
+        "Live mic capture initialized: audioSource=$currentAudioSource, sessionId=$id, AEC=${if (aecOn) "on" else "off"}, NS=${if (nsOn) "on" else "off"}",
+      )
 
       if (effectiveMode == "B" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         try {
@@ -918,6 +958,10 @@ object MicSharingRecorder {
             RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE,
             SAMPLE_RATE_HZ,
           )
+          recognizerIntent.putExtra(
+            RecognizerIntent.EXTRA_SEGMENTED_SESSION,
+            RecognizerIntent.EXTRA_AUDIO_SOURCE,
+          )
         } catch (e: Throwable) {
           pipeWritingAllowed.set(false)
           currentCaptureError = "Mode B pipe setup failed: ${e.message}"
@@ -932,13 +976,20 @@ object MicSharingRecorder {
         currentAudioRecordStarted = false
         currentCaptureError =
           "AudioRecord.startRecording() did not enter RECORDSTATE_RECORDING (state=${recorder.recordingState})"
+        runCatching { aec?.release() }
+        aec = null
+        runCatching { ns?.release() }
+        ns = null
         runCatching { recorder.release() }
         closePipeQuietly()
         return effectiveMode
       }
 
       currentAudioRecordStarted = true
-      currentInputDevice = runCatching { formatRoutedDevice(recorder.routedDevice) }.getOrDefault("unknown")
+      val baseRoutedDevice =
+        runCatching { formatRoutedDevice(recorder.routedDevice) }.getOrDefault("unknown")
+      currentInputDevice =
+        "$baseRoutedDevice [AEC:${if (aecOn) "on" else "off"} NS:${if (nsOn) "on" else "off"}]"
       activeAudioRecord = recorder
       isCapturing.set(true)
 
@@ -1222,6 +1273,10 @@ object MicSharingRecorder {
 
       runCatching { recorder?.stop() }
       runCatching { job?.join() }
+      runCatching { aec?.release() }
+      aec = null
+      runCatching { ns?.release() }
+      ns = null
       runCatching { recorder?.release() }
       closePipeQuietly()
 
@@ -1385,10 +1440,16 @@ object MicSharingRecorder {
     currentUsedEdgeTrimmer = false
     val recorder = activeAudioRecord
     activeAudioRecord = null
-    if (recorder != null) {
+    val activeAec = aec
+    aec = null
+    val activeNs = ns
+    ns = null
+    if (recorder != null || activeAec != null || activeNs != null) {
       scope.launch {
-        runCatching { recorder.stop() }
-        runCatching { recorder.release() }
+        runCatching { recorder?.stop() }
+        runCatching { activeAec?.release() }
+        runCatching { activeNs?.release() }
+        runCatching { recorder?.release() }
       }
     }
     closePipeQuietly()

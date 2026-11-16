@@ -1983,6 +1983,7 @@ private fun VoiceSettingsTab(
   val appUiMode by viewModel.appUiMode.collectAsStateWithLifecycle()
   val isDevOrLabs = appUiMode != AppUiMode.RIVIA
   val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
+  val labMicPrefs by viewModel.labMicTestPreferences.collectAsStateWithLifecycle()
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
 
   var voiceIdDraft by remember { mutableStateOf(voicePrefs.voiceId) }
@@ -2135,24 +2136,24 @@ private fun VoiceSettingsTab(
       }
     }
 
-    // 2. Voice model (Dev / Labs)
-    if (isDevOrLabs) {
-      item {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text(
-            text = "Voice model",
-            color = RiviaTextTertiary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 4.dp).testTag("el_models_section"),
-          )
-          Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = RiviaSurface1,
-            border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+    // 2. Voice model & Live conversation controls
+    item {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+          text = if (isDevOrLabs) "Voice model" else "Live conversations",
+          color = RiviaTextTertiary,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Medium,
+          modifier = Modifier.padding(horizontal = 4.dp).testTag("el_models_section"),
+        )
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color = RiviaSurface1,
+          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            if (isDevOrLabs) {
               // Read aloud row -> opens separate vertical list screen with model descriptions
               Row(
                 modifier =
@@ -2220,6 +2221,103 @@ private fun VoiceSettingsTab(
                   modifier = Modifier.size(20.dp),
                 )
               }
+
+              HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+            }
+
+            // Pause before Rivia answers (Short 0.8 s / Normal 1.2 s / Long 1.8 s)
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                  text = "Pause before Rivia answers",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "How long she waits after you pause speaking in Live",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+
+              val pauseOptions =
+                listOf(
+                  800 to "Short 0.8 s",
+                  1200 to "Normal 1.2 s",
+                  1800 to "Long 1.8 s",
+                )
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                pauseOptions.forEach { (ms, label) ->
+                  val isSelected = labMicPrefs.vadEndSilenceMs == ms
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) RiviaMint else RiviaSurface2,
+                    border =
+                      BorderStroke(
+                        1.dp,
+                        if (isSelected) RiviaMint else RiviaBorder,
+                      ),
+                    modifier =
+                      Modifier.weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                          viewModel.updateLabMicTestPrefs { it.copy(vadEndSilenceMs = ms) }
+                        }
+                        .testTag("pause_before_answer_${ms}_button"),
+                  ) {
+                    Text(
+                      text = label,
+                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                      fontSize = 12.sp,
+                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                      textAlign = TextAlign.Center,
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                    )
+                  }
+                }
+              }
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Interrupt by voice switch (default ON)
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Interrupt by voice",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Keep the mic open while she talks so speaking cuts her off",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.interruptByVoiceInLive,
+                onCheckedChange = { b ->
+                  MicSharingRecorder.bargeInEnabled = b
+                  viewModel.updateVoicePrefs { it.copy(interruptByVoiceInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("interrupt_by_voice_switch"),
+              )
             }
           }
         }
@@ -3731,7 +3829,7 @@ private fun DefaultsLauncherTab(
                 vadStartThreshold = 0.50f,
                 vadStartDurationMs = 250,
                 vadEndThreshold = 0.35f,
-                vadEndSilenceMs = 700,
+                vadEndSilenceMs = 1200,
               )
             }
           },
@@ -3748,7 +3846,7 @@ private fun DefaultsLauncherTab(
               .testTag("reset_vad_defaults_button"),
         ) {
           Text(
-            text = "Reset VAD Numbers (0.50 / 250 ms / 0.35 / 700 ms)",
+            text = "Reset VAD Numbers (0.50 / 250 ms / 0.35 / 1200 ms)",
             fontFamily = ChivoMonoFontFamily,
             fontSize = 11.sp,
             color = RiviaTextPrimary,

@@ -36,6 +36,7 @@ data class VoicePreferences(
   val preferOnDeviceRecognition: Boolean = false,
   val keepScreenOnInLive: Boolean = true,
   val useEarbudMicInLive: Boolean = false,
+  val interruptByVoiceInLive: Boolean = true,
 )
 
 data class LabMicTestPreferences(
@@ -45,7 +46,7 @@ data class LabMicTestPreferences(
   val vadStartThreshold: Float = 0.50f, // Speech starts at prob >= 0.5
   val vadStartDurationMs: Int = 250, // for 250 ms
   val vadEndThreshold: Float = 0.35f, // Turn ends below 0.35
-  val vadEndSilenceMs: Int = 700, // after 700 ms
+  val vadEndSilenceMs: Int = 1200, // after 1200 ms
   val emotionBaselineResetAt: Long = 0L, // Timestamp of last "Reset emotion baseline"
   val callStopListeningOnPipeClose: Boolean = false, // Fix 1: default false = skip stopListening() and let pipe EOF finish
 )
@@ -85,6 +86,7 @@ class SecureKeyRepository(private val context: Context) {
     private val PREFER_ON_DEVICE = booleanPreferencesKey("prefer_on_device_stt")
     private val KEEP_SCREEN_ON_LIVE = booleanPreferencesKey("keep_screen_on_live")
     private val USE_EARBUD_MIC_LIVE = booleanPreferencesKey("use_earbud_mic_live")
+    private val INTERRUPT_BY_VOICE_LIVE = booleanPreferencesKey("interrupt_by_voice_live")
 
     // Labs sandboxed Voice preferences (seeded from Rivia defaults until edited in Labs)
     private val LABS_VOICE_ID = stringPreferencesKey("labs_voice_id")
@@ -106,6 +108,8 @@ class SecureKeyRepository(private val context: Context) {
     private val LABS_PREFER_ON_DEVICE = booleanPreferencesKey("labs_prefer_on_device_stt")
     private val LABS_KEEP_SCREEN_ON_LIVE = booleanPreferencesKey("labs_keep_screen_on_live")
     private val LABS_USE_EARBUD_MIC_LIVE = booleanPreferencesKey("labs_use_earbud_mic_live")
+    private val LABS_INTERRUPT_BY_VOICE_LIVE =
+      booleanPreferencesKey("labs_interrupt_by_voice_live")
 
     private val PRESETS_JSON = stringPreferencesKey("mode_presets_json")
 
@@ -259,7 +263,9 @@ class SecureKeyRepository(private val context: Context) {
           preferOnDeviceRecognition = prefs[LABS_PREFER_ON_DEVICE] ?: prefs[PREFER_ON_DEVICE] ?: false,
           keepScreenOnInLive = prefs[LABS_KEEP_SCREEN_ON_LIVE] ?: prefs[KEEP_SCREEN_ON_LIVE] ?: true,
           useEarbudMicInLive = prefs[LABS_USE_EARBUD_MIC_LIVE] ?: prefs[USE_EARBUD_MIC_LIVE] ?: false,
-        )
+          interruptByVoiceInLive =
+            prefs[LABS_INTERRUPT_BY_VOICE_LIVE] ?: prefs[INTERRUPT_BY_VOICE_LIVE] ?: true,
+        ).also { com.example.audio.MicSharingRecorder.bargeInEnabled = it.interruptByVoiceInLive }
       } else {
         VoicePreferences(
           voiceId = prefs[VOICE_ID] ?: "",
@@ -281,7 +287,8 @@ class SecureKeyRepository(private val context: Context) {
           preferOnDeviceRecognition = prefs[PREFER_ON_DEVICE] ?: false,
           keepScreenOnInLive = prefs[KEEP_SCREEN_ON_LIVE] ?: true,
           useEarbudMicInLive = prefs[USE_EARBUD_MIC_LIVE] ?: false,
-        )
+          interruptByVoiceInLive = prefs[INTERRUPT_BY_VOICE_LIVE] ?: true,
+        ).also { com.example.audio.MicSharingRecorder.bargeInEnabled = it.interruptByVoiceInLive }
       }
     }
 
@@ -317,7 +324,7 @@ class SecureKeyRepository(private val context: Context) {
             (prefs[LABS_SANDBOX_VAD_END_THRESHOLD] ?: prefs[LAB_VAD_END_THRESHOLD] ?: 0.35f)
               .coerceIn(0.05f, 0.90f),
           vadEndSilenceMs =
-            (prefs[LABS_SANDBOX_VAD_END_SILENCE_MS] ?: prefs[LAB_VAD_END_SILENCE_MS] ?: 700)
+            (prefs[LABS_SANDBOX_VAD_END_SILENCE_MS] ?: prefs[LAB_VAD_END_SILENCE_MS] ?: 1200)
               .coerceIn(100, 4000),
           emotionBaselineResetAt =
             prefs[LABS_SANDBOX_EMOTION_BASELINE_RESET_AT]
@@ -336,7 +343,7 @@ class SecureKeyRepository(private val context: Context) {
           vadStartThreshold = (prefs[LAB_VAD_START_THRESHOLD] ?: 0.50f).coerceIn(0.05f, 0.95f),
           vadStartDurationMs = (prefs[LAB_VAD_START_DURATION_MS] ?: 250).coerceIn(32, 2000),
           vadEndThreshold = (prefs[LAB_VAD_END_THRESHOLD] ?: 0.35f).coerceIn(0.05f, 0.90f),
-          vadEndSilenceMs = (prefs[LAB_VAD_END_SILENCE_MS] ?: 700).coerceIn(100, 4000),
+          vadEndSilenceMs = (prefs[LAB_VAD_END_SILENCE_MS] ?: 1200).coerceIn(100, 4000),
           emotionBaselineResetAt = prefs[LAB_EMOTION_BASELINE_RESET_AT] ?: 0L,
           callStopListeningOnPipeClose = prefs[LAB_CALL_STOP_LISTENING_ON_PIPE_CLOSE] ?: false,
         )
@@ -444,6 +451,7 @@ class SecureKeyRepository(private val context: Context) {
         prefs[LABS_PREFER_ON_DEVICE] = updated.preferOnDeviceRecognition
         prefs[LABS_KEEP_SCREEN_ON_LIVE] = updated.keepScreenOnInLive
         prefs[LABS_USE_EARBUD_MIC_LIVE] = updated.useEarbudMicInLive
+        prefs[LABS_INTERRUPT_BY_VOICE_LIVE] = updated.interruptByVoiceInLive
       } else {
         prefs[VOICE_ID] = updated.voiceId
         prefs[VOICE_NAME] = updated.voiceName
@@ -464,8 +472,10 @@ class SecureKeyRepository(private val context: Context) {
         prefs[PREFER_ON_DEVICE] = updated.preferOnDeviceRecognition
         prefs[KEEP_SCREEN_ON_LIVE] = updated.keepScreenOnInLive
         prefs[USE_EARBUD_MIC_LIVE] = updated.useEarbudMicInLive
+        prefs[INTERRUPT_BY_VOICE_LIVE] = updated.interruptByVoiceInLive
       }
     }
+    com.example.audio.MicSharingRecorder.bargeInEnabled = updated.interruptByVoiceInLive
   }
 
   suspend fun savePresetsJson(json: String) {

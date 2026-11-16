@@ -265,6 +265,7 @@ object LiveSessionManager {
   @Volatile private var userTurnFinalizingOrExecuting: Boolean = false
 
   private fun isLivePlaybackOrGateActive(): Boolean {
+    if (MicSharingRecorder.bargeInEnabled) return false
     return audioPlayerManager?.isSpeaking?.value == true ||
       MicSharingRecorder.shouldDropLiveMicFrames()
   }
@@ -640,6 +641,18 @@ object LiveSessionManager {
     startListening()
   }
 
+  private fun bargeIn() {
+    activeTurnJob?.cancel()
+    activeTurnJob = null
+    vadFallbackTimerJob?.cancel()
+    vadFallbackTimerJob = null
+    userTurnFinalizingOrExecuting = false
+    MicSharingRecorder.clearLivePlaybackGateImmediate()
+    audioPlayerManager?.stopPlayback() // stops ExoPlayer, clears the queue, drops queued sentences
+    _uiState.value = _uiState.value.copy(orbState = OrbState.LISTENING)
+    Log.i(TAG, "Barge-in: user spoke over Rivia")
+  }
+
   private fun startPhoneCallMonitor(context: Context) {
     callMonitorJob?.cancel()
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -724,7 +737,7 @@ object LiveSessionManager {
             startProbThreshold = labMicPrefs?.vadStartThreshold ?: 0.50f,
             startSpeechMs = labMicPrefs?.vadStartDurationMs ?: 250,
             endProbThreshold = labMicPrefs?.vadEndThreshold ?: 0.35f,
-            endSilenceMs = labMicPrefs?.vadEndSilenceMs ?: 700,
+            endSilenceMs = labMicPrefs?.vadEndSilenceMs ?: 1200,
           )
 
         if (activeListenTurnSeq.get() != turnSeq) return@launch
@@ -1136,6 +1149,14 @@ object LiveSessionManager {
                 partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
               val partial = matches?.firstOrNull()?.trim().orEmpty()
               if (partial.isNotEmpty()) {
+                if (
+                  MicSharingRecorder.bargeInEnabled &&
+                    partial.length >= 2 &&
+                    (audioPlayerManager?.isSpeaking?.value == true ||
+                      activeTurnJob?.isActive == true)
+                ) {
+                  bargeIn()
+                }
                 userSpeechStartedInTurn = true
                 val count = partialResultsCount.incrementAndGet()
                 lastPartialText = partial
@@ -1156,6 +1177,14 @@ object LiveSessionManager {
                 segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
               val segText = matches?.firstOrNull()?.trim().orEmpty()
               if (segText.isNotEmpty()) {
+                if (
+                  MicSharingRecorder.bargeInEnabled &&
+                    segText.length >= 2 &&
+                    (audioPlayerManager?.isSpeaking?.value == true ||
+                      activeTurnJob?.isActive == true)
+                ) {
+                  bargeIn()
+                }
                 userSpeechStartedInTurn = true
                 segmentResultsList.add(segText)
                 MicSharingRecorder.notifyRecognizerHeardSpeech()
@@ -1313,6 +1342,14 @@ object LiveSessionManager {
             if (prefs?.preferOnDeviceRecognition == true) {
               putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             }
+            putExtra(
+              RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+              vadConfig.endSilenceMs.toLong(),
+            )
+            putExtra(
+              RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+              vadConfig.endSilenceMs.toLong(),
+            )
           }
 
         if (recordAlongside) {
@@ -1444,7 +1481,8 @@ object LiveSessionManager {
                   !_uiState.value.isMuted &&
                   !_uiState.value.isPaused &&
                   !_uiState.value.stoppedAfterThreeErrors &&
-                  !turnHadError
+                  !turnHadError &&
+                  speechRecognizer == null
               ) {
                 startListening()
               }
@@ -1576,6 +1614,12 @@ object LiveSessionManager {
           handleNonSilenceError(e.message ?: "Live turn failed")
         }
       }
+    if (MicSharingRecorder.bargeInEnabled) {
+      scope.launch {
+        delay(150L)
+        if (speechRecognizer == null) startListening()
+      }
+    }
   }
 
   private fun handleNonSilenceError(
