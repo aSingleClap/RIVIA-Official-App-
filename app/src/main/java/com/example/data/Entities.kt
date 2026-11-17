@@ -248,6 +248,7 @@ data class ZoneConfigEntity(
   @ColumnInfo(name = "lat") val lat: Double? = null,
   @ColumnInfo(name = "lng") val lng: Double? = null,
   @ColumnInfo(name = "radius_m") val radiusM: Float = 150f,
+  @ColumnInfo(name = "custom", defaultValue = "0") val custom: Boolean = false,
   @ColumnInfo(name = "registered") val registered: Boolean = false,
   @ColumnInfo(name = "status_note") val statusNote: String = "Not registered",
   @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),

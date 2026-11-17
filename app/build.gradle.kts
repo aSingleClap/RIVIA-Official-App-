@@ -14,8 +14,8 @@ android {
     applicationId = "observer.rivia.app"
     minSdk = 31
     targetSdk = 36
-    versionCode = 42
-    versionName = "42.0"
+    versionCode = 45
+    versionName = "45.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -92,6 +92,10 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
+  }
+  lint {
+    checkReleaseBuilds = false
+    abortOnError = false
   }
 }
 

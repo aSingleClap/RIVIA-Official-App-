@@ -37,6 +37,10 @@ data class VoicePreferences(
   val keepScreenOnInLive: Boolean = true,
   val useEarbudMicInLive: Boolean = false,
   val interruptByVoiceInLive: Boolean = true,
+  val echoCancelInLive: Boolean = true,
+  val openInLive: Boolean = false,
+  val vibrateOnLiveChanges: Boolean = true,
+  val liveTipSeen: Boolean = false,
 )
 
 data class LabMicTestPreferences(
@@ -63,6 +67,7 @@ class SecureKeyRepository(private val context: Context) {
     private val ENC_ELEVEN_KEY = stringPreferencesKey("enc_elevenlabs_api_key")
     private val TABLET_SERVER_URL = stringPreferencesKey("tablet_server_url")
     private val ENC_TABLET_APP_TOKEN = stringPreferencesKey("enc_tablet_app_token")
+    private val TABLET_TOOLS_ENABLED = booleanPreferencesKey("tablet_tools_enabled")
 
     private val ACTIVE_UI_MODE = stringPreferencesKey("active_ui_mode")
 
@@ -87,6 +92,10 @@ class SecureKeyRepository(private val context: Context) {
     private val KEEP_SCREEN_ON_LIVE = booleanPreferencesKey("keep_screen_on_live")
     private val USE_EARBUD_MIC_LIVE = booleanPreferencesKey("use_earbud_mic_live")
     private val INTERRUPT_BY_VOICE_LIVE = booleanPreferencesKey("interrupt_by_voice_live")
+    private val ECHO_CANCEL_LIVE = booleanPreferencesKey("echo_cancel_live")
+    private val OPEN_IN_LIVE = booleanPreferencesKey("open_in_live")
+    private val VIBRATE_ON_LIVE_CHANGES = booleanPreferencesKey("vibrate_on_live_changes")
+    private val LIVE_TIP_SEEN = booleanPreferencesKey("live_tip_seen")
 
     // Labs sandboxed Voice preferences (seeded from Rivia defaults until edited in Labs)
     private val LABS_VOICE_ID = stringPreferencesKey("labs_voice_id")
@@ -110,6 +119,10 @@ class SecureKeyRepository(private val context: Context) {
     private val LABS_USE_EARBUD_MIC_LIVE = booleanPreferencesKey("labs_use_earbud_mic_live")
     private val LABS_INTERRUPT_BY_VOICE_LIVE =
       booleanPreferencesKey("labs_interrupt_by_voice_live")
+    private val LABS_ECHO_CANCEL_LIVE = booleanPreferencesKey("labs_echo_cancel_live")
+    private val LABS_OPEN_IN_LIVE = booleanPreferencesKey("labs_open_in_live")
+    private val LABS_VIBRATE_ON_LIVE_CHANGES =
+      booleanPreferencesKey("labs_vibrate_on_live_changes")
 
     private val PRESETS_JSON = stringPreferencesKey("mode_presets_json")
 
@@ -239,6 +252,13 @@ class SecureKeyRepository(private val context: Context) {
       KeystoreCrypto.decrypt(enc)
     }
 
+  val tabletToolsEnabledFlow: Flow<Boolean> =
+    context.secureKeyDataStore.data.map { prefs -> prefs[TABLET_TOOLS_ENABLED] ?: false }
+
+  suspend fun setTabletToolsEnabled(enabled: Boolean) {
+    context.secureKeyDataStore.edit { prefs -> prefs[TABLET_TOOLS_ENABLED] = enabled }
+  }
+
   val voicePreferencesFlow: Flow<VoicePreferences> =
     context.secureKeyDataStore.data.map { prefs ->
       val isLabs = prefs[ACTIVE_UI_MODE] == "LABS"
@@ -265,7 +285,16 @@ class SecureKeyRepository(private val context: Context) {
           useEarbudMicInLive = prefs[LABS_USE_EARBUD_MIC_LIVE] ?: prefs[USE_EARBUD_MIC_LIVE] ?: false,
           interruptByVoiceInLive =
             prefs[LABS_INTERRUPT_BY_VOICE_LIVE] ?: prefs[INTERRUPT_BY_VOICE_LIVE] ?: true,
-        ).also { com.example.audio.MicSharingRecorder.bargeInEnabled = it.interruptByVoiceInLive }
+          echoCancelInLive =
+            prefs[LABS_ECHO_CANCEL_LIVE] ?: prefs[ECHO_CANCEL_LIVE] ?: true,
+          openInLive = prefs[LABS_OPEN_IN_LIVE] ?: prefs[OPEN_IN_LIVE] ?: false,
+          vibrateOnLiveChanges =
+            prefs[LABS_VIBRATE_ON_LIVE_CHANGES] ?: prefs[VIBRATE_ON_LIVE_CHANGES] ?: true,
+          liveTipSeen = prefs[LIVE_TIP_SEEN] ?: false,
+        ).also {
+          com.example.audio.MicSharingRecorder.bargeInEnabled = it.interruptByVoiceInLive
+          com.example.audio.MicSharingRecorder.echoCancelEnabled = it.echoCancelInLive
+        }
       } else {
         VoicePreferences(
           voiceId = prefs[VOICE_ID] ?: "",
@@ -288,7 +317,14 @@ class SecureKeyRepository(private val context: Context) {
           keepScreenOnInLive = prefs[KEEP_SCREEN_ON_LIVE] ?: true,
           useEarbudMicInLive = prefs[USE_EARBUD_MIC_LIVE] ?: false,
           interruptByVoiceInLive = prefs[INTERRUPT_BY_VOICE_LIVE] ?: true,
-        ).also { com.example.audio.MicSharingRecorder.bargeInEnabled = it.interruptByVoiceInLive }
+          echoCancelInLive = prefs[ECHO_CANCEL_LIVE] ?: true,
+          openInLive = prefs[OPEN_IN_LIVE] ?: false,
+          vibrateOnLiveChanges = prefs[VIBRATE_ON_LIVE_CHANGES] ?: true,
+          liveTipSeen = prefs[LIVE_TIP_SEEN] ?: false,
+        ).also {
+          com.example.audio.MicSharingRecorder.bargeInEnabled = it.interruptByVoiceInLive
+          com.example.audio.MicSharingRecorder.echoCancelEnabled = it.echoCancelInLive
+        }
       }
     }
 
@@ -452,6 +488,10 @@ class SecureKeyRepository(private val context: Context) {
         prefs[LABS_KEEP_SCREEN_ON_LIVE] = updated.keepScreenOnInLive
         prefs[LABS_USE_EARBUD_MIC_LIVE] = updated.useEarbudMicInLive
         prefs[LABS_INTERRUPT_BY_VOICE_LIVE] = updated.interruptByVoiceInLive
+        prefs[LABS_ECHO_CANCEL_LIVE] = updated.echoCancelInLive
+        prefs[LABS_OPEN_IN_LIVE] = updated.openInLive
+        prefs[LABS_VIBRATE_ON_LIVE_CHANGES] = updated.vibrateOnLiveChanges
+        prefs[LIVE_TIP_SEEN] = updated.liveTipSeen
       } else {
         prefs[VOICE_ID] = updated.voiceId
         prefs[VOICE_NAME] = updated.voiceName
@@ -473,9 +513,14 @@ class SecureKeyRepository(private val context: Context) {
         prefs[KEEP_SCREEN_ON_LIVE] = updated.keepScreenOnInLive
         prefs[USE_EARBUD_MIC_LIVE] = updated.useEarbudMicInLive
         prefs[INTERRUPT_BY_VOICE_LIVE] = updated.interruptByVoiceInLive
+        prefs[ECHO_CANCEL_LIVE] = updated.echoCancelInLive
+        prefs[OPEN_IN_LIVE] = updated.openInLive
+        prefs[VIBRATE_ON_LIVE_CHANGES] = updated.vibrateOnLiveChanges
+        prefs[LIVE_TIP_SEEN] = updated.liveTipSeen
       }
     }
     com.example.audio.MicSharingRecorder.bargeInEnabled = updated.interruptByVoiceInLive
+    com.example.audio.MicSharingRecorder.echoCancelEnabled = updated.echoCancelInLive
   }
 
   suspend fun savePresetsJson(json: String) {

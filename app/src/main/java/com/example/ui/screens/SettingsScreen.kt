@@ -22,11 +22,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -101,6 +103,7 @@ import com.example.data.VoiceEmotionLogEntity
 import com.example.network.ElevenLabsClient
 import com.example.plugin.PluginRegistry
 import com.example.ui.components.GuideHeaderButton
+import com.example.ui.components.InfoHelpIconButton
 import com.example.ui.components.RiviaSettingsGuide
 import com.example.ui.components.SettingHelpBottomSheet
 import com.example.ui.components.SettingHelpTopic
@@ -315,12 +318,14 @@ fun SettingsOptionPickerScreen(
                     }
                   }
                 }
-                Text(
-                  text = item.description,
-                  color = RiviaTextSecondary,
-                  fontSize = 13.sp,
-                  lineHeight = 18.sp,
-                )
+                if (item.description.isNotBlank()) {
+                  Text(
+                    text = item.description,
+                    color = RiviaTextSecondary,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                  )
+                }
               }
 
               Row(
@@ -443,7 +448,8 @@ fun SettingsScreen(
   val modeBadgeLabel = appUiMode.displayName
   val modeBadgeColor = accentColorForMode(appUiMode)
 
-  val activeTabTitle = tabs.getOrElse(safeSelectedTab) { "Settings" }
+  val activeTabTitle =
+    if (appUiMode == AppUiMode.RIVIA) "Settings" else tabs.getOrElse(safeSelectedTab) { "Settings" }
 
   Box(modifier = Modifier.fillMaxSize().background(RiviaBackground)) {
     Column(
@@ -455,187 +461,210 @@ fun SettingsScreen(
     ) {
       // Sleek Header: Back arrow + Active Tab Title on left, Mode pill badge + Help (?) button on right
       Surface(color = RiviaBackground, modifier = Modifier.fillMaxWidth()) {
-        Row(
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween,
+        Box(
+          modifier = Modifier.fillMaxWidth(),
+          contentAlignment = Alignment.Center,
         ) {
           Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            IconButton(
-              onClick = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                onBack()
-              },
-              modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_back_button"),
-            ) {
-              Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back to chat",
-                tint = RiviaTextPrimary,
-              )
-            }
-            Text(
-              text = activeTabTitle,
-              style = MaterialTheme.typography.titleLarge,
-              fontWeight = FontWeight.SemiBold,
-              color = RiviaTextPrimary,
-            )
-          }
-
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(end = 6.dp),
-          ) {
-            Surface(
-              shape = RoundedCornerShape(50),
-              color = Color.Transparent,
-              border = BorderStroke(1.dp, RiviaModeViolet),
-              modifier =
-                Modifier.clip(RoundedCornerShape(50))
-                  .clickable {
-                    keyboardController?.hide()
-                    focusManager.clearFocus()
-                    showDevLabsModeSheet = true
-                  }
-                  .testTag("settings_mode_badge"),
-            ) {
-              Text(
-                text = modeBadgeLabel,
-                color = modeBadgeColor,
-                fontFamily = ChivoMonoFontFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-              )
-            }
-
-            GuideHeaderButton(
-              onClick = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                showFullGuideSheet = true
-              },
-            )
-          }
-        }
-      }
-
-      // Sleek Pill Tab Bar
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement =
-          if (tabs.size <= 2) Arrangement.spacedBy(10.dp) else Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        tabs.forEachIndexed { idx, title ->
-          val isSelected = safeSelectedTab == idx
-          Surface(
-            shape = RoundedCornerShape(50),
-            color = if (isSelected) RiviaMint else Color.Transparent,
             modifier =
-              Modifier.clip(RoundedCornerShape(50))
-                .clickable {
-                  focusManager.clearFocus()
-                  activeSubPicker = null
-                  selectedTab = idx
-                }
-                .then(
-                  if (isSelected) Modifier.testTag("settings_selected_tab_indicator")
-                  else Modifier
-                )
-                .testTag("settings_tab_${title.lowercase().replace(" ", "_")}"),
-          ) {
-            Text(
-              text = title,
-              color = if (isSelected) RiviaOnAccent else RiviaTextSecondary,
-              fontSize = 14.sp,
-              fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-              modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-          }
-        }
-      }
-
-      // Plain API Error / Status Banner
-      val activeBanner = audioError ?: audioNotice ?: statusBanner
-      if (!activeBanner.isNullOrBlank()) {
-        val err = audioError != null || (audioNotice == null && isErrorBanner)
-        Surface(
-          color = RiviaSurface1,
-          shape = RoundedCornerShape(14.dp),
-          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
-          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-        ) {
-          Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+              Modifier.widthIn(max = 640.dp)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
             Row(
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(10.dp),
-              modifier = Modifier.weight(1f),
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-              StatusShape(
-                status = if (err) StatusType.ERROR else StatusType.OK,
-                size = 10.dp,
-              )
+              IconButton(
+                onClick = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  onBack()
+                },
+                modifier = Modifier.minimumInteractiveComponentSize().testTag("settings_back_button"),
+              ) {
+                Icon(
+                  imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                  contentDescription = "Back to chat",
+                  tint = RiviaTextPrimary,
+                )
+              }
               Text(
-                text = activeBanner,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (err) RiviaErrorRed else RiviaText,
+                text = activeTabTitle,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = RiviaTextPrimary,
               )
             }
-            TextButton(onClick = { viewModel.clearStatusBanner() }) {
-              Text("Dismiss", color = RiviaMutedText, fontSize = 12.sp)
+
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              modifier = Modifier.padding(end = 6.dp),
+            ) {
+              if (appUiMode != AppUiMode.RIVIA) {
+                Surface(
+                  shape = RoundedCornerShape(50),
+                  color = Color.Transparent,
+                  border = BorderStroke(1.dp, RiviaModeViolet),
+                  modifier =
+                    Modifier.clip(RoundedCornerShape(50))
+                      .clickable {
+                        keyboardController?.hide()
+                        focusManager.clearFocus()
+                        showDevLabsModeSheet = true
+                      }
+                      .testTag("settings_mode_badge"),
+                ) {
+                  Text(
+                    text = modeBadgeLabel,
+                    color = modeBadgeColor,
+                    fontFamily = ChivoMonoFontFamily,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                  )
+                }
+              }
+
+              GuideHeaderButton(
+                onClick = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  showFullGuideSheet = true
+                },
+              )
             }
           }
         }
       }
 
-      if (appUiMode == AppUiMode.RIVIA) {
-        when (safeSelectedTab) {
-          0 ->
-            VoiceSettingsTab(
-              viewModel = viewModel,
-              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-              onOpenSubPicker = { activeSubPicker = it },
-            )
-          1 ->
-            RiviaBackupTab(
-              viewModel = viewModel,
-              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-            )
+      // Sleek Pill Tab Bar
+      Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.Center,
+      ) {
+        Row(
+          modifier =
+            Modifier.widthIn(max = 640.dp)
+              .fillMaxWidth()
+              .padding(horizontal = 16.dp, vertical = 6.dp),
+          horizontalArrangement =
+            if (tabs.size <= 2) Arrangement.spacedBy(10.dp) else Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          tabs.forEachIndexed { idx, title ->
+            val isSelected = safeSelectedTab == idx
+            Surface(
+              shape = RoundedCornerShape(50),
+              color = if (isSelected) RiviaMint else Color.Transparent,
+              modifier =
+                Modifier.clip(RoundedCornerShape(50))
+                  .clickable {
+                    focusManager.clearFocus()
+                    activeSubPicker = null
+                    selectedTab = idx
+                  }
+                  .then(
+                    if (isSelected) Modifier.testTag("settings_selected_tab_indicator")
+                    else Modifier
+                  )
+                  .testTag("settings_tab_${title.lowercase().replace(" ", "_")}"),
+            ) {
+              Text(
+                text = title,
+                color = if (isSelected) RiviaOnAccent else RiviaTextSecondary,
+                fontSize = 14.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+              )
+            }
+          }
         }
-      } else {
-        when (safeSelectedTab) {
-          0 ->
-            KeysAndBackupTab(
-              viewModel = viewModel,
-              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-            )
-          1 ->
-            VoiceSettingsTab(
-              viewModel = viewModel,
-              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-              onOpenSubPicker = { activeSubPicker = it },
-            )
-          2 -> PluginsTab()
-          3 ->
-            DefaultsLauncherTab(
-              viewModel = viewModel,
-              onOpenDefaultRunSettings = onOpenDefaultRunSettings,
-              onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
-              onOpenSubPicker = { activeSubPicker = it },
-            )
-          4 -> RequestLogTab(viewModel = viewModel)
+      }
+
+      Box(
+        modifier = Modifier.fillMaxWidth().weight(1f),
+        contentAlignment = Alignment.TopCenter,
+      ) {
+        Column(modifier = Modifier.widthIn(max = 640.dp).fillMaxSize()) {
+          // Plain API Error / Status Banner
+          val activeBanner = audioError ?: audioNotice ?: statusBanner
+          if (!activeBanner.isNullOrBlank()) {
+            val err = audioError != null || (audioNotice == null && isErrorBanner)
+            Surface(
+              color = RiviaSurface1,
+              shape = RoundedCornerShape(14.dp),
+              border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(10.dp),
+                  modifier = Modifier.weight(1f),
+                ) {
+                  StatusShape(
+                    status = if (err) StatusType.ERROR else StatusType.OK,
+                    size = 10.dp,
+                  )
+                  Text(
+                    text = activeBanner,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (err) RiviaErrorRed else RiviaText,
+                  )
+                }
+                TextButton(onClick = { viewModel.clearStatusBanner() }) {
+                  Text("Dismiss", color = RiviaMutedText, fontSize = 12.sp)
+                }
+              }
+            }
+          }
+
+          if (appUiMode == AppUiMode.RIVIA) {
+            when (safeSelectedTab) {
+              0 ->
+                VoiceSettingsTab(
+                  viewModel = viewModel,
+                  onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+                  onOpenSubPicker = { activeSubPicker = it },
+                )
+              1 ->
+                RiviaBackupTab(
+                  viewModel = viewModel,
+                  onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+                )
+            }
+          } else {
+            when (safeSelectedTab) {
+              0 ->
+                KeysAndBackupTab(
+                  viewModel = viewModel,
+                  onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+                )
+              1 ->
+                VoiceSettingsTab(
+                  viewModel = viewModel,
+                  onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+                  onOpenSubPicker = { activeSubPicker = it },
+                )
+              2 -> PluginsTab()
+              3 ->
+                DefaultsLauncherTab(
+                  viewModel = viewModel,
+                  onOpenDefaultRunSettings = onOpenDefaultRunSettings,
+                  onShowHelp = { activeHelpTopic = RiviaSettingsGuide.findTopic(it) },
+                  onOpenSubPicker = { activeSubPicker = it },
+                )
+              4 -> RequestLogTab(viewModel = viewModel)
+            }
+          }
         }
       }
     }
@@ -664,8 +693,14 @@ fun SettingsScreen(
   if (activeHelpTopic != null || showFullGuideSheet) {
     SettingHelpBottomSheet(
       topic = activeHelpTopic,
-      allTopics = if (showFullGuideSheet) RiviaSettingsGuide.appSettingsTopics else null,
-      sheetTitle = "Settings Guide & Examples",
+      allTopics =
+        if (showFullGuideSheet) {
+          if (appUiMode == AppUiMode.RIVIA) RiviaSettingsGuide.everydayTopics
+          else RiviaSettingsGuide.appSettingsTopics
+        } else null,
+      sheetTitle =
+        if (appUiMode == AppUiMode.RIVIA) "How these settings work"
+        else "Settings Guide & Examples",
       onDismiss = {
         activeHelpTopic = null
         showFullGuideSheet = false
@@ -693,9 +728,9 @@ private fun RiviaBackupTab(
             context.contentResolver.openOutputStream(uri)?.use { out ->
               out.write(json.toByteArray(Charsets.UTF_8))
             }
-            viewModel.showNotice("Exported all chats to JSON.")
+            viewModel.showNotice("Backup saved.")
           } catch (e: Exception) {
-            viewModel.showError("Export failed: ${e.message}")
+            viewModel.showError("Couldn't save the backup. Try again.")
           }
         }
       }
@@ -716,7 +751,7 @@ private fun RiviaBackupTab(
               viewModel.importChatsFromJson(text)
             }
           } catch (e: Exception) {
-            viewModel.showError("Import failed: ${e.message}")
+            viewModel.showError("Couldn't read that backup file.")
           }
         }
       }
@@ -729,12 +764,11 @@ private fun RiviaBackupTab(
   ) {
     item {
       SettingsCardSection(
-        title = "Chat History Backup (JSON)",
-        onHelpClick = { onShowHelp("chat_backup") },
+        title = "Back up chats",
+        onHelpClick = { onShowHelp("ev_backup") },
       ) {
         Text(
-          text =
-            "Export all chats, messages, raw interaction steps, rule events, request logs, and voice emotion turns to a portable JSON file, or import one back.",
+          text = "Save all your chats to a file, or bring them back from one.",
           style = MaterialTheme.typography.bodySmall,
           color = RiviaMutedText,
         )
@@ -758,12 +792,12 @@ private fun RiviaBackupTab(
           ) {
             Icon(
               imageVector = Icons.Outlined.Download,
-              contentDescription = "Export chats to JSON",
+              contentDescription = "Save chat backup",
               tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Export JSON", color = RiviaTextPrimary)
+            Text("Save backup", color = RiviaTextPrimary)
           }
 
           OutlinedButton(
@@ -782,12 +816,12 @@ private fun RiviaBackupTab(
           ) {
             Icon(
               imageVector = Icons.Outlined.Upload,
-              contentDescription = "Import chats from JSON",
+              contentDescription = "Restore chat backup",
               tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Import JSON", color = RiviaTextPrimary)
+            Text("Restore backup", color = RiviaTextPrimary)
           }
         }
       }
@@ -815,6 +849,8 @@ private fun KeysAndBackupTab(
   val tabletArrivalRunning by viewModel.tabletArrivalRunning.collectAsStateWithLifecycle()
   val tabletArrivalResultText by viewModel.tabletArrivalResultText.collectAsStateWithLifecycle()
   val tabletArrivalIsError by viewModel.tabletArrivalIsError.collectAsStateWithLifecycle()
+  val devTabletToolsEnabled by viewModel.devTabletToolsEnabled.collectAsStateWithLifecycle()
+  val tabletToolsUnavailable by viewModel.tabletToolsUnavailable.collectAsStateWithLifecycle()
   val cachedModels by viewModel.cachedModels.collectAsStateWithLifecycle()
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
   val isLoadingModels by viewModel.isLoadingModels.collectAsStateWithLifecycle()
@@ -917,9 +953,9 @@ private fun KeysAndBackupTab(
             context.contentResolver.openOutputStream(uri)?.use { out ->
               out.write(json.toByteArray(Charsets.UTF_8))
             }
-            viewModel.showNotice("Exported all chats to JSON.")
+            viewModel.showNotice("Backup saved.")
           } catch (e: Exception) {
-            viewModel.showError("Export failed: ${e.message}")
+            viewModel.showError("Couldn't save the backup. Try again.")
           }
         }
       }
@@ -940,7 +976,7 @@ private fun KeysAndBackupTab(
               viewModel.importChatsFromJson(text)
             }
           } catch (e: Exception) {
-            viewModel.showError("Import failed: ${e.message}")
+            viewModel.showError("Couldn't read that backup file.")
           }
         }
       }
@@ -1352,6 +1388,49 @@ private fun KeysAndBackupTab(
               )
             }
           }
+
+          HorizontalDivider(color = RiviaBorder, thickness = 1.dp)
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Column(
+              modifier = Modifier.weight(1f).padding(end = 12.dp),
+              verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+              Text(
+                text = "Tablet tools",
+                color = RiviaTextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+              Text(
+                text = "Let Rivia call eligible tools from your tablet server during chats",
+                color = RiviaMutedText,
+                style = MaterialTheme.typography.bodySmall,
+              )
+              if (devTabletToolsEnabled && tabletToolsUnavailable) {
+                Text(
+                  text = "Tablet tools unavailable",
+                  color = RiviaErrorRed,
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = ChivoMonoFontFamily,
+                  modifier = Modifier.testTag("dev_tablet_tools_unavailable_text"),
+                )
+              }
+            }
+            Switch(
+              checked = devTabletToolsEnabled,
+              onCheckedChange = { enabled ->
+                commitTabletIfChanged()
+                viewModel.setDevTabletToolsEnabled(enabled)
+              },
+              colors = riviaSwitchColors(),
+              modifier = Modifier.testTag("dev_tablet_tools_switch"),
+            )
+          }
         }
       }
 
@@ -1367,12 +1446,11 @@ private fun KeysAndBackupTab(
     // Export / Import Chats JSON
     item {
       SettingsCardSection(
-        title = "Chat History Backup (JSON)",
+        title = "Back up chats",
         onHelpClick = { onShowHelp("chat_backup") },
       ) {
         Text(
-          text =
-            "Export all chats, messages, raw interaction steps, rule events, request logs, and voice emotion turns to a portable JSON file, or import one back.",
+          text = "Save all your chats to a file, or bring them back from one.",
           style = MaterialTheme.typography.bodySmall,
           color = RiviaMutedText,
         )
@@ -1396,12 +1474,12 @@ private fun KeysAndBackupTab(
           ) {
             Icon(
               imageVector = Icons.Outlined.Download,
-              contentDescription = "Export chats to JSON",
+              contentDescription = "Save chat backup",
               tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Export JSON", color = RiviaTextPrimary)
+            Text("Save backup", color = RiviaTextPrimary)
           }
 
           OutlinedButton(
@@ -1420,12 +1498,12 @@ private fun KeysAndBackupTab(
           ) {
             Icon(
               imageVector = Icons.Outlined.Upload,
-              contentDescription = "Import chats from JSON",
+              contentDescription = "Restore chat backup",
               tint = RiviaIconDefault,
               modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(6.dp))
-            Text("Import JSON", color = RiviaTextPrimary)
+            Text("Restore backup", color = RiviaTextPrimary)
           }
         }
       }
@@ -1562,62 +1640,62 @@ private val LANGUAGE_OPTION_SPECS =
     LanguageOptionSpec(
       code = "en-US",
       title = "English (US)",
-      description = "American English speech recognition (Default). Tuned for US accents, idioms, and conversational phrasing.",
+      description = "Default.",
     ),
     LanguageOptionSpec(
       code = "en-GB",
       title = "English (UK)",
-      description = "British English speech recognition tuned for UK accents and vocabulary.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "en-AU",
       title = "English (AU)",
-      description = "Australian English speech recognition tuned for Australian accents and phrasing.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "en-CA",
       title = "English (CA)",
-      description = "Canadian English speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "es-US",
       title = "Spanish (US)",
-      description = "Latin American and US Spanish speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "es-ES",
       title = "Spanish (ES)",
-      description = "Castilian Spanish speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "fr-FR",
       title = "French",
-      description = "Standard French speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "de-DE",
       title = "German",
-      description = "Standard German speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "it-IT",
       title = "Italian",
-      description = "Standard Italian speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "pt-BR",
       title = "Portuguese (BR)",
-      description = "Brazilian Portuguese speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "ja-JP",
       title = "Japanese",
-      description = "Japanese speech recognition.",
+      description = "",
     ),
     LanguageOptionSpec(
       code = "ko-KR",
       title = "Korean",
-      description = "Korean speech recognition.",
+      description = "",
     ),
   )
 
@@ -1845,8 +1923,7 @@ private fun SettingsSubPickerHost(
         }
       SettingsOptionPickerScreen(
         title = "Language",
-        subtitle =
-          "Choose the speech recognition language and regional accent used when Rivia listens to you.",
+        subtitle = "Pick the language you speak.",
         options = options,
         footerContent = {
           Surface(
@@ -1975,7 +2052,7 @@ private fun SettingsSubPickerHost(
 @Composable
 private fun VoiceSettingsTab(
   viewModel: RiviaViewModel,
-  @Suppress("UNUSED_PARAMETER") onShowHelp: (String) -> Unit,
+  onShowHelp: (String) -> Unit,
   onOpenSubPicker: (SettingsSubPicker) -> Unit,
 ) {
   val context = LocalContext.current
@@ -1987,7 +2064,7 @@ private fun VoiceSettingsTab(
   val personalVoices by viewModel.personalVoices.collectAsStateWithLifecycle()
 
   var voiceIdDraft by remember { mutableStateOf(voicePrefs.voiceId) }
-  var advancedExpanded by rememberSaveable { mutableStateOf(true) }
+  var advancedExpanded by rememberSaveable { mutableStateOf(false) }
 
   LaunchedEffect(voicePrefs.voiceId) { voiceIdDraft = voicePrefs.voiceId }
 
@@ -2042,18 +2119,366 @@ private fun VoiceSettingsTab(
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-    verticalArrangement = Arrangement.spacedBy(20.dp),
+    verticalArrangement = Arrangement.spacedBy(24.dp),
   ) {
-    // 1. Her voice
+    // 1. Hands-free
     item {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-          text = "Her voice",
+          text = "Hands-free",
           color = RiviaTextTertiary,
           fontSize = 12.sp,
           fontWeight = FontWeight.Medium,
-          modifier = Modifier.padding(horizontal = 4.dp),
+          modifier = Modifier.padding(horizontal = 4.dp).testTag("el_models_section"),
         )
+        Surface(
+          shape = RoundedCornerShape(18.dp),
+          color = RiviaSurface1,
+          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.fillMaxWidth()) {
+            // Pause before Rivia answers (Short 0.8 s / Normal 1.2 s / Long 1.8 s)
+            Column(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Pause before Rivia answers",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  InfoHelpIconButton(
+                    contentDescription = "About Pause before Rivia answers",
+                    onClick = { onShowHelp("ev_pause") },
+                  )
+                }
+                Text(
+                  text = "How long you can pause before she answers",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+
+              val pauseOptions =
+                listOf(
+                  800 to "Short 0.8 s",
+                  1200 to "Normal 1.2 s",
+                  1800 to "Long 1.8 s",
+                )
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                pauseOptions.forEach { (ms, label) ->
+                  val isSelected = labMicPrefs.vadEndSilenceMs == ms
+                  Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) RiviaMint else RiviaSurface2,
+                    border =
+                      BorderStroke(
+                        1.dp,
+                        if (isSelected) RiviaMint else RiviaBorder,
+                      ),
+                    modifier =
+                      Modifier.weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                          viewModel.updateLabMicTestPrefs { it.copy(vadEndSilenceMs = ms) }
+                        }
+                        .testTag("pause_before_answer_${ms}_button"),
+                  ) {
+                    Text(
+                      text = label,
+                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                      fontSize = 12.sp,
+                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                      textAlign = TextAlign.Center,
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+                    )
+                  }
+                }
+              }
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Interrupt by voice switch (default ON)
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Interrupt by voice",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  InfoHelpIconButton(
+                    contentDescription = "About Interrupt by voice",
+                    onClick = { onShowHelp("ev_interrupt") },
+                  )
+                }
+                Text(
+                  text = "Talk over her to cut in",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.interruptByVoiceInLive,
+                onCheckedChange = { b ->
+                  MicSharingRecorder.bargeInEnabled = b
+                  viewModel.updateVoicePrefs { it.copy(interruptByVoiceInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("interrupt_by_voice_switch"),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Echo canceling in Live
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Echo canceling in Live",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Filter out Rivia's speaker voice from the microphone",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.echoCancelInLive,
+                onCheckedChange = { b ->
+                  MicSharingRecorder.echoCancelEnabled = b
+                  viewModel.updateVoicePrefs { it.copy(echoCancelInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("echo_cancel_in_live_switch"),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Keep screen on in Live
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Keep screen on in Live",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  InfoHelpIconButton(
+                    contentDescription = "About Keep screen on in Live",
+                    onClick = { onShowHelp("ev_screen_on") },
+                  )
+                }
+                Text(
+                  text = "Only needed to read captions. Live works with the screen off.",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.keepScreenOnInLive,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(keepScreenOnInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Use earbud mic in Live
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Use earbud mic in Live",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  InfoHelpIconButton(
+                    contentDescription = "About Use earbud mic in Live",
+                    onClick = { onShowHelp("ev_earbud_mic") },
+                  )
+                }
+                Text(
+                  text = "Hear you through your earbuds. Her voice sounds like a phone call.",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.useEarbudMicInLive,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(useEarbudMicInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Open in Live
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Open in Live",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Start Live as soon as you open the app",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.openInLive,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(openInLive = b) }
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("open_in_live_switch"),
+              )
+            }
+
+            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
+
+            // Vibrate on Live changes
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+              Column(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+              ) {
+                Text(
+                  text = "Vibrate on Live changes",
+                  color = RiviaTextPrimary,
+                  fontSize = 15.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = "Gentle buzz when Rivia starts or stops listening",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
+              }
+              Switch(
+                checked = voicePrefs.vibrateOnLiveChanges,
+                onCheckedChange = { b ->
+                  viewModel.updateVoicePrefs { it.copy(vibrateOnLiveChanges = b) }
+                },
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("vibrate_on_live_changes_switch"),
+              )
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Her voice + Hear these settings button
+    item {
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "Her voice",
+            color = RiviaTextTertiary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+          )
+          InfoHelpIconButton(
+            contentDescription = "About Her voice",
+            onClick = { onShowHelp("ev_her_voice") },
+          )
+        }
         Surface(
           shape = RoundedCornerShape(18.dp),
           color = RiviaSurface1,
@@ -2133,18 +2558,48 @@ private fun VoiceSettingsTab(
             }
           }
         }
+
+        Button(
+          onClick = {
+            commitVoiceIdIfChanged()
+            viewModel.testElevenLabsSpeakLine(voiceIdDraft)
+          },
+          shape = RoundedCornerShape(50),
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = RiviaMint,
+              contentColor = RiviaOnAccent,
+            ),
+          modifier =
+            Modifier.fillMaxWidth()
+              .height(54.dp)
+              .minimumInteractiveComponentSize()
+              .testTag("test_voice_speak_button"),
+        ) {
+          Icon(
+            imageVector = Icons.AutoMirrored.Outlined.VolumeUp,
+            contentDescription = "Hear these settings",
+            modifier = Modifier.size(18.dp),
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = "Hear these settings",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+        }
       }
     }
 
-    // 2. Voice model & Live conversation controls
+    // 3. How she hears you
     item {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-          text = if (isDevOrLabs) "Voice model" else "Live conversations",
+          text = "How she hears you",
           color = RiviaTextTertiary,
           fontSize = 12.sp,
           fontWeight = FontWeight.Medium,
-          modifier = Modifier.padding(horizontal = 4.dp).testTag("el_models_section"),
+          modifier = Modifier.padding(horizontal = 4.dp),
         )
         Surface(
           shape = RoundedCornerShape(18.dp),
@@ -2153,71 +2608,47 @@ private fun VoiceSettingsTab(
           modifier = Modifier.fillMaxWidth(),
         ) {
           Column(modifier = Modifier.fillMaxWidth()) {
-            // Pause before Rivia answers (Short 0.8 s / Normal 1.2 s / Long 1.8 s)
-            Column(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-              verticalArrangement = Arrangement.spacedBy(10.dp),
+            // Language row -> opens separate vertical list screen with language descriptions
+            Row(
+              modifier =
+                Modifier.fillMaxWidth()
+                  .clickable { onOpenSubPicker(SettingsSubPicker.LANGUAGE) }
+                  .padding(horizontal = 16.dp, vertical = 16.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-              Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                  text = "Pause before Rivia answers",
-                  color = RiviaTextPrimary,
-                  fontSize = 15.sp,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = "How long she waits after you pause speaking in Live",
-                  color = RiviaTextSecondary,
-                  fontSize = 13.sp,
-                )
-              }
-
-              val pauseOptions =
-                listOf(
-                  800 to "Short 0.8 s",
-                  1200 to "Normal 1.2 s",
-                  1800 to "Long 1.8 s",
-                )
+              Text(
+                text = "Language",
+                color = RiviaTextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
               Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
               ) {
-                pauseOptions.forEach { (ms, label) ->
-                  val isSelected = labMicPrefs.vadEndSilenceMs == ms
-                  Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = if (isSelected) RiviaMint else RiviaSurface2,
-                    border =
-                      BorderStroke(
-                        1.dp,
-                        if (isSelected) RiviaMint else RiviaBorder,
-                      ),
-                    modifier =
-                      Modifier.weight(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable {
-                          viewModel.updateLabMicTestPrefs { it.copy(vadEndSilenceMs = ms) }
-                        }
-                        .testTag("pause_before_answer_${ms}_button"),
-                  ) {
-                    Text(
-                      text = label,
-                      color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
-                      fontSize = 12.sp,
-                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                      textAlign = TextAlign.Center,
-                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                    )
-                  }
-                }
+                Text(
+                  text = friendlyLanguageLabel(voicePrefs.sttLanguage),
+                  color = RiviaTextSecondary,
+                  fontSize = 14.sp,
+                )
+                Icon(
+                  imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                  contentDescription = "Choose speech language",
+                  tint = RiviaTextSecondary,
+                  modifier = Modifier.size(18.dp),
+                )
               }
             }
 
             HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
 
-            // Interrupt by voice switch (default ON)
+            // Transcribe on this phone
             Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -2225,26 +2656,33 @@ private fun VoiceSettingsTab(
                 modifier = Modifier.weight(1f).padding(end = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
               ) {
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  Text(
+                    text = "Transcribe on this phone",
+                    color = RiviaTextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  InfoHelpIconButton(
+                    contentDescription = "About Transcribe on this phone",
+                    onClick = { onShowHelp("ev_on_device") },
+                  )
+                }
                 Text(
-                  text = "Interrupt by voice",
-                  color = RiviaTextPrimary,
-                  fontSize = 15.sp,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = "Keep the mic open while she talks so speaking cuts her off",
+                  text = "Works offline; may be less accurate",
                   color = RiviaTextSecondary,
                   fontSize = 13.sp,
                 )
               }
               Switch(
-                checked = voicePrefs.interruptByVoiceInLive,
+                checked = voicePrefs.preferOnDeviceRecognition,
                 onCheckedChange = { b ->
-                  MicSharingRecorder.bargeInEnabled = b
-                  viewModel.updateVoicePrefs { it.copy(interruptByVoiceInLive = b) }
+                  viewModel.updateVoicePrefs { it.copy(preferOnDeviceRecognition = b) }
                 },
                 colors = riviaSwitchColors(),
-                modifier = Modifier.testTag("interrupt_by_voice_switch"),
               )
             }
           }
@@ -2252,16 +2690,25 @@ private fun VoiceSettingsTab(
       }
     }
 
-    // 3. How she sounds
+    // 4. How she sounds
     item {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-          text = "How she sounds",
-          color = RiviaTextTertiary,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Medium,
-          modifier = Modifier.padding(horizontal = 4.dp),
-        )
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Text(
+            text = "How she sounds",
+            color = RiviaTextTertiary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+          )
+          InfoHelpIconButton(
+            contentDescription = "About How she sounds",
+            onClick = { onShowHelp("ev_how_she_sounds") },
+          )
+        }
         Surface(
           shape = RoundedCornerShape(18.dp),
           color = RiviaSurface1,
@@ -2374,15 +2821,10 @@ private fun VoiceSettingsTab(
                     verticalAlignment = Alignment.CenterVertically,
                   ) {
                     Text(
-                      text = "Style",
+                      text = "Extra emotion",
                       color = RiviaTextPrimary,
                       fontSize = 15.sp,
                       fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                      text = "%.2f".format(Locale.US, voicePrefs.style),
-                      color = RiviaTextSecondary,
-                      fontSize = 13.sp,
                     )
                   }
                   Slider(
@@ -2393,9 +2835,35 @@ private fun VoiceSettingsTab(
                     valueRange = 0f..1f,
                     colors = sleekSliderColors,
                   )
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                  ) {
+                    Text(
+                      text = "Calm",
+                      color = RiviaTextTertiary,
+                      fontSize = 12.sp,
+                    )
+                    Text(
+                      text = "Dramatic",
+                      color = RiviaTextTertiary,
+                      fontSize = 12.sp,
+                    )
+                  }
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                  val speedRounded = kotlin.math.round(voicePrefs.speed * 100f) / 100f
+                  val speedLabel =
+                    if (kotlin.math.abs(speedRounded - 1.0f) < 0.005f) {
+                      "Normal"
+                    } else {
+                      val formatted =
+                        "%.2f".format(Locale.US, speedRounded).trimEnd('0').let {
+                          if (it.endsWith(".")) "${it}0" else it
+                        }
+                      if (speedRounded < 1.0f) "${formatted}× slower" else "${formatted}× faster"
+                    }
                   Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2408,7 +2876,7 @@ private fun VoiceSettingsTab(
                       fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                      text = "${"%.2f".format(Locale.US, voicePrefs.speed)}x",
+                      text = speedLabel,
                       color = RiviaTextSecondary,
                       fontSize = 13.sp,
                     )
@@ -2422,6 +2890,13 @@ private fun VoiceSettingsTab(
                     colors = sleekSliderColors,
                   )
                 }
+              } else {
+                Text(
+                  text =
+                    "Speed and Extra emotion only show for older voice models. The default model sets them itself.",
+                  color = RiviaTextSecondary,
+                  fontSize = 13.sp,
+                )
               }
             }
 
@@ -2429,7 +2904,10 @@ private fun VoiceSettingsTab(
 
             // Clarity boost
             Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -2462,7 +2940,10 @@ private fun VoiceSettingsTab(
 
             // Emotion cues
             Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+              modifier =
+                Modifier.fillMaxWidth()
+                  .heightIn(min = 56.dp)
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.SpaceBetween,
             ) {
@@ -2496,160 +2977,7 @@ private fun VoiceSettingsTab(
       }
     }
 
-    // 4. How she hears you
-    item {
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-          text = "How she hears you",
-          color = RiviaTextTertiary,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Medium,
-          modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        Surface(
-          shape = RoundedCornerShape(18.dp),
-          color = RiviaSurface1,
-          border = BorderStroke(1.dp, RiviaBorder.copy(alpha = 0.75f)),
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Column(modifier = Modifier.fillMaxWidth()) {
-            // Language row -> opens separate vertical list screen with language descriptions
-            Row(
-              modifier =
-                Modifier.fillMaxWidth()
-                  .clickable { onOpenSubPicker(SettingsSubPicker.LANGUAGE) }
-                  .padding(horizontal = 16.dp, vertical = 16.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Text(
-                text = "Language",
-                color = RiviaTextPrimary,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-              )
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-              ) {
-                Text(
-                  text = friendlyLanguageLabel(voicePrefs.sttLanguage),
-                  color = RiviaTextSecondary,
-                  fontSize = 14.sp,
-                )
-                Icon(
-                  imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                  contentDescription = "Choose speech language",
-                  tint = RiviaTextSecondary,
-                  modifier = Modifier.size(18.dp),
-                )
-              }
-            }
-
-            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
-
-            // Transcribe on this phone
-            Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Column(
-                modifier = Modifier.weight(1f).padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-              ) {
-                Text(
-                  text = "Transcribe on this phone",
-                  color = RiviaTextPrimary,
-                  fontSize = 15.sp,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = "Works offline; may be less accurate",
-                  color = RiviaTextSecondary,
-                  fontSize = 13.sp,
-                )
-              }
-              Switch(
-                checked = voicePrefs.preferOnDeviceRecognition,
-                onCheckedChange = { b ->
-                  viewModel.updateVoicePrefs { it.copy(preferOnDeviceRecognition = b) }
-                },
-                colors = riviaSwitchColors(),
-              )
-            }
-
-            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
-
-            // Keep screen on in Live
-            Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Column(
-                modifier = Modifier.weight(1f).padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-              ) {
-                Text(
-                  text = "Keep screen on in Live",
-                  color = RiviaTextPrimary,
-                  fontSize = 15.sp,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = "So the screen never locks mid-conversation",
-                  color = RiviaTextSecondary,
-                  fontSize = 13.sp,
-                )
-              }
-              Switch(
-                checked = voicePrefs.keepScreenOnInLive,
-                onCheckedChange = { b ->
-                  viewModel.updateVoicePrefs { it.copy(keepScreenOnInLive = b) }
-                },
-                colors = riviaSwitchColors(),
-              )
-            }
-
-            HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
-
-            // Use earbud mic in Live
-            Row(
-              modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-              Column(
-                modifier = Modifier.weight(1f).padding(end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-              ) {
-                Text(
-                  text = "Use earbud mic in Live",
-                  color = RiviaTextPrimary,
-                  fontSize = 15.sp,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = "Her voice drops to call quality in your earbuds",
-                  color = RiviaTextSecondary,
-                  fontSize = 13.sp,
-                )
-              }
-              Switch(
-                checked = voicePrefs.useEarbudMicInLive,
-                onCheckedChange = { b ->
-                  viewModel.updateVoicePrefs { it.copy(useEarbudMicInLive = b) }
-                },
-                colors = riviaSwitchColors(),
-              )
-            }
-          }
-        }
-      }
-    }
-
-    // 5. Advanced Card (Voice ID, clone tuning, audio quality)
+    // 5. Advanced Card (Voice models, voice ID, audio quality)
     item {
       Surface(
         shape = RoundedCornerShape(18.dp),
@@ -2724,12 +3052,21 @@ private fun VoiceSettingsTab(
                     fontSize = 13.sp,
                   )
                 }
-                Icon(
-                  imageVector = Icons.Default.KeyboardArrowDown,
-                  contentDescription = "Select voice model for reading",
-                  tint = RiviaTextSecondary,
-                  modifier = Modifier.size(20.dp),
-                )
+                Row(
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Select voice model for reading",
+                    tint = RiviaTextSecondary,
+                    modifier = Modifier.size(20.dp),
+                  )
+                  InfoHelpIconButton(
+                    contentDescription = "About Voice models",
+                    onClick = { onShowHelp("ev_voice_models") },
+                  )
+                }
               }
 
               HorizontalDivider(color = RiviaBorder.copy(alpha = 0.7f))
@@ -2834,7 +3171,7 @@ private fun VoiceSettingsTab(
 
               // Professional clone tuning
               Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
               ) {
@@ -2978,43 +3315,14 @@ private fun VoiceSettingsTab(
                   tint = RiviaTextSecondary,
                   modifier = Modifier.size(18.dp),
                 )
+                InfoHelpIconButton(
+                  contentDescription = "About Audio quality",
+                  onClick = { onShowHelp("ev_audio_quality") },
+                )
               }
             }
           }
         }
-      }
-    }
-
-    // 6. Full-width pill button: "Hear these settings"
-    item {
-      Button(
-        onClick = {
-          commitVoiceIdIfChanged()
-          viewModel.testElevenLabsSpeakLine(voiceIdDraft)
-        },
-        shape = RoundedCornerShape(50),
-        colors =
-          ButtonDefaults.buttonColors(
-            containerColor = RiviaMint,
-            contentColor = RiviaOnAccent,
-          ),
-        modifier =
-          Modifier.fillMaxWidth()
-            .height(54.dp)
-            .minimumInteractiveComponentSize()
-            .testTag("test_voice_speak_button"),
-      ) {
-        Icon(
-          imageVector = Icons.AutoMirrored.Outlined.VolumeUp,
-          contentDescription = "Hear these settings",
-          modifier = Modifier.size(18.dp),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-          text = "Hear these settings",
-          fontSize = 15.sp,
-          fontWeight = FontWeight.SemiBold,
-        )
       }
     }
   }
@@ -3110,6 +3418,7 @@ private fun DefaultsLauncherTab(
   val modelState by viewModel.emotionModelState.collectAsStateWithLifecycle()
   val vadModelState by viewModel.sileroVadModelState.collectAsStateWithLifecycle()
   val labMicPrefs by viewModel.labMicTestPreferences.collectAsStateWithLifecycle()
+  val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
   val emotionLogs by viewModel.voiceEmotionLogs.collectAsStateWithLifecycle()
   val totalEmotionLogsCount by viewModel.totalVoiceEmotionLogsCount.collectAsStateWithLifecycle()
   val baselineSummary by viewModel.emotionBaselineSummary.collectAsStateWithLifecycle()
@@ -3459,6 +3768,32 @@ private fun DefaultsLauncherTab(
             },
             colors = riviaSwitchColors(),
             modifier = Modifier.testTag("record_alongside_recognizer_switch"),
+          )
+        }
+
+        HorizontalDivider(color = RiviaBorder.copy(alpha = 0.5f))
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text("Echo canceling in Live", color = RiviaText, fontWeight = FontWeight.SemiBold)
+            Text(
+              "Hardware AEC + VOICE_COMMUNICATION routing + pipe AGC bleed suppression while Rivia speaks",
+              style = MaterialTheme.typography.bodySmall,
+              color = RiviaMutedText,
+            )
+          }
+          Switch(
+            checked = voicePrefs.echoCancelInLive,
+            onCheckedChange = { enabled ->
+              MicSharingRecorder.echoCancelEnabled = enabled
+              viewModel.updateVoicePrefs { it.copy(echoCancelInLive = enabled) }
+            },
+            colors = riviaSwitchColors(),
+            modifier = Modifier.testTag("mic_tab_echo_cancel_switch"),
           )
         }
 
@@ -4552,6 +4887,7 @@ private fun RequestLogItemCard(
   }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DevZonesCardSection(
   viewModel: RiviaViewModel,
@@ -4568,12 +4904,26 @@ private fun DevZonesCardSection(
   val hasBatteryExemption by viewModel.hasBatteryExemption.collectAsStateWithLifecycle()
   val zoneSyncRunning by viewModel.zoneSyncRunning.collectAsStateWithLifecycle()
   val zoneSyncStatusText by viewModel.zoneSyncStatusText.collectAsStateWithLifecycle()
+  val pinLocationRunning by viewModel.pinLocationRunning.collectAsStateWithLifecycle()
+  val pinLocationStatusText by viewModel.pinLocationStatusText.collectAsStateWithLifecycle()
+  val pinLocationIsError by viewModel.pinLocationIsError.collectAsStateWithLifecycle()
+  val pinLocationPendingApproval by viewModel.pinLocationPendingApproval.collectAsStateWithLifecycle()
+
+  var pendingPinAfterFgPerm by remember { mutableStateOf<(() -> Unit)?>(null) }
 
   val fgLauncher =
     rememberLauncherForActivityResult(
       ActivityResultContracts.RequestMultiplePermissions()
-    ) {
+    ) { grants ->
       viewModel.refreshZonePermissionsState()
+      val granted = grants.values.any { it }
+      if (granted && pendingPinAfterFgPerm != null) {
+        val action = pendingPinAfterFgPerm
+        pendingPinAfterFgPerm = null
+        action?.invoke()
+      } else {
+        pendingPinAfterFgPerm = null
+      }
     }
 
   val bgLauncher =
@@ -4585,26 +4935,65 @@ private fun DevZonesCardSection(
 
   val configById = remember(zoneConfigs) { zoneConfigs.associateBy { it.id } }
   val orderedPlaces =
-    remember(configById) {
-      com.example.schedule.ZoneLocationCoordinator.CANONICAL_PLACES.map { spec ->
-        configById[spec.id]
-          ?: com.example.data.ZoneConfigEntity(
-            id = spec.id,
-            spokenName = spec.defaultSpokenName,
-            lat = null,
-            lng = null,
-            radiusM = com.example.schedule.ZoneLocationCoordinator.DEFAULT_RADIUS_METERS,
-            registered = false,
-            statusNote = "Not synced yet",
-            updatedAt = 0L,
-          )
-      }
+    remember(zoneConfigs, configById) {
+      val canonicalIds =
+        com.example.schedule.ZoneLocationCoordinator.CANONICAL_PLACES.map { it.id }.toSet()
+      val canonicalRows =
+        com.example.schedule.ZoneLocationCoordinator.CANONICAL_PLACES.map { spec ->
+          configById[spec.id]
+            ?: com.example.data.ZoneConfigEntity(
+              id = spec.id,
+              spokenName = spec.defaultSpokenName,
+              lat = null,
+              lng = null,
+              radiusM = com.example.schedule.ZoneLocationCoordinator.DEFAULT_RADIUS_METERS,
+              custom = false,
+              registered = false,
+              statusNote = "Not synced yet",
+              updatedAt = 0L,
+            )
+        }
+      val customRows =
+        zoneConfigs.filter { !canonicalIds.contains(it.id) }.sortedBy { it.spokenName.lowercase() }
+      canonicalRows + customRows
     }
 
   val missingPinIds =
     remember(orderedPlaces) {
       orderedPlaces.filter { it.lat == null || it.lng == null }.map { it.id }
     }
+
+  var pinModeIsNewPlace by remember { mutableStateOf(false) }
+  var pinExistingPlaceInput by remember { mutableStateOf("home") }
+  var pinNewPlaceNameInput by remember { mutableStateOf("") }
+  var pinRadiusInput by remember { mutableStateOf("") }
+
+  fun triggerPinAction(
+    existingPlace: String?,
+    newPlaceName: String?,
+    radiusMeters: Int?,
+  ) {
+    focusManager.clearFocus()
+    onCommitTabletSettings()
+    val runPin = {
+      viewModel.pinMyLocation(
+        existingPlace = existingPlace,
+        newPlaceName = newPlaceName,
+        radiusMeters = radiusMeters,
+      )
+    }
+    if (!com.example.schedule.ZoneLocationCoordinator.hasForegroundLocationPermission(context)) {
+      pendingPinAfterFgPerm = runPin
+      fgLauncher.launch(
+        arrayOf(
+          Manifest.permission.ACCESS_FINE_LOCATION,
+          Manifest.permission.ACCESS_COARSE_LOCATION,
+        )
+      )
+    } else {
+      runPin()
+    }
+  }
 
   val eventFormatter =
     remember { SimpleDateFormat("MM-dd HH:mm:ss", Locale.US) }
@@ -4614,7 +5003,7 @@ private fun DevZonesCardSection(
   ) {
     Text(
       text =
-        "Five geofence zones from app_places (home, farm, gym, pf, hmc). Only arrive/leave events and arrival times are sent to the tablet; no location trail is stored.",
+        "Geofence zones from app_places (5 canonical places + your own custom places, 50–400 m). Only arrive/leave events and arrival times are sent to the tablet; no location trail is stored.",
       style = MaterialTheme.typography.bodySmall,
       color = RiviaMutedText,
     )
@@ -4768,15 +5157,259 @@ private fun DevZonesCardSection(
       }
     }
 
-    // 2. Five Zones List (id, spoken name, radius, registered / missing pin)
+    // 2. "Pin my location" action (app_pin_place)
+    Surface(
+      shape = RoundedCornerShape(12.dp),
+      color = RiviaSurface2,
+      border = BorderStroke(1.dp, RiviaBorder),
+      modifier = Modifier.fillMaxWidth().testTag("dev_zones_pin_location_box"),
+    ) {
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        Text(
+          text = "Pin my location (app_pin_place)",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = RiviaTextPrimary,
+        )
+        Text(
+          text =
+            "Uses your phone's current GPS position to move an existing place or add a new place. Waits for hub approval, then pulls app_places again.",
+          style = MaterialTheme.typography.bodySmall,
+          color = RiviaMutedText,
+          fontSize = 11.sp,
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          OutlinedButton(
+            onClick = { pinModeIsNewPlace = false },
+            shape = RoundedCornerShape(10.dp),
+            border =
+              BorderStroke(
+                1.dp,
+                if (!pinModeIsNewPlace) RiviaMint else RiviaBorder,
+              ),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = if (!pinModeIsNewPlace) RiviaMint.copy(alpha = 0.14f) else RiviaSurface2,
+                contentColor = if (!pinModeIsNewPlace) RiviaMint else RiviaTextSecondary,
+              ),
+            modifier =
+              Modifier.weight(1f)
+                .minimumInteractiveComponentSize()
+                .testTag("pin_mode_move_existing_button"),
+          ) {
+            Text(
+              "Move place",
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
+
+          OutlinedButton(
+            onClick = { pinModeIsNewPlace = true },
+            shape = RoundedCornerShape(10.dp),
+            border =
+              BorderStroke(
+                1.dp,
+                if (pinModeIsNewPlace) RiviaMint else RiviaBorder,
+              ),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = if (pinModeIsNewPlace) RiviaMint.copy(alpha = 0.14f) else RiviaSurface2,
+                contentColor = if (pinModeIsNewPlace) RiviaMint else RiviaTextSecondary,
+              ),
+            modifier =
+              Modifier.weight(1f)
+                .minimumInteractiveComponentSize()
+                .testTag("pin_mode_add_new_button"),
+          ) {
+            Text(
+              "Add new place",
+              fontSize = 12.sp,
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
+        }
+
+        if (!pinModeIsNewPlace) {
+          FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            for (z in orderedPlaces) {
+              val selected = pinExistingPlaceInput.equals(z.id, ignoreCase = true)
+              Surface(
+                shape = RoundedCornerShape(50),
+                color = if (selected) RiviaMint.copy(alpha = 0.18f) else RiviaSurface1,
+                border = BorderStroke(1.dp, if (selected) RiviaMint else RiviaBorder),
+                modifier =
+                  Modifier.clip(RoundedCornerShape(50))
+                    .clickable { pinExistingPlaceInput = z.id }
+                    .testTag("pin_select_place_chip_${z.id}"),
+              ) {
+                Text(
+                  text = z.id,
+                  fontFamily = ChivoMonoFontFamily,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                  color = if (selected) RiviaMint else RiviaTextSecondary,
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+              }
+            }
+          }
+
+          OutlinedTextField(
+            value = pinExistingPlaceInput,
+            onValueChange = { pinExistingPlaceInput = it },
+            label = { Text("Place id or name to move (e.g. home)") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            colors = riviaTextFieldColors(),
+            modifier = Modifier.fillMaxWidth().testTag("pin_existing_place_input"),
+          )
+        } else {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            OutlinedTextField(
+              value = pinNewPlaceNameInput,
+              onValueChange = { pinNewPlaceNameInput = it },
+              label = { Text("New place name (e.g. Giant)") },
+              singleLine = true,
+              shape = RoundedCornerShape(12.dp),
+              colors = riviaTextFieldColors(),
+              modifier = Modifier.weight(1.4f).testTag("pin_new_place_name_input"),
+            )
+            OutlinedTextField(
+              value = pinRadiusInput,
+              onValueChange = { pinRadiusInput = it.filter { ch -> ch.isDigit() } },
+              label = { Text("Radius m (50–400)") },
+              singleLine = true,
+              shape = RoundedCornerShape(12.dp),
+              colors = riviaTextFieldColors(),
+              modifier = Modifier.weight(1f).testTag("pin_new_place_radius_input"),
+            )
+          }
+        }
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          OutlinedButton(
+            onClick = {
+              val parsedRadius = pinRadiusInput.trim().toIntOrNull()
+              if (pinModeIsNewPlace) {
+                triggerPinAction(
+                  existingPlace = null,
+                  newPlaceName = pinNewPlaceNameInput,
+                  radiusMeters = parsedRadius,
+                )
+              } else {
+                triggerPinAction(
+                  existingPlace = pinExistingPlaceInput,
+                  newPlaceName = null,
+                  radiusMeters = null,
+                )
+              }
+            },
+            enabled =
+              !pinLocationRunning &&
+                if (pinModeIsNewPlace) pinNewPlaceNameInput.isNotBlank()
+                else pinExistingPlaceInput.isNotBlank(),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, RiviaMint),
+            colors =
+              ButtonDefaults.outlinedButtonColors(
+                containerColor = RiviaMint.copy(alpha = 0.14f),
+                contentColor = RiviaMint,
+              ),
+            modifier =
+              Modifier.minimumInteractiveComponentSize()
+                .testTag("pin_my_location_button"),
+          ) {
+            Text(
+              text = if (pinLocationRunning) "Pinning…" else "Pin my location",
+              color = RiviaMint,
+              fontWeight = FontWeight.SemiBold,
+            )
+          }
+
+          if (pinLocationPendingApproval) {
+            TextButton(
+              onClick = {
+                focusManager.clearFocus()
+                onCommitTabletSettings()
+                viewModel.refreshZonesFromTabletNow("pin_approved_manual_pull")
+              },
+              modifier = Modifier.testTag("pull_places_after_pin_approval_button"),
+            ) {
+              Text(
+                text = "Approved · Pull places",
+                color = RiviaMint,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+              )
+            }
+          }
+        }
+
+        if (!pinLocationStatusText.isNullOrBlank()) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            StatusShape(
+              status =
+                when {
+                  pinLocationIsError -> StatusType.ERROR
+                  pinLocationPendingApproval -> StatusType.WARNING
+                  else -> StatusType.OK
+                },
+              size = 8.dp,
+            )
+            Text(
+              text = pinLocationStatusText.orEmpty(),
+              style = MaterialTheme.typography.labelSmall,
+              fontFamily = ChivoMonoFontFamily,
+              color =
+                when {
+                  pinLocationIsError -> RiviaErrorRed
+                  pinLocationPendingApproval -> RiviaWarningAmber
+                  else -> RiviaTextSecondary
+                },
+              modifier = Modifier.testTag("pin_location_status_text"),
+            )
+          }
+        }
+      }
+    }
+
+    // 3. Places List (canonical + custom places from app_places)
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+        val customCount = orderedPlaces.count { it.custom }
         Text(
-          text = "Five Places (app_places)",
+          text =
+            if (customCount > 0) {
+              "Places (app_places) · ${orderedPlaces.size} total ($customCount custom)"
+            } else {
+              "Places (app_places) · ${orderedPlaces.size} total"
+            },
           style = MaterialTheme.typography.labelMedium,
           fontWeight = FontWeight.SemiBold,
           color = RiviaTextPrimary,
@@ -4786,7 +5419,7 @@ private fun DevZonesCardSection(
             ?: if (missingPinIds.isNotEmpty()) {
               "Missing pins: ${missingPinIds.joinToString(", ")}"
             } else {
-              "All 5 places have pins"
+              "All ${orderedPlaces.size} places have pins"
             }
         Text(
           text = statusLine,
@@ -4861,6 +5494,21 @@ private fun DevZonesCardSection(
                   color = RiviaTextPrimary,
                   fontSize = 13.sp,
                 )
+                if (zone.custom) {
+                  Surface(
+                    shape = RoundedCornerShape(50),
+                    color = RiviaMint.copy(alpha = 0.14f),
+                  ) {
+                    Text(
+                      text = "CUSTOM",
+                      fontFamily = ChivoMonoFontFamily,
+                      fontWeight = FontWeight.Bold,
+                      fontSize = 9.sp,
+                      color = RiviaMint,
+                      modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                  }
+                }
               }
               Text(
                 text =
@@ -4880,33 +5528,59 @@ private fun DevZonesCardSection(
               )
             }
 
-            Surface(
-              shape = RoundedCornerShape(50),
-              color =
-                when {
-                  zone.registered -> RiviaMint.copy(alpha = 0.16f)
-                  hasPin -> RiviaWarningAmber.copy(alpha = 0.16f)
-                  else -> RiviaErrorRed.copy(alpha = 0.16f)
-                },
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-              Text(
-                text =
-                  when {
-                    zone.registered -> "REGISTERED"
-                    hasPin -> "UNREGISTERED"
-                    else -> "NO PIN"
-                  },
-                fontFamily = ChivoMonoFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 10.sp,
+              TextButton(
+                onClick = {
+                  pinModeIsNewPlace = false
+                  pinExistingPlaceInput = zone.id
+                  triggerPinAction(
+                    existingPlace = zone.id,
+                    newPlaceName = null,
+                    radiusMeters = null,
+                  )
+                },
+                enabled = !pinLocationRunning,
+                modifier = Modifier.testTag("pin_here_button_${zone.id}"),
+              ) {
+                Text(
+                  text = "Pin here",
+                  color = RiviaMint,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.SemiBold,
+                )
+              }
+
+              Surface(
+                shape = RoundedCornerShape(50),
                 color =
                   when {
-                    zone.registered -> RiviaMint
-                    hasPin -> RiviaWarningAmber
-                    else -> RiviaErrorRed
+                    zone.registered -> RiviaMint.copy(alpha = 0.16f)
+                    hasPin -> RiviaWarningAmber.copy(alpha = 0.16f)
+                    else -> RiviaErrorRed.copy(alpha = 0.16f)
                   },
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-              )
+              ) {
+                Text(
+                  text =
+                    when {
+                      zone.registered -> "REGISTERED"
+                      hasPin -> "UNREGISTERED"
+                      else -> "NO PIN"
+                    },
+                  fontFamily = ChivoMonoFontFamily,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 10.sp,
+                  color =
+                    when {
+                      zone.registered -> RiviaMint
+                      hasPin -> RiviaWarningAmber
+                      else -> RiviaErrorRed
+                    },
+                  modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+              }
             }
           }
         }

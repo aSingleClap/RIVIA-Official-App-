@@ -269,6 +269,16 @@ fun ChatScreen(
   var showDevLabsModeSheet by remember { mutableStateOf(false) }
   var newChatResetToken by rememberSaveable { mutableStateOf(0) }
   var isInLiveMode by rememberSaveable { mutableStateOf(false) }
+  var didApplyOpenInLive by rememberSaveable { mutableStateOf(false) }
+
+  LaunchedEffect(voicePrefs.openInLive, geminiKey, elevenKey) {
+    if (!didApplyOpenInLive && geminiKey.isNotBlank() && elevenKey.isNotBlank()) {
+      didApplyOpenInLive = true
+      if (voicePrefs.openInLive) {
+        isInLiveMode = true
+      }
+    }
+  }
 
   // Close the keyboard whenever any drawer, menu, sheet, or dialog is opened
   LaunchedEffect(
@@ -422,6 +432,9 @@ fun ChatScreen(
             onOpenGlobalSettings = onOpenGlobalSettings,
             isInLiveMode = isInLiveMode,
             keepScreenOnInLive = voicePrefs.keepScreenOnInLive,
+            vibrateOnLiveChanges = voicePrefs.vibrateOnLiveChanges,
+            liveTipSeen = voicePrefs.liveTipSeen,
+            onDismissLiveTip = { viewModel.updateVoicePrefs { it.copy(liveTipSeen = true) } },
             onOpenLiveMode = { isInLiveMode = true },
             onEndLiveMode = { isInLiveMode = false },
             missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
@@ -582,6 +595,9 @@ fun ChatScreen(
           onOpenGlobalSettings = onOpenGlobalSettings,
           isInLiveMode = isInLiveMode,
           keepScreenOnInLive = voicePrefs.keepScreenOnInLive,
+          vibrateOnLiveChanges = voicePrefs.vibrateOnLiveChanges,
+          liveTipSeen = voicePrefs.liveTipSeen,
+          onDismissLiveTip = { viewModel.updateVoicePrefs { it.copy(liveTipSeen = true) } },
           onOpenLiveMode = { isInLiveMode = true },
           onEndLiveMode = { isInLiveMode = false },
           missingKeys = geminiKey.isBlank() || elevenKey.isBlank(),
@@ -1389,6 +1405,16 @@ private fun ChatDrawerContent(
       }
     }
 
+    if (appUiMode == AppUiMode.RIVIA) {
+      Text(
+        text = "Everyday mode. Dev and Labs are for building and testing.",
+        color = RiviaTextTertiary,
+        fontSize = 12.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+      )
+    }
+
     // Single hollow purple outlined pill with the selected mode's corresponding color and name inside
     val selectedModeColor = accentColorForMode(appUiMode)
     Box(
@@ -1646,6 +1672,9 @@ private fun ChatConversationPane(
   onOpenGlobalSettings: () -> Unit,
   isInLiveMode: Boolean = false,
   keepScreenOnInLive: Boolean = true,
+  vibrateOnLiveChanges: Boolean = true,
+  liveTipSeen: Boolean = false,
+  onDismissLiveTip: () -> Unit = {},
   onOpenLiveMode: () -> Unit,
   onEndLiveMode: () -> Unit = {},
   missingKeys: Boolean,
@@ -1753,9 +1782,41 @@ private fun ChatConversationPane(
   }
 
   // Subtle haptics on Live state transitions
-  LaunchedEffect(isInLiveMode, liveState.orbState) {
-    if (isInLiveMode && liveState.isActive) {
+  LaunchedEffect(isInLiveMode, liveState.orbState, vibrateOnLiveChanges) {
+    if (isInLiveMode && liveState.isActive && vibrateOnLiveChanges) {
       view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+  }
+
+  val completedAssistantCount =
+    remember(messages) {
+      messages.count { it.role == "assistant" && it.status == "completed" }
+    }
+  var initialCompletedCountInLive by remember { mutableIntStateOf(0) }
+  LaunchedEffect(isInLiveMode) {
+    if (isInLiveMode) {
+      initialCompletedCountInLive =
+        messages.count { it.role == "assistant" && it.status == "completed" }
+    }
+  }
+  LaunchedEffect(
+    isInLiveMode,
+    liveTipSeen,
+    completedAssistantCount,
+    isStreaming,
+    isSpeaking,
+    liveState.orbState,
+  ) {
+    if (
+      isInLiveMode &&
+        !liveTipSeen &&
+        completedAssistantCount > initialCompletedCountInLive &&
+        !isStreaming &&
+        !isSpeaking &&
+        liveState.orbState != OrbState.SPEAKING &&
+        liveState.orbState != OrbState.THINKING
+    ) {
+      onDismissLiveTip()
     }
   }
 
@@ -1773,9 +1834,8 @@ private fun ChatConversationPane(
     )
   val isLiveSpeaking = liveState.orbState == OrbState.SPEAKING
 
-  // End Live cleanly on system Back (stays in chat if in a chat or if something was said; returns to sphere if started outside a chat and nothing was said)
+  // System Back leaves the Live screen while keeping Live running in the background; End stops it.
   BackHandler(enabled = isInLiveMode) {
-    LiveVoiceService.stop(context)
     requestKeyboardFocusNow = false
     focusComposerOnReveal = false
     startDictationOnReveal = false
@@ -2663,7 +2723,7 @@ private fun ChatConversationPane(
                 compositingStrategy = CompositingStrategy.Offscreen
               },
             contentDesc =
-              if (isInLiveMode) "Tap orb to interrupt Rivia and start listening"
+              if (isInLiveMode) "Tap to stop Rivia and listen"
               else "Rivia Orb",
             onSphereClick =
               if (isInLiveMode) {
@@ -2768,13 +2828,13 @@ private fun ChatConversationPane(
                   text =
                     when {
                       micPermissionDeniedReason != null -> "Microphone needed"
-                      liveState.pausedForPhoneCall -> "Paused (Phone Call Active)"
+                      liveState.pausedForPhoneCall -> "Paused for your call"
                       liveState.stoppedAfterThreeErrors -> "Paused after errors. Tap the orb to try again."
                       liveState.isPaused -> "Paused"
                       liveState.isMuted -> "Muted"
-                      liveState.orbState == OrbState.SPEAKING -> "Rivia Speaking"
-                      liveState.orbState == OrbState.THINKING -> "Rivia Thinking..."
-                      liveState.orbState == OrbState.LISTENING -> "Listening..."
+                      liveState.orbState == OrbState.SPEAKING -> "Rivia is speaking"
+                      liveState.orbState == OrbState.THINKING -> "Rivia is thinking…"
+                      liveState.orbState == OrbState.LISTENING -> "Listening…"
                       else -> "Live"
                     },
                   style = MaterialTheme.typography.titleMedium,
@@ -2819,9 +2879,9 @@ private fun ChatConversationPane(
               } else {
                 Text(
                   text =
-                    if (isLiveSpeaking) "Tap the orb to interrupt and speak"
+                    if (isLiveSpeaking) "Talk over her or tap the orb to cut in"
                     else if (liveState.stoppedAfterThreeErrors) "Tap the orb to try again"
-                    else "Hands-free Live Voice",
+                    else "Just talk",
                   style = MaterialTheme.typography.labelMedium,
                   color = RiviaMutedText,
                 )
@@ -3036,6 +3096,45 @@ private fun ChatConversationPane(
 
           if (liveUiAlpha.value > 0f || isInLiveMode) {
             val liveButtonsEnabled = isInLiveMode && liveUiAlpha.value > 0.5f
+            if (!liveTipSeen) {
+              Surface(
+                color = RiviaSurface1,
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, RiviaBorder),
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .graphicsLayer { alpha = liveUiAlpha.value }
+                    .testTag("live_first_time_tip_card"),
+              ) {
+                Row(
+                  modifier =
+                    Modifier.fillMaxWidth()
+                      .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Text(
+                    text =
+                      "Just talk. Speak over Rivia, or tap the orb, to cut in. Back keeps Live running; End stops it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RiviaTextSecondary,
+                    modifier = Modifier.weight(1f),
+                  )
+                  TextButton(
+                    enabled = liveButtonsEnabled,
+                    onClick = onDismissLiveTip,
+                    modifier = Modifier.testTag("live_first_time_tip_ok_button"),
+                  ) {
+                    Text(
+                      text = "OK",
+                      color = RiviaMint,
+                      fontWeight = FontWeight.SemiBold,
+                    )
+                  }
+                }
+              }
+            }
             Row(
               modifier =
                 Modifier.fillMaxWidth()
@@ -3071,7 +3170,7 @@ private fun ChatConversationPane(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                  text = if (liveState.isMuted) "Unmute" else "Mute",
+                  text = if (liveState.isMuted) "Unmute mic" else "Mute mic",
                   style = MaterialTheme.typography.labelSmall,
                   color = RiviaMutedText,
                 )
@@ -3102,7 +3201,7 @@ private fun ChatConversationPane(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                  text = if (liveState.isPaused) "Resume" else "Pause",
+                  text = if (liveState.isPaused) "Resume Live" else "Pause Live",
                   style = MaterialTheme.typography.labelSmall,
                   color = RiviaMutedText,
                 )
@@ -3130,7 +3229,7 @@ private fun ChatConversationPane(
                 ) {
                   Icon(
                     imageVector = Icons.Default.CallEnd,
-                    contentDescription = "End Live voice mode",
+                    contentDescription = "End Live",
                     tint = RiviaOnAccent,
                   )
                 }
@@ -4355,7 +4454,7 @@ private fun ChatComposerBar(
       Row(
         modifier =
           Modifier.fillMaxWidth()
-            .padding(start = 6.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            .padding(start = 4.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
       ) {
@@ -4363,6 +4462,21 @@ private fun ChatComposerBar(
           value = text,
           onValueChange = onTextChange,
           placeholder = { Text("Message Rivia...", color = RiviaTextTertiary) },
+          leadingIcon = {
+            IconButton(
+              onClick = onOpenDictation,
+              modifier =
+                Modifier.size(40.dp)
+                  .minimumInteractiveComponentSize()
+                  .testTag("dictate_mic_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Mic,
+                contentDescription = "Dictate",
+                tint = RiviaTextPrimary,
+              )
+            }
+          },
           modifier =
             Modifier.weight(1f)
               .focusRequester(focusRequester)
@@ -4381,75 +4495,60 @@ private fun ChatComposerBar(
             ),
         )
 
-        // Mic button for dictation (always opens SphereDictationPanel)
-        IconButton(
-          onClick = onOpenDictation,
-          modifier =
-            Modifier.size(40.dp)
-              .minimumInteractiveComponentSize()
-              .clip(CircleShape)
-              .background(RiviaSurface2)
-              .testTag("dictate_mic_button"),
-        ) {
-          Icon(
-            imageVector = Icons.Default.Mic,
-            contentDescription = "Dictate into message field",
-            tint = RiviaTextPrimary,
-          )
-        }
-
-        // Send or Stop button inside unified pill
-        if (isStreaming) {
-          IconButton(
-            onClick = onStop,
-            modifier =
-              Modifier.size(40.dp)
-                .minimumInteractiveComponentSize()
-                .clip(CircleShape)
-                .background(RiviaErrorRed)
-                .testTag("stop_streaming_button"),
-          ) {
-            Icon(
-              imageVector = Icons.Default.Stop,
-              contentDescription = "Stop streaming reply",
-              tint = RiviaOnAccent,
-            )
+        // Single 48.dp right button: Stop while streaming, Send when typed, Live when empty
+        when {
+          isStreaming -> {
+            IconButton(
+              onClick = onStop,
+              modifier =
+                Modifier.size(48.dp)
+                  .minimumInteractiveComponentSize()
+                  .clip(CircleShape)
+                  .background(RiviaErrorRed)
+                  .testTag("stop_streaming_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Stop,
+                contentDescription = "Stop reply",
+                tint = RiviaOnAccent,
+              )
+            }
           }
-        } else {
-          IconButton(
-            onClick = onSend,
-            enabled = text.isNotBlank(),
-            modifier =
-              Modifier.size(40.dp)
-                .minimumInteractiveComponentSize()
-                .clip(CircleShape)
-                .background(RiviaSurface2)
-                .testTag("send_message_button"),
-          ) {
-            Icon(
-              imageVector = Icons.AutoMirrored.Filled.Send,
-              contentDescription = "Send message",
-              tint = if (text.isNotBlank()) RiviaTextPrimary else RiviaIconDefault,
-              modifier = Modifier.size(18.dp),
-            )
+          text.isNotBlank() -> {
+            IconButton(
+              onClick = onSend,
+              modifier =
+                Modifier.size(48.dp)
+                  .minimumInteractiveComponentSize()
+                  .clip(CircleShape)
+                  .background(RiviaSurface2)
+                  .testTag("send_message_button"),
+            ) {
+              Icon(
+                imageVector = Icons.AutoMirrored.Filled.Send,
+                contentDescription = "Send",
+                tint = RiviaTextPrimary,
+                modifier = Modifier.size(18.dp),
+              )
+            }
           }
-        }
-
-        // Live button inside unified pill (Surface 2 fill, text-primary icon)
-        IconButton(
-          onClick = onOpenLive,
-          modifier =
-            Modifier.size(40.dp)
-              .minimumInteractiveComponentSize()
-              .clip(CircleShape)
-              .background(RiviaSurface2)
-              .testTag("open_live_mode_button"),
-        ) {
-          Icon(
-            imageVector = Icons.Default.GraphicEq,
-            contentDescription = "Open hands-free Live voice mode",
-            tint = RiviaTextPrimary,
-          )
+          else -> {
+            IconButton(
+              onClick = onOpenLive,
+              modifier =
+                Modifier.size(48.dp)
+                  .minimumInteractiveComponentSize()
+                  .clip(CircleShape)
+                  .background(RiviaSurface2)
+                  .testTag("open_live_mode_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.GraphicEq,
+                contentDescription = "Start Live",
+                tint = RiviaTextPrimary,
+              )
+            }
+          }
         }
       }
     }

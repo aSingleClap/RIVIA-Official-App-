@@ -69,13 +69,26 @@ data class ZoneSyncOutcome(
   val summary: String,
 )
 
+data class PinPlaceOutcome(
+  val ok: Boolean,
+  val status: String,
+  val isPendingApproval: Boolean,
+  val ticket: String?,
+  val coords: String?,
+  val targetLabel: String,
+  val fallbackText: String,
+  val summary: String,
+  val callOutcome: TabletCallOutcome<JSONObject>? = null,
+)
+
 /**
- * Coordinates App Pass C:
+ * Coordinates App Pass C & JOB-007:
  * - Permission and battery-optimization checks + intent builders
- * - Pulling the 5 canonical places (home, farm, gym, pf, hmc) from app_places at runtime
- * - Registering/re-registering Circular Geofences via GeofencingClient
+ * - Pulling all places (5 canonical + custom places) from app_places at runtime
+ * - Registering/re-registering Circular Geofences via GeofencingClient (dropping removed place IDs)
  * - 10-minute GPS bounce filter on ENTER after EXIT of the same place
  * - Calling app_arrival on valid ENTER (with ride logging if prior non-bounce EXIT from A != B was within 3h)
+ * - Calling app_pin_place with current phone GPS position to move an existing place or add a new place
  * - Applying alerts via ScheduleAlarmCoordinator.applyAlertsFromTabletReply
  * - Speaking the arrival message via Gemini (10s timeout) + AudioPlayerManager / ElevenLabs, or fallback_text
  * - Offline queueing of app_arrival calls in Room + WorkManager flush when connected
@@ -87,7 +100,7 @@ object ZoneLocationCoordinator {
   private const val GEOFENCE_PENDING_INTENT_REQUEST_CODE = 8410
 
   const val DEFAULT_RADIUS_METERS = 150f
-  const val MIN_RADIUS_METERS = 100f
+  const val MIN_RADIUS_METERS = 50f
   const val MAX_RADIUS_METERS = 400f
 
   // 10-minute GPS bounce window (600,000 ms)
@@ -293,6 +306,92 @@ object ZoneLocationCoordinator {
     }
   }
 
+  private fun parseSinglePlaceConfig(
+    id: String,
+    defaultSpokenName: String,
+    defaultCustom: Boolean,
+    item: JSONObject,
+    defaultRadiusFromEnvelope: Float,
+    nowMs: Long,
+  ): ZoneConfigEntity {
+    val spoken =
+      item.optString("spoken_name", "").trim().ifBlank {
+        item.optString("spoken", "").trim().ifBlank {
+          item.optString("name", "").trim().ifBlank {
+            item.optString("label", "").trim().ifBlank { defaultSpokenName }
+          }
+        }
+      }
+    val isCustom =
+      if (item.has("custom") && !item.isNull("custom")) {
+        item.optBoolean("custom", defaultCustom)
+      } else {
+        defaultCustom
+      }
+    val pinObj = item.optJSONObject("pin") ?: item.optJSONObject("coords") ?: item
+    val rawLat =
+      if (!pinObj.isNull("lat") && pinObj.has("lat")) pinObj.optDouble("lat", Double.NaN)
+      else if (!pinObj.isNull("latitude") && pinObj.has("latitude"))
+        pinObj.optDouble("latitude", Double.NaN)
+      else Double.NaN
+    val rawLng =
+      if (!pinObj.isNull("lng") && pinObj.has("lng")) pinObj.optDouble("lng", Double.NaN)
+      else if (!pinObj.isNull("lon") && pinObj.has("lon"))
+        pinObj.optDouble("lon", Double.NaN)
+      else if (!pinObj.isNull("longitude") && pinObj.has("longitude"))
+        pinObj.optDouble("longitude", Double.NaN)
+      else Double.NaN
+
+    val hasValidPin =
+      !rawLat.isNaN() &&
+        !rawLng.isNaN() &&
+        rawLat in -90.0..90.0 &&
+        rawLng in -180.0..180.0 &&
+        !(rawLat == 0.0 && rawLng == 0.0)
+
+    val rawRadius =
+      if (!item.isNull("radius_m") && item.has("radius_m"))
+        item.optDouble("radius_m", Double.NaN)
+      else if (!item.isNull("radius") && item.has("radius"))
+        item.optDouble("radius", Double.NaN)
+      else if (!pinObj.isNull("radius_m") && pinObj.has("radius_m"))
+        pinObj.optDouble("radius_m", Double.NaN)
+      else Double.NaN
+
+    val radiusM =
+      if (!rawRadius.isNaN() && rawRadius > 0.0) {
+        rawRadius.toFloat().coerceIn(MIN_RADIUS_METERS, MAX_RADIUS_METERS)
+      } else {
+        defaultRadiusFromEnvelope
+      }
+
+    return if (hasValidPin) {
+      ZoneConfigEntity(
+        id = id,
+        spokenName = spoken,
+        lat = rawLat,
+        lng = rawLng,
+        radiusM = radiusM,
+        custom = isCustom,
+        registered = false,
+        statusNote = "Pin loaded (${radiusM.toInt()} m)",
+        updatedAt = nowMs,
+      )
+    } else {
+      ZoneConfigEntity(
+        id = id,
+        spokenName = spoken,
+        lat = null,
+        lng = null,
+        radiusM = radiusM,
+        custom = isCustom,
+        registered = false,
+        statusNote = "Missing pin on tablet",
+        updatedAt = nowMs,
+      )
+    }
+  }
+
   private fun parsePlacesFromEnvelope(structured: JSONObject): List<ZoneConfigEntity> {
     val nowMs = System.currentTimeMillis()
     val dataObj = structured.optJSONObject("data") ?: structured
@@ -304,7 +403,7 @@ object ZoneLocationCoordinator {
         ?.coerceIn(MIN_RADIUS_METERS, MAX_RADIUS_METERS)
         ?: DEFAULT_RADIUS_METERS
 
-    val rawByPlaceId = mutableMapOf<String, JSONObject>()
+    val rawByPlaceId = LinkedHashMap<String, JSONObject>()
 
     // 1. Check array under data.places or structured.places or data.items
     val placesArr =
@@ -327,102 +426,77 @@ object ZoneLocationCoordinator {
     }
 
     // 2. Check map under data.places or structured.places or direct canonical keys on dataObj
-    val placesMapObj =
-      dataObj.optJSONObject("places")
-        ?: structured.optJSONObject("places")
-        ?: dataObj
-    for (spec in CANONICAL_PLACES) {
-      if (!rawByPlaceId.containsKey(spec.id)) {
-        placesMapObj.optJSONObject(spec.id)?.let { obj ->
-          rawByPlaceId[spec.id] = obj
+    val dedicatedPlacesMap =
+      dataObj.optJSONObject("places") ?: structured.optJSONObject("places")
+    if (dedicatedPlacesMap != null) {
+      val keys = dedicatedPlacesMap.keys()
+      while (keys.hasNext()) {
+        val k = keys.next().trim()
+        if (k.isNotBlank() && !rawByPlaceId.containsKey(k)) {
+          dedicatedPlacesMap.optJSONObject(k)?.let { obj ->
+            rawByPlaceId[k] = obj
+          }
+        }
+      }
+    } else {
+      for (spec in CANONICAL_PLACES) {
+        if (!rawByPlaceId.containsKey(spec.id)) {
+          dataObj.optJSONObject(spec.id)?.let { obj ->
+            rawByPlaceId[spec.id] = obj
+          }
         }
       }
     }
 
-    return CANONICAL_PLACES.map { spec ->
+    val results = mutableListOf<ZoneConfigEntity>()
+
+    // Include the 5 canonical places first in canonical order
+    for (spec in CANONICAL_PLACES) {
       val item = rawByPlaceId[spec.id]
       if (item == null) {
-        ZoneConfigEntity(
-          id = spec.id,
-          spokenName = spec.defaultSpokenName,
-          lat = null,
-          lng = null,
-          radiusM = defaultRadiusFromEnvelope,
-          registered = false,
-          statusNote = "Missing from app_places",
-          updatedAt = nowMs,
-        )
-      } else {
-        val spoken =
-          item.optString("spoken_name", "").trim().ifBlank {
-            item.optString("spoken", "").trim().ifBlank {
-              item.optString("name", "").trim().ifBlank {
-                item.optString("label", "").trim().ifBlank { spec.defaultSpokenName }
-              }
-            }
-          }
-        val pinObj = item.optJSONObject("pin") ?: item.optJSONObject("coords") ?: item
-        val rawLat =
-          if (!pinObj.isNull("lat") && pinObj.has("lat")) pinObj.optDouble("lat", Double.NaN)
-          else if (!pinObj.isNull("latitude") && pinObj.has("latitude"))
-            pinObj.optDouble("latitude", Double.NaN)
-          else Double.NaN
-        val rawLng =
-          if (!pinObj.isNull("lng") && pinObj.has("lng")) pinObj.optDouble("lng", Double.NaN)
-          else if (!pinObj.isNull("lon") && pinObj.has("lon"))
-            pinObj.optDouble("lon", Double.NaN)
-          else if (!pinObj.isNull("longitude") && pinObj.has("longitude"))
-            pinObj.optDouble("longitude", Double.NaN)
-          else Double.NaN
-
-        val hasValidPin =
-          !rawLat.isNaN() &&
-            !rawLng.isNaN() &&
-            rawLat in -90.0..90.0 &&
-            rawLng in -180.0..180.0 &&
-            !(rawLat == 0.0 && rawLng == 0.0)
-
-        val rawRadius =
-          if (!item.isNull("radius_m") && item.has("radius_m"))
-            item.optDouble("radius_m", Double.NaN)
-          else if (!item.isNull("radius") && item.has("radius"))
-            item.optDouble("radius", Double.NaN)
-          else if (!pinObj.isNull("radius_m") && pinObj.has("radius_m"))
-            pinObj.optDouble("radius_m", Double.NaN)
-          else Double.NaN
-
-        val radiusM =
-          if (!rawRadius.isNaN() && rawRadius > 0.0) {
-            rawRadius.toFloat().coerceIn(MIN_RADIUS_METERS, MAX_RADIUS_METERS)
-          } else {
-            defaultRadiusFromEnvelope
-          }
-
-        if (hasValidPin) {
+        results.add(
           ZoneConfigEntity(
             id = spec.id,
-            spokenName = spoken,
-            lat = rawLat,
-            lng = rawLng,
-            radiusM = radiusM,
-            registered = false,
-            statusNote = "Pin loaded (${radiusM.toInt()} m)",
-            updatedAt = nowMs,
-          )
-        } else {
-          ZoneConfigEntity(
-            id = spec.id,
-            spokenName = spoken,
+            spokenName = spec.defaultSpokenName,
             lat = null,
             lng = null,
-            radiusM = radiusM,
+            radiusM = defaultRadiusFromEnvelope,
+            custom = false,
             registered = false,
-            statusNote = "Missing pin on tablet",
+            statusNote = "Missing from app_places",
             updatedAt = nowMs,
           )
-        }
+        )
+      } else {
+        results.add(
+          parseSinglePlaceConfig(
+            id = spec.id,
+            defaultSpokenName = spec.defaultSpokenName,
+            defaultCustom = false,
+            item = item,
+            defaultRadiusFromEnvelope = defaultRadiusFromEnvelope,
+            nowMs = nowMs,
+          )
+        )
       }
     }
+
+    // Include every additional (custom) place returned by app_places
+    for ((placeId, item) in rawByPlaceId) {
+      if (canonicalMap.containsKey(placeId)) continue
+      results.add(
+        parseSinglePlaceConfig(
+          id = placeId,
+          defaultSpokenName = placeId,
+          defaultCustom = true,
+          item = item,
+          defaultRadiusFromEnvelope = defaultRadiusFromEnvelope,
+          nowMs = nowMs,
+        )
+      )
+    }
+
+    return results
   }
 
   /**
@@ -455,6 +529,7 @@ object ZoneLocationCoordinator {
         val appToken = keyRepo.getTabletAppToken()
 
         var zoneConfigs: List<ZoneConfigEntity> = dao.getAllZoneConfigs()
+        var removedPlaceIds: List<String> = emptyList()
         var pullErrorNote: String? = null
 
         if (appToken.isNotBlank() && TabletMcpClient.isValidServerUrl(serverUrl)) {
@@ -472,8 +547,11 @@ object ZoneLocationCoordinator {
             is TabletCallOutcome.Success -> {
               val structured = outcome.value
               if (outcome.ok && structured.optBoolean("ok", true)) {
+                val previousIds = zoneConfigs.map { it.id }.toSet()
                 zoneConfigs = parsePlacesFromEnvelope(structured)
-                dao.upsertZoneConfigs(zoneConfigs)
+                val newIds = zoneConfigs.map { it.id }.toSet()
+                removedPlaceIds = (previousIds - newIds).toList()
+                dao.replaceZoneConfigsFromSync(zoneConfigs)
               } else {
                 val errMsg =
                   structured.optJSONObject("error")?.optString("msg", "")?.takeIf { it.isNotBlank() }
@@ -489,7 +567,12 @@ object ZoneLocationCoordinator {
           pullErrorNote = "Tablet token or URL not configured"
         }
 
-        // Now register geofences for every place that has valid lat, lng, and radius_m
+        val geofencingClient = LocationServices.getGeofencingClient(appCtx)
+        if (removedPlaceIds.isNotEmpty()) {
+          removeGeofencesByIdsAwait(geofencingClient, removedPlaceIds)
+        }
+
+        // Now register geofences for every place (canonical or custom) that has valid lat, lng, and radius_m
         val hasBgPerm = hasBackgroundLocationPermission(appCtx)
         val hasFgPerm = hasForegroundLocationPermission(appCtx)
         val locationOn = isLocationServicesEnabled(appCtx)
@@ -499,9 +582,7 @@ object ZoneLocationCoordinator {
             it.lat != null && it.lng != null && it.radiusM > 0f
           }
         val missingIds =
-          CANONICAL_PLACES.map { it.id }.filter { id ->
-            pinnable.none { it.id == id }
-          }
+          zoneConfigs.filter { it.lat == null || it.lng == null }.map { it.id }
 
         if (!hasFgPerm || !hasBgPerm) {
           val updated =
@@ -545,10 +626,9 @@ object ZoneLocationCoordinator {
           )
         }
 
-        val geofencingClient = LocationServices.getGeofencingClient(appCtx)
         val pendingIntent = buildGeofencePendingIntent(appCtx)
 
-        // Remove old geofences first so radius/coordinate edits cleanly replace previous fences
+        // Remove old geofences first so radius/coordinate edits or removed places cleanly replace previous fences
         removeGeofencesAwait(geofencingClient, pendingIntent)
 
         if (pinnable.isEmpty()) {
@@ -614,18 +694,21 @@ object ZoneLocationCoordinator {
               }
             }
           dao.upsertZoneConfigs(updated)
+          val totalZoneCount = zoneConfigs.size
+          val customCount = zoneConfigs.count { it.custom }
+          val customSuffix = if (customCount > 0) " ($customCount custom)" else ""
           val missingSuffix =
             if (missingIds.isNotEmpty()) " · Missing pins: ${missingIds.joinToString(", ")}"
             else ""
           Log.i(
             TAG,
-            "Registered ${pinnable.size} geofence(s) ($reason): ${pinnable.joinToString { it.id }}$missingSuffix",
+            "Registered ${pinnable.size}/$totalZoneCount geofence(s)$customSuffix ($reason): ${pinnable.joinToString { it.id }}$missingSuffix",
           )
           ZoneSyncOutcome(
             ok = true,
             registeredCount = pinnable.size,
             missingPinIds = missingIds,
-            summary = "Registered ${pinnable.size}/5 zones$missingSuffix",
+            summary = "Registered ${pinnable.size}/$totalZoneCount zones$customSuffix$missingSuffix",
           )
         } else {
           val errMsg = addResult.exceptionOrNull()?.message ?: "GeofencingClient error"
@@ -649,6 +732,22 @@ object ZoneLocationCoordinator {
         }
       }
     }
+
+  private suspend fun removeGeofencesByIdsAwait(
+    client: com.google.android.gms.location.GeofencingClient,
+    requestIds: List<String>,
+  ) {
+    if (requestIds.isEmpty()) return
+    withTimeoutOrNull(5_000L) {
+      suspendCancellableCoroutine { cont ->
+        client
+          .removeGeofences(requestIds)
+          .addOnCompleteListener {
+            if (cont.isActive) cont.resume(Unit)
+          }
+      }
+    }
+  }
 
   private suspend fun removeGeofencesAwait(
     client: com.google.android.gms.location.GeofencingClient,
@@ -1145,9 +1244,18 @@ object ZoneLocationCoordinator {
         }
       }
 
+    val isCustomPlace =
+      runCatching {
+        RiviaDatabase.getInstance(context)
+          .riviaDao()
+          .getAllZoneConfigs()
+          .firstOrNull { it.id == placeId }
+          ?.custom == true
+      }.getOrDefault(!canonicalMap.containsKey(placeId))
+
     val messagePayloadStr = msgObj?.toString()?.takeIf { it != "{}" }.orEmpty()
     val wordedByGemini: String? =
-      if (messagePayloadStr.isNotBlank()) {
+      if (!isCustomPlace && messagePayloadStr.isNotBlank()) {
         wordArrivalLineWithGemini10s(
           context = context,
           messageJson = messagePayloadStr,
@@ -1164,23 +1272,41 @@ object ZoneLocationCoordinator {
 
     if (finalLineToSpeak.isBlank()) return
 
+    speakFallbackTextAloud(
+      context = context,
+      fallbackText = finalLineToSpeak,
+      messageIdPrefix = "arrival:$placeId",
+    )
+  }
+
+  /**
+   * Speaks a tablet reply's `fallback_text` aloud via AudioPlayerManager.
+   */
+  suspend fun speakFallbackTextAloud(
+    context: Context,
+    fallbackText: String,
+    messageIdPrefix: String = "tablet_fallback",
+  ) {
+    val clean = fallbackText.trim()
+    if (clean.isBlank()) return
     runCatching {
-      val playerManager = AudioPlayerManager.getInstance(context)
+      val appCtx = context.applicationContext
+      val playerManager = AudioPlayerManager.getInstance(appCtx)
       val liveActive = LiveSessionManager.uiState.value.isActive
       val alreadySpeaking = playerManager.isSpeaking.value
-      val msgId = "arrival:$placeId:${System.currentTimeMillis()}"
+      val msgId = "$messageIdPrefix:${System.currentTimeMillis()}"
 
       if (liveActive || alreadySpeaking) {
         playerManager.enqueueOrSpeakLineWithoutInterrupting(
           messageId = msgId,
-          rawMarkdown = finalLineToSpeak,
+          rawMarkdown = clean,
           isLiveChannel = liveActive,
         )
       } else {
         val done = CompletableDeferred<Unit>()
         playerManager.speakMarkdownMessage(
           messageId = msgId,
-          rawMarkdown = finalLineToSpeak,
+          rawMarkdown = clean,
           isLiveChannel = false,
           onFinished = { done.complete(Unit) },
           onError = { done.complete(Unit) },
@@ -1190,7 +1316,243 @@ object ZoneLocationCoordinator {
         }
       }
     }.onFailure { err ->
-      Log.w(TAG, "Failed to speak arrival line for $placeId: ${err.message}")
+      Log.w(TAG, "Failed to speak line ($messageIdPrefix): ${err.message}")
+    }
+  }
+
+  /**
+   * JOB-007 Step 3: "Pin my location" action.
+   * Gets the phone's current GPS position and calls `app_pin_place` with:
+   * - `coords`: "lat,lng"
+   * - `place`: an existing place id or name, to move it (e.g. "home"), OR
+   * - `name`: a new place's name, to add it (e.g. "Giant")
+   * - `radius_m` (optional, 50-400) for a new place's zone size
+   * Speaks the reply's `fallback_text`.
+   */
+  @SuppressLint("MissingPermission")
+  suspend fun pinCurrentLocation(
+    context: Context,
+    existingPlace: String? = null,
+    newPlaceName: String? = null,
+    radiusMeters: Int? = null,
+  ): PinPlaceOutcome =
+    withContext(Dispatchers.IO) {
+      val appCtx = context.applicationContext
+      val cleanPlace = existingPlace?.trim()?.takeIf { it.isNotBlank() }
+      val cleanName = newPlaceName?.trim()?.takeIf { it.isNotBlank() }
+      val targetLabel = cleanPlace ?: cleanName ?: "place"
+
+      if (cleanPlace == null && cleanName == null) {
+        return@withContext PinPlaceOutcome(
+          ok = false,
+          status = "invalid_input",
+          isPendingApproval = false,
+          ticket = null,
+          coords = null,
+          targetLabel = targetLabel,
+          fallbackText = "",
+          summary = "Choose an existing place to move or enter a new place name.",
+        )
+      }
+
+      if (!hasForegroundLocationPermission(appCtx)) {
+        return@withContext PinPlaceOutcome(
+          ok = false,
+          status = "missing_permission",
+          isPendingApproval = false,
+          ticket = null,
+          coords = null,
+          targetLabel = targetLabel,
+          fallbackText = "",
+          summary = "Foreground location permission is required to pin your current position.",
+        )
+      }
+
+      if (!isLocationServicesEnabled(appCtx)) {
+        return@withContext PinPlaceOutcome(
+          ok = false,
+          status = "location_off",
+          isPendingApproval = false,
+          ticket = null,
+          coords = null,
+          targetLabel = targetLabel,
+          fallbackText = "",
+          summary = "Turn on device location to pin your current position.",
+        )
+      }
+
+      val keyRepo = SecureKeyRepository(appCtx)
+      val serverUrl = keyRepo.getTabletServerUrl()
+      val appToken = keyRepo.getTabletAppToken()
+      if (appToken.isBlank() || !TabletMcpClient.isValidServerUrl(serverUrl)) {
+        return@withContext PinPlaceOutcome(
+          ok = false,
+          status = "not_configured",
+          isPendingApproval = false,
+          ticket = null,
+          coords = null,
+          targetLabel = targetLabel,
+          fallbackText = "",
+          summary = "Tablet Server URL or App token is not configured.",
+        )
+      }
+
+      val fusedClient = LocationServices.getFusedLocationProviderClient(appCtx)
+      val location =
+        fetchHighAccuracyLocationFix(fusedClient)
+          ?: fetchSingleCurrentLocationFix(fusedClient)
+          ?: return@withContext PinPlaceOutcome(
+            ok = false,
+            status = "no_location_fix",
+            isPendingApproval = false,
+            ticket = null,
+            coords = null,
+            targetLabel = targetLabel,
+            fallbackText = "",
+            summary = "Could not get a current GPS fix from the phone. Try again outdoors or near a window.",
+          )
+
+      val coordsStr =
+        String.format(java.util.Locale.US, "%.6f,%.6f", location.latitude, location.longitude)
+
+      ensureToolSchemasCached(serverUrl, appToken)
+      val args =
+        JSONObject().apply {
+          put("coords", coordsStr)
+          if (cleanPlace != null) {
+            put("place", cleanPlace)
+          } else if (cleanName != null) {
+            put("name", cleanName)
+          }
+          if (radiusMeters != null) {
+            val clampedRadius =
+              radiusMeters.coerceIn(MIN_RADIUS_METERS.toInt(), MAX_RADIUS_METERS.toInt())
+            put("radius_m", clampedRadius)
+          }
+        }
+
+      when (
+        val outcome =
+          tabletMcpClient.callTool(
+            serverUrl = serverUrl,
+            appToken = appToken,
+            toolName = "app_pin_place",
+            arguments = args,
+          )
+      ) {
+        is TabletCallOutcome.Success -> {
+          val structured = outcome.value
+          val isOk = outcome.ok && structured.optBoolean("ok", true)
+          val msgObj = structured.optJSONObject("message")
+          val dataObj = structured.optJSONObject("data")
+          val fallbackText =
+            structured.optString("fallback_text", "").trim().ifBlank {
+              msgObj?.optString("fallback_text", "")?.trim().orEmpty().ifBlank {
+                dataObj?.optString("fallback_text", "")?.trim().orEmpty().ifBlank {
+                  msgObj?.optString("summary", "")?.trim().orEmpty()
+                }
+              }
+            }
+
+          if (isOk) {
+            if (fallbackText.isNotBlank()) {
+              speakFallbackTextAloud(
+                context = appCtx,
+                fallbackText = fallbackText,
+                messageIdPrefix = "pin_place:$targetLabel",
+              )
+            }
+            val rawStatus =
+              structured.optString("status", "").trim().ifBlank {
+                dataObj?.optString("status", "")?.trim().orEmpty().ifBlank { outcome.status }
+              }
+            val isPending =
+              rawStatus.equals("pending", ignoreCase = true) ||
+                structured.optBoolean("pending", false) ||
+                dataObj?.optBoolean("pending", false) == true ||
+                !outcome.ticket.isNullOrBlank()
+
+            if (!isPending) {
+              syncPlacesAndRegisterGeofences(appCtx, reason = "pin_place_approved")
+            }
+
+            val summaryLine =
+              fallbackText.ifBlank {
+                if (isPending) {
+                  "Pin sent ($coordsStr) · Waiting for approval in the hub"
+                } else {
+                  "Pinned $targetLabel at $coordsStr"
+                }
+              }
+
+            PinPlaceOutcome(
+              ok = true,
+              status = if (isPending) "pending" else rawStatus.ifBlank { "ok" },
+              isPendingApproval = isPending,
+              ticket = outcome.ticket,
+              coords = coordsStr,
+              targetLabel = targetLabel,
+              fallbackText = fallbackText,
+              summary = summaryLine,
+              callOutcome = outcome,
+            )
+          } else {
+            val errMsg =
+              structured.optJSONObject("error")?.optString("msg", "")?.takeIf { it.isNotBlank() }
+                ?: fallbackText.ifBlank { "app_pin_place returned ok=false" }
+            if (fallbackText.isNotBlank()) {
+              speakFallbackTextAloud(
+                context = appCtx,
+                fallbackText = fallbackText,
+                messageIdPrefix = "pin_place_err:$targetLabel",
+              )
+            }
+            PinPlaceOutcome(
+              ok = false,
+              status = "error",
+              isPendingApproval = false,
+              ticket = outcome.ticket,
+              coords = coordsStr,
+              targetLabel = targetLabel,
+              fallbackText = fallbackText,
+              summary = errMsg,
+              callOutcome = outcome,
+            )
+          }
+        }
+        is TabletCallOutcome.Failure -> {
+          PinPlaceOutcome(
+            ok = false,
+            status = outcome.errorCode,
+            isPendingApproval = false,
+            ticket = outcome.ticket,
+            coords = coordsStr,
+            targetLabel = targetLabel,
+            fallbackText = "",
+            summary = outcome.message,
+            callOutcome = outcome,
+          )
+        }
+      }
+    }
+
+  @SuppressLint("MissingPermission")
+  private suspend fun fetchHighAccuracyLocationFix(
+    fusedClient: com.google.android.gms.location.FusedLocationProviderClient,
+  ): Location? {
+    return withTimeoutOrNull(8_000L) {
+      suspendCancellableCoroutine<Location?> { cont ->
+        val cts = CancellationTokenSource()
+        cont.invokeOnCancellation { cts.cancel() }
+        fusedClient
+          .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
+          .addOnSuccessListener { loc ->
+            if (cont.isActive) cont.resume(loc)
+          }
+          .addOnFailureListener {
+            if (cont.isActive) cont.resume(null)
+          }
+      }
     }
   }
 

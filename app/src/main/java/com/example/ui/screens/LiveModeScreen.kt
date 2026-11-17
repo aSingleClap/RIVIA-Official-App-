@@ -250,13 +250,13 @@ fun LiveModeScreen(
           text =
             when {
               micPermissionDeniedReason != null -> "Microphone needed"
-              liveState.pausedForPhoneCall -> "Paused (Phone Call Active)"
+              liveState.pausedForPhoneCall -> "Paused for your call"
               liveState.stoppedAfterThreeErrors -> "Paused after errors. Tap the orb to try again."
               liveState.isPaused -> "Paused"
               liveState.isMuted -> "Muted"
-              liveState.orbState == OrbState.SPEAKING -> "Rivia Speaking"
-              liveState.orbState == OrbState.THINKING -> "Rivia Thinking..."
-              liveState.orbState == OrbState.LISTENING -> "Listening..."
+              liveState.orbState == OrbState.SPEAKING -> "Rivia is speaking"
+              liveState.orbState == OrbState.THINKING -> "Rivia is thinking…"
+              liveState.orbState == OrbState.LISTENING -> "Listening…"
               else -> "Live"
             },
           style = MaterialTheme.typography.titleMedium,
@@ -319,7 +319,7 @@ fun LiveModeScreen(
               scaleX = 1.05f
               scaleY = 1.05f
             },
-          contentDesc = "Tap orb to interrupt Rivia and start listening",
+          contentDesc = "Tap to stop Rivia and listen",
           onSphereClick = {
             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             LiveSessionManager.onOrbTapped()
@@ -328,9 +328,9 @@ fun LiveModeScreen(
 
         Text(
           text =
-            if (isSpeaking) "Tap the orb to interrupt and speak"
+            if (isSpeaking) "Talk over her or tap the orb to cut in"
             else if (liveState.stoppedAfterThreeErrors) "Tap the orb to try again"
-            else "Hands-free Live Voice",
+            else "Just talk",
           style = MaterialTheme.typography.labelMedium,
           color = RiviaMutedText,
         )
@@ -469,7 +469,7 @@ fun LiveModeScreen(
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-          text = if (liveState.isMuted) "Unmute" else "Mute",
+          text = if (liveState.isMuted) "Unmute mic" else "Mute mic",
           style = MaterialTheme.typography.labelSmall,
           color = RiviaMutedText,
         )
@@ -498,7 +498,7 @@ fun LiveModeScreen(
         }
         Spacer(modifier = Modifier.height(6.dp))
         Text(
-          text = if (liveState.isPaused) "Resume" else "Pause",
+          text = if (liveState.isPaused) "Resume Live" else "Pause Live",
           style = MaterialTheme.typography.labelSmall,
           color = RiviaMutedText,
         )
@@ -520,7 +520,7 @@ fun LiveModeScreen(
         ) {
           Icon(
             imageVector = Icons.Default.CallEnd,
-            contentDescription = "End Live voice mode",
+            contentDescription = "End Live",
             tint = RiviaOnAccent,
           )
         }

@@ -389,8 +389,93 @@ object RiviaSettingsGuide {
       ),
     )
 
+  val everydayTopics: List<SettingHelpTopic> =
+    listOf(
+      SettingHelpTopic(
+        id = "ev_interrupt",
+        title = "Interrupt by voice",
+        summary =
+          "When this is on, Rivia keeps listening while she talks. Start speaking and she stops to hear you.",
+        whenToUse =
+          "Turn it off if she keeps stopping by herself because of road noise or her own voice. You can still tap the orb to stop her.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_pause",
+        title = "Pause before Rivia answers",
+        summary = "How long you can pause mid-sentence before Rivia decides you're done.",
+        whenToUse =
+          "Pick Long if she answers before you finish. Pick Short if she feels slow to reply.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_earbud_mic",
+        title = "Use earbud mic in Live",
+        summary =
+          "On: Rivia hears you through your earbuds' mic. Good on the bike with the phone in a pocket. While Live is on, her voice sounds like a phone call.",
+        whenToUse = "Off: the phone's own mic hears you, and her voice stays full quality.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_screen_on",
+        title = "Keep screen on in Live",
+        summary = "Live keeps working with the screen off.",
+        whenToUse =
+          "Turn this on only if you want to read the captions while you talk. A lit screen in a pocket can get bumped.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_on_device",
+        title = "Transcribe on this phone",
+        summary = "Turns your speech into text on the phone instead of sending it to Google.",
+        whenToUse = "Use it where signal is bad. It can mishear more often.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_her_voice",
+        title = "Her voice",
+        summary = "This is the voice Rivia speaks with. It comes from your ElevenLabs account.",
+        whenToUse = "Tap Change to pick another, or Hear these settings to listen.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_how_she_sounds",
+        title = "How she sounds",
+        summary =
+          "Delivery: left is more emotional, right is calmer and steadier. Likeness: right sounds closer to the original voice, left lets it drift. Clarity boost makes her crisper.",
+        whenToUse = "Change one thing at a time and tap Hear these settings.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_voice_models",
+        title = "Voice models",
+        summary =
+          "Rivia uses two voice models: one for reading replies, and one for Live, where a fast start matters.",
+        whenToUse =
+          "Leave the defaults unless her voice sounds wrong or Live feels slow to start.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_audio_quality",
+        title = "Audio quality",
+        summary = "Higher quality sounds better but uses more data.",
+        whenToUse = "Pick Data saver if her voice cuts out on mobile data.",
+        examples = emptyList(),
+      ),
+      SettingHelpTopic(
+        id = "ev_backup",
+        title = "Back up chats",
+        summary =
+          "Saves all your chats to one file, or brings them back from a file. Restoring adds chats and never deletes any.",
+        whenToUse = "Your keys are never put in the backup file.",
+        examples = emptyList(),
+      ),
+    )
+
   fun findTopic(id: String): SettingHelpTopic? =
-    (runSettingsTopics + appSettingsTopics + layersTopics).firstOrNull { it.id == id }
+    (everydayTopics + runSettingsTopics + appSettingsTopics + layersTopics).firstOrNull {
+      it.id == id
+    }
 }
 
 @Composable

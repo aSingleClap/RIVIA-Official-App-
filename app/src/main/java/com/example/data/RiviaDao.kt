@@ -422,11 +422,11 @@ interface RiviaDao {
     }
   }
 
-  // Zone Configs (App Pass C: Five canonical geofence places from app_places)
-  @Query("SELECT * FROM zone_configs ORDER BY id ASC")
+  // Zone Configs (Canonical + custom geofence places from app_places)
+  @Query("SELECT * FROM zone_configs ORDER BY custom ASC, id ASC")
   fun observeZoneConfigs(): Flow<List<ZoneConfigEntity>>
 
-  @Query("SELECT * FROM zone_configs ORDER BY id ASC")
+  @Query("SELECT * FROM zone_configs ORDER BY custom ASC, id ASC")
   suspend fun getAllZoneConfigs(): List<ZoneConfigEntity>
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -434,6 +434,22 @@ interface RiviaDao {
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun upsertZoneConfig(config: ZoneConfigEntity)
+
+  @Query("DELETE FROM zone_configs WHERE id NOT IN (:keepIds)")
+  suspend fun deleteZoneConfigsNotIn(keepIds: List<String>)
+
+  @Query("DELETE FROM zone_configs")
+  suspend fun clearAllZoneConfigs()
+
+  @Transaction
+  suspend fun replaceZoneConfigsFromSync(configs: List<ZoneConfigEntity>) {
+    if (configs.isEmpty()) {
+      clearAllZoneConfigs()
+    } else {
+      deleteZoneConfigsNotIn(configs.map { it.id })
+      upsertZoneConfigs(configs)
+    }
+  }
 
   // Zone Events (App Pass C: Enter/Exit logs, last 20 shown on Dev Zones card)
   @Query("SELECT * FROM zone_events ORDER BY event_time_ms DESC, id DESC LIMIT 20")

@@ -1260,13 +1260,38 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   private val _zoneSyncStatusText = MutableStateFlow<String?>(null)
   val zoneSyncStatusText: StateFlow<String?> = _zoneSyncStatusText.asStateFlow()
 
+  private val _pinLocationRunning = MutableStateFlow(false)
+  val pinLocationRunning: StateFlow<Boolean> = _pinLocationRunning.asStateFlow()
+
+  private val _pinLocationStatusText = MutableStateFlow<String?>(null)
+  val pinLocationStatusText: StateFlow<String?> = _pinLocationStatusText.asStateFlow()
+
+  private val _pinLocationIsError = MutableStateFlow(false)
+  val pinLocationIsError: StateFlow<Boolean> = _pinLocationIsError.asStateFlow()
+
+  private val _pinLocationPendingApproval = MutableStateFlow(false)
+  val pinLocationPendingApproval: StateFlow<Boolean> = _pinLocationPendingApproval.asStateFlow()
+
+  private var pinApprovalPollJob: Job? = null
+
   // Session cache of exposed tablet tool schemas from tools/list
   private val _tabletToolsCache = MutableStateFlow<List<TabletToolDef>>(emptyList())
   val tabletToolsCache: StateFlow<List<TabletToolDef>> = _tabletToolsCache.asStateFlow()
 
-  // Shown under the "Tablet tools" toggle if tools/list fails or returns no eligible tools when a Labs chat opens
+  // Shown under the "Tablet tools" toggle if tools/list fails or returns no eligible tools
   private val _tabletToolsUnavailable = MutableStateFlow(false)
   val tabletToolsUnavailable: StateFlow<Boolean> = _tabletToolsUnavailable.asStateFlow()
+
+  val devTabletToolsEnabled: StateFlow<Boolean> =
+    keyRepository.tabletToolsEnabledFlow.stateIn(
+      viewModelScope,
+      SharingStarted.Eagerly,
+      false,
+    )
+
+  fun setDevTabletToolsEnabled(enabled: Boolean) {
+    viewModelScope.launch { keyRepository.setTabletToolsEnabled(enabled) }
+  }
 
   // Last 20 tablet call results in memory for Dev -> Bots screen
   private val _last20TabletResults = MutableStateFlow<List<TabletCallRecord>>(emptyList())
@@ -1417,15 +1442,20 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       }
     }
 
-    // 5. When a Labs chat opens with Tablet tools enabled, fetch tools/list once and cache schemas
+    // 5. When a chat opens with Tablet tools enabled (in Labs or Dev/Rivia), fetch tools/list once and cache schemas
     viewModelScope.launch(Dispatchers.IO) {
-      combine(isActiveChatLab, currentRunSettings, _activeChatId) { isLab, settings, chatId ->
-          Triple(isLab, settings.tabletToolsEnabled, chatId)
+      combine(
+          isActiveChatLab,
+          currentRunSettings,
+          devTabletToolsEnabled,
+          _activeChatId,
+        ) { isLab, settings, devTabletEnabled, _ ->
+          if (isLab) settings.tabletToolsEnabled else devTabletEnabled
         }
-        .collect { (isLab, tabletEnabled, _) ->
-          if (isLab && tabletEnabled) {
+        .collect { tabletEnabled ->
+          if (tabletEnabled) {
             ensureTabletToolsLoaded()
-          } else if (!tabletEnabled) {
+          } else {
             _tabletToolsUnavailable.value = false
           }
         }
@@ -2650,31 +2680,6 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         bundle?.engine
       }
 
-    val customBodyBuilder: ((JSONArray, String?, Boolean) -> JSONObject)? =
-      if (isRivia && bundle != null) {
-        { inputSteps, prevId, stream ->
-          val sysInstruction =
-            LayerConfigManager.assembleSystemInstruction(
-              channel = layerChannel,
-              persona = effectivePersonaForTurn ?: bundle.persona,
-              style = effectiveStyleForTurn ?: bundle.style,
-              hardRules = effectiveHardRulesForTurn ?: bundle.hardRules,
-              spokenMaxSentences = _spokenMaxSentences.value,
-              pendingH7Notice = pendingH7NoticeToSend,
-            )
-          geminiClient.buildRiviaRequestBodyJson(
-            engine = effectiveEngineForTurn ?: bundle.engine,
-            profileName = normalizedProfile,
-            assembledSystemInstruction = sysInstruction,
-            inputSteps = inputSteps,
-            previousInteractionId = prevId,
-            stream = stream,
-          )
-        }
-      } else {
-        null
-      }
-
     // In Labs mode, if the user edited Labs sandbox Layers and hasn't overridden systemInstruction
     // in RunSettings, assemble the system instruction from the Labs sandbox bundle so Labs chats
     // test both Labs Layers and Labs RunSettings seamlessly.
@@ -2694,19 +2699,49 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         settings
       }
 
-    // Load tablet tools if enabled in this Labs chat
+    // Load tablet tools if enabled in this chat (Labs RunSettings or Dev Tablet toggle)
+    val wantTabletTools =
+      if (isRivia) devTabletToolsEnabled.value else effectiveSettings.tabletToolsEnabled
     val tabletToolsForTurn: List<TabletToolDef>? =
-      if (!isRivia && effectiveSettings.tabletToolsEnabled) {
+      if (wantTabletTools) {
         withContext(Dispatchers.IO) { ensureTabletToolsLoaded() }
       } else {
         null
       }
     val includeTabletTools = !tabletToolsForTurn.isNullOrEmpty()
 
+    val customBodyBuilder: ((JSONArray, String?, Boolean) -> JSONObject)? =
+      if (isRivia && bundle != null) {
+        { inputSteps, prevId, stream ->
+          val sysInstruction =
+            LayerConfigManager.assembleSystemInstruction(
+              channel = layerChannel,
+              persona = effectivePersonaForTurn ?: bundle.persona,
+              style = effectiveStyleForTurn ?: bundle.style,
+              hardRules = effectiveHardRulesForTurn ?: bundle.hardRules,
+              spokenMaxSentences = _spokenMaxSentences.value,
+              pendingH7Notice = pendingH7NoticeToSend,
+            )
+          geminiClient.buildRiviaRequestBodyJson(
+            engine = effectiveEngineForTurn ?: bundle.engine,
+            profileName = normalizedProfile,
+            assembledSystemInstruction = sysInstruction,
+            inputSteps = inputSteps,
+            previousInteractionId = prevId,
+            stream = stream,
+            tabletToolDefs = tabletToolsForTurn,
+            includeToolsOnTurn = includeTabletTools,
+          )
+        }
+      } else {
+        null
+      }
+
     var currentPrevId: String? = previousInteractionId
     var currentOverrideInputSteps: JSONArray? = null
     var fnCallRound = 0
     var continueFnLoop = true
+    var pendingRadiusResizeFallbackText: String? = null
     val accumulatedRawSteps = JSONArray()
 
     try {
@@ -2940,6 +2975,53 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   if (alertRes?.exactAlarmPermissionMissing == true) {
                     showError("Exact alarm permission is off in system settings; leave-by alarm saved to Room.")
                   }
+
+                  // JOB-007 Step 2: After a change_schedule_setting or undo_schedule_change reply
+                  // that is ok and whose data.key ends in ".radius_m", pull app_places again right
+                  // away and re-register the geofences, and speak the reply's fallback_text.
+                  if (
+                    (fnCall.name == "change_schedule_setting" ||
+                      fnCall.name == "undo_schedule_change") &&
+                      outcome.value.optBoolean("ok", true)
+                  ) {
+                    val dataObj = outcome.value.optJSONObject("data")
+                    val dataKey = dataObj?.optString("key", "")?.trim().orEmpty()
+                    if (dataKey.endsWith(".radius_m")) {
+                      val fallbackText =
+                        outcome.value.optString("fallback_text", "").trim().ifBlank {
+                          outcome.value
+                            .optJSONObject("message")
+                            ?.optString("fallback_text", "")
+                            ?.trim()
+                            .orEmpty()
+                        }
+                      pendingRadiusResizeFallbackText = fallbackText.takeIf { it.isNotBlank() }
+
+                      viewModelScope.launch(Dispatchers.IO) {
+                        val appCtx = getApplication<Application>()
+                        val syncOutcome =
+                          ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(
+                            context = appCtx,
+                            reason = fnCall.name,
+                          )
+                        _zoneSyncStatusText.value = keyRepository.redact(syncOutcome.summary)
+                      }
+
+                      if (
+                        fallbackText.isNotBlank() &&
+                          channel != RiviaChannel.LIVE_VOICE &&
+                          !(channel == RiviaChannel.TYPED_CHAT && settings.autoReadAloud)
+                      ) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                          ZoneLocationCoordinator.speakFallbackTextAloud(
+                            context = getApplication(),
+                            fallbackText = fallbackText,
+                            messageIdPrefix = fnCall.name,
+                          )
+                        }
+                      }
+                    }
+                  }
                 }
 
                 val toolResultJsonString =
@@ -2982,6 +3064,16 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                 fnCallRound++
                 continueFnLoop = true
                 return@sendTurn
+              }
+
+              if (
+                assistantMsg.content.isBlank() &&
+                  !pendingRadiusResizeFallbackText.isNullOrBlank()
+              ) {
+                val fb = pendingRadiusResizeFallbackText!!
+                assistantMsg = assistantMsg.copy(content = fb)
+                _streamingMessageOverlay.value = assistantMsg
+                onDeltaCallback?.invoke(fb)
               }
 
               val fullUntrimmedReply = assistantMsg.content
@@ -4006,10 +4098,100 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
             ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(appCtx, reason = reason)
           }
         _zoneSyncStatusText.value = keyRepository.redact(outcome.summary)
+        if (outcome.ok && _pinLocationPendingApproval.value) {
+          pinApprovalPollJob?.cancel()
+          _pinLocationPendingApproval.value = false
+          _pinLocationStatusText.value = "Pulled app_places · ${keyRepository.redact(outcome.summary)}"
+        }
       } catch (e: Throwable) {
         _zoneSyncStatusText.value = keyRepository.redact(e.message ?: "Zone sync failed")
       } finally {
         _zoneSyncRunning.value = false
+      }
+    }
+  }
+
+  /**
+   * JOB-007 Step 3: "Pin my location" action.
+   * Gets the phone's current position, calls `app_pin_place`, speaks `fallback_text`,
+   * and while pending approval in the hub (STOP A), polls `app_places` so once approved
+   * the updated places and geofences are pulled right away.
+   */
+  fun pinMyLocation(
+    existingPlace: String? = null,
+    newPlaceName: String? = null,
+    radiusMeters: Int? = null,
+  ) {
+    if (_pinLocationRunning.value) return
+    pinApprovalPollJob?.cancel()
+    viewModelScope.launch {
+      _pinLocationRunning.value = true
+      _pinLocationIsError.value = false
+      _pinLocationPendingApproval.value = false
+      _pinLocationStatusText.value = "Getting GPS fix and calling app_pin_place…"
+
+      val appCtx = getApplication<Application>()
+      val beforeSnapshot =
+        withContext(Dispatchers.IO) {
+          dao.getAllZoneConfigs().associate { it.id.lowercase() to "${it.lat},${it.lng},${it.radiusM}" }
+        }
+
+      val outcome =
+        withContext(Dispatchers.IO) {
+          ZoneLocationCoordinator.pinCurrentLocation(
+            context = appCtx,
+            existingPlace = existingPlace,
+            newPlaceName = newPlaceName,
+            radiusMeters = radiusMeters,
+          )
+        }
+
+      outcome.callOutcome?.let { callOut ->
+        logTabletCallOutcome(tool = "app_pin_place", outcome = callOut)
+      }
+
+      _pinLocationRunning.value = false
+      _pinLocationIsError.value = !outcome.ok
+      _pinLocationPendingApproval.value = outcome.ok && outcome.isPendingApproval
+      _pinLocationStatusText.value = keyRepository.redact(outcome.summary)
+
+      if (!outcome.ok) {
+        showError(keyRepository.redact(outcome.summary))
+        return@launch
+      }
+
+      if (outcome.isPendingApproval) {
+        val targetKey = outcome.targetLabel.trim().lowercase()
+        pinApprovalPollJob =
+          viewModelScope.launch(Dispatchers.IO) {
+            for (attempt in 1..30) {
+              delay(4_000L)
+              val syncRes =
+                ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(
+                  context = appCtx,
+                  reason = "pin_hub_approval_poll",
+                )
+              _zoneSyncStatusText.value = keyRepository.redact(syncRes.summary)
+              val afterConfigs = dao.getAllZoneConfigs()
+              val matched =
+                afterConfigs.firstOrNull {
+                  it.id.equals(targetKey, ignoreCase = true) ||
+                    it.spokenName.equals(targetKey, ignoreCase = true)
+                }
+              val beforeSig =
+                if (matched != null) beforeSnapshot[matched.id.lowercase()] else beforeSnapshot[targetKey]
+              val afterSig =
+                matched?.let { "${it.lat},${it.lng},${it.radiusM}" }
+              if (matched != null && matched.lat != null && matched.lng != null && afterSig != beforeSig) {
+                _pinLocationPendingApproval.value = false
+                _pinLocationStatusText.value =
+                  "Approved in hub · Pulled app_places (${matched.spokenName}, ${matched.radiusM.toInt()} m)"
+                break
+              }
+            }
+          }
+      } else {
+        refreshZonesFromTabletNow(reason = "pin_place_immediate")
       }
     }
   }
@@ -4359,6 +4541,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       previousInteractionId = prevId,
       geminiKey = gKey,
       elevenKey = eKey,
+      tabletToolDefs = if (devTabletToolsEnabled.value) _tabletToolsCache.value else null,
     )
   }
 
@@ -4728,9 +4911,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
             _activeChatId.value = firstChat.id
           }
         }
-        showNotice("Imported backup (${payload.chats.size} chats in file).")
+        showNotice("Restored ${payload.chats.size} chats.")
       } catch (e: Exception) {
-        showError("Import failed: ${e.message}")
+        showError("Couldn't read that backup file.")
       }
     }
   }

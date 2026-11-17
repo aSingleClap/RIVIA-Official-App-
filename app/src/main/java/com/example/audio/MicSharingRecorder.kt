@@ -142,7 +142,11 @@ class PipeAutoGainProcessor(
    * gain-adjusted + limited little-endian PCM16 [ByteArray] to write ONLY to the SpeechRecognizer pipe.
    * Never mutates [rawShorts].
    */
-  fun processChunkToPcm16Bytes(rawShorts: ShortArray, count: Int): ByteArray {
+  fun processChunkToPcm16Bytes(
+    rawShorts: ShortArray,
+    count: Int,
+    allowGainBoost: Boolean = true,
+  ): ByteArray {
     if (count <= 0) return ByteArray(0)
     var chunkSumSq = 0.0
     for (i in 0 until count) {
@@ -155,14 +159,18 @@ class PipeAutoGainProcessor(
     val chunkRms = sqrt(chunkSumSq / count.toDouble()).toFloat()
 
     val desiredGain =
-      if (chunkRms >= MIN_ACTIVE_RMS) {
+      if (!allowGainBoost) {
+        1.0f
+      } else if (chunkRms >= MIN_ACTIVE_RMS) {
         (targetRmsLinear / chunkRms).coerceIn(1.0f, maxGainLinear)
       } else {
         1.0f
       }
 
     smoothedGain =
-      if (!gainInitialized && chunkRms >= MIN_ACTIVE_RMS) {
+      if (!allowGainBoost) {
+        1.0f
+      } else if (!gainInitialized && chunkRms >= MIN_ACTIVE_RMS) {
         gainInitialized = true
         desiredGain
       } else if (chunkRms >= MIN_ACTIVE_RMS) {
@@ -572,6 +580,7 @@ object MicSharingRecorder {
   val modeBRuntimeNote: StateFlow<String?> = _modeBRuntimeNote.asStateFlow()
 
   @Volatile var bargeInEnabled: Boolean = true
+  @Volatile var echoCancelEnabled: Boolean = true
 
   private var activeAudioRecord: AudioRecord? = null
   private var aec: AcousticEchoCanceler? = null
@@ -642,15 +651,19 @@ object MicSharingRecorder {
     dropFramesUntilElapsedMs.set(0L)
   }
 
+  fun isLivePlaybackOrTailActive(): Boolean {
+    if (livePlaybackActive.get()) return true
+    val until = dropFramesUntilElapsedMs.get()
+    return until > 0L && android.os.SystemClock.elapsedRealtime() < until
+  }
+
   /**
    * Returns true while Rivia's audio is playing in Live or within 400 ms after it ends,
    * unless bargeInEnabled is true.
    */
   fun shouldDropLiveMicFrames(): Boolean {
     if (bargeInEnabled) return false
-    if (livePlaybackActive.get()) return true
-    val until = dropFramesUntilElapsedMs.get()
-    return until > 0L && android.os.SystemClock.elapsedRealtime() < until
+    return isLivePlaybackOrTailActive()
   }
 
   /**
@@ -882,16 +895,19 @@ object MicSharingRecorder {
       }
       val bufferSizeInBytes = (minBufSize * 2).coerceAtLeast(SAMPLE_RATE_HZ * 2)
 
-      // Step 1: Try MediaRecorder.AudioSource.VOICE_COMMUNICATION first for hardware echo cancellation,
-      // then fall back to VOICE_RECOGNITION, then MIC.
-      var recorder =
-        createInitializedAudioRecord(
-          MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-          bufferSizeInBytes,
-        )
-      if (recorder != null) {
-        currentAudioSource = "VOICE_COMMUNICATION"
-      } else {
+      val useEchoCancel = echoCancelEnabled
+      var recorder: AudioRecord? = null
+      if (useEchoCancel) {
+        recorder =
+          createInitializedAudioRecord(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            bufferSizeInBytes,
+          )
+        if (recorder != null) {
+          currentAudioSource = "VOICE_COMMUNICATION"
+        }
+      }
+      if (recorder == null) {
         recorder =
           createInitializedAudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
@@ -920,14 +936,16 @@ object MicSharingRecorder {
       runCatching { ns?.release() }
       ns = null
       val id = recorder.audioSessionId
-      runCatching {
-        if (AcousticEchoCanceler.isAvailable()) {
-          aec = AcousticEchoCanceler.create(id)?.apply { enabled = true }
+      if (useEchoCancel) {
+        runCatching {
+          if (AcousticEchoCanceler.isAvailable()) {
+            aec = AcousticEchoCanceler.create(id)?.apply { enabled = true }
+          }
         }
-      }
-      runCatching {
-        if (NoiseSuppressor.isAvailable()) {
-          ns = NoiseSuppressor.create(id)?.apply { enabled = true }
+        runCatching {
+          if (NoiseSuppressor.isAvailable()) {
+            ns = NoiseSuppressor.create(id)?.apply { enabled = true }
+          }
         }
       }
       val aecOn = runCatching { aec?.enabled == true }.getOrDefault(false)
@@ -1063,9 +1081,17 @@ object MicSharingRecorder {
 
                 // Fix 7: Apply automatic gain (-20 dBFS RMS target, max +20 dB, peak limiter)
                 // ONLY to the audio written to the SpeechRecognizer pipe.
-                // VAD and the emotion model keep the raw audio (shortBuf / byteChunk).
+                // While Rivia's voice is playing in Live with echo canceling enabled and before
+                // user speech onset is confirmed, suppress AGC boost so residual speaker echo is not amplified.
                 if (pipeWritingAllowed.get() && !currentPipeBrokeEarly) {
-                  val gainedPipeBytes = pipeAgcProcessor.processChunkToPcm16Bytes(shortBuf, readCount)
+                  val allowBoost =
+                    !(echoCancelEnabled && isLivePlaybackOrTailActive() && !currentVadSpeechDetected)
+                  val gainedPipeBytes =
+                    pipeAgcProcessor.processChunkToPcm16Bytes(
+                      rawShorts = shortBuf,
+                      count = readCount,
+                      allowGainBoost = allowBoost,
+                    )
                   synchronized(pipeLock) {
                     val outStream = activePipeWriteStream
                     if (outStream != null && pipeWritingAllowed.get()) {

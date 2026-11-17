@@ -230,10 +230,25 @@ class AudioPlayerManager(
       .also { exoPlayer = it }
   }
 
+  private fun updatePlayerAudioAttributesForModeOnMain(player: ExoPlayer, isLive: Boolean) {
+    val useVoiceComm = isLive && MicSharingRecorder.echoCancelEnabled
+    val desiredUsage = if (useVoiceComm) C.USAGE_VOICE_COMMUNICATION else C.USAGE_MEDIA
+    if (player.audioAttributes.usage != desiredUsage) {
+      val attrs =
+        AudioAttributes.Builder()
+          .setUsage(desiredUsage)
+          .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+          .build()
+      player.setAudioAttributes(attrs, /* handleAudioFocus = */ false)
+    }
+  }
+
   private fun enqueueAudioFileOnMain(audioFile: File, firstChunkStarted: Boolean): Boolean {
     val player = getOrCreatePlayerOnMain()
+    val isLive = liveSessionHoldsFocus || currentPlaybackIsLive
+    updatePlayerAudioAttributesForModeOnMain(player, isLive)
     val mediaItem = MediaItem.fromUri(Uri.fromFile(audioFile))
-    if (liveSessionHoldsFocus || currentPlaybackIsLive) {
+    if (isLive) {
       MicSharingRecorder.setLivePlaybackActive(true)
     }
     if (!firstChunkStarted) {

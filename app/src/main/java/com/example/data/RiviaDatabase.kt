@@ -27,7 +27,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
       ZoneEventEntity::class,
       PendingArrivalCallEntity::class,
     ],
-  version = 9,
+  version = 10,
   exportSchema = true,
 )
 abstract class RiviaDatabase : RoomDatabase() {
@@ -323,6 +323,15 @@ abstract class RiviaDatabase : RoomDatabase() {
         }
       }
 
+    val MIGRATION_9_10: Migration =
+      object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+          db.execSQL(
+            "ALTER TABLE `zone_configs` ADD COLUMN `custom` INTEGER NOT NULL DEFAULT 0"
+          )
+        }
+      }
+
     // Future schema changes must add explicit Migration(from, to) objects here;
     // fallbackToDestructiveMigration is never used so chats are never wiped.
     private val ALL_MIGRATIONS: Array<Migration> =
@@ -335,6 +344,7 @@ abstract class RiviaDatabase : RoomDatabase() {
         MIGRATION_6_7,
         MIGRATION_7_8,
         MIGRATION_8_9,
+        MIGRATION_9_10,
       )
 
     fun getInstance(context: Context): RiviaDatabase {

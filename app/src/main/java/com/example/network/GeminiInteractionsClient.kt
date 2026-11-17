@@ -544,6 +544,8 @@ class GeminiInteractionsClient {
     inputSteps: JSONArray,
     previousInteractionId: String?,
     stream: Boolean = true,
+    tabletToolDefs: List<TabletToolDef>? = null,
+    includeToolsOnTurn: Boolean = true,
   ): JSONObject {
     val normProfile = com.example.model.LayerConfigManager.normalizeProfileKey(profileName)
     val prof =
@@ -581,6 +583,26 @@ class GeminiInteractionsClient {
     if (engine.max_output_tokens != null && engine.max_output_tokens > 0) {
       genConfig.put("max_output_tokens", engine.max_output_tokens)
     }
+
+    if (includeToolsOnTurn && !tabletToolDefs.isNullOrEmpty()) {
+      val toolsArray = JSONArray()
+      for (toolDef in tabletToolDefs) {
+        if (
+          toolDef.name != "ask_bot" &&
+            toolDef.name != "check_reply" &&
+            toolDef.name != "post_reply" &&
+            !toolDef.name.startsWith("app_") &&
+            toolDef.description.isNotBlank() &&
+            toolDef.inputSchemaJson.isNotBlank()
+        ) {
+          toolsArray.put(toolDef.toGeminiFunctionToolJson())
+        }
+      }
+      if (toolsArray.length() > 0) {
+        body.put("tools", toolsArray)
+      }
+    }
+
     body.put("generation_config", genConfig)
 
     // Safety: "model_default" is left out of the request
@@ -615,6 +637,7 @@ class GeminiInteractionsClient {
     previousInteractionId: String?,
     geminiKey: String,
     elevenKey: String,
+    tabletToolDefs: List<TabletToolDef>? = null,
   ): String {
     val sampleInput = buildSingleTurnInput("<your next message>")
     val bodyObj =
@@ -625,6 +648,8 @@ class GeminiInteractionsClient {
         inputSteps = sampleInput,
         previousInteractionId = previousInteractionId,
         stream = true,
+        tabletToolDefs = tabletToolDefs,
+        includeToolsOnTurn = !tabletToolDefs.isNullOrEmpty(),
       )
     val wrapper =
       JSONObject().apply {

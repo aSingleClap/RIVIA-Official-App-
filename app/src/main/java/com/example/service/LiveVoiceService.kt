@@ -113,7 +113,7 @@ class LiveVoiceService : Service() {
       val channel =
         NotificationChannel(
           CHANNEL_ID,
-          "Rivia Live Voice",
+          "Rivia Live",
           NotificationManager.IMPORTANCE_LOW,
         ).apply {
           description = "Ongoing hands-free voice session with Rivia"
