@@ -668,7 +668,7 @@ object ZoneLocationCoordinator {
 
         val request =
           GeofencingRequest.Builder()
-            .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
+            .setInitialTrigger(0) // no initial trigger; the 15-minute fallback worker still catches a missed arrival
             .addGeofences(geofences)
             .build()
 
@@ -903,7 +903,7 @@ object ZoneLocationCoordinator {
         }
 
         // Avoid duplicate open ENTER if the last non-bounce event for this same place was already ENTER
-        if (lastForSamePlace != null && lastForSamePlace.transition == "ENTER" && source == "fallback") {
+        if (lastForSamePlace != null && lastForSamePlace.transition == "ENTER") {
           return@withLock
         }
 
@@ -1114,6 +1114,14 @@ object ZoneLocationCoordinator {
     ensureToolSchemasCached(serverUrl, appToken)
     val arrivalSchema = toolSchemaCache["app_arrival"]
     val rawArgs = buildAppArrivalArguments(call, arrivalSchema)
+    dao.getLastNonBounceExitForPlaceBefore(call.placeId, call.eventTimeMs)?.let { exitHere ->
+      rawArgs.put(
+        "left_at",
+        Instant.ofEpochMilli(exitHere.eventTimeMs)
+          .atZone(ZoneId.systemDefault())
+          .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+      )
+    }
 
     return when (
       val outcome =
@@ -1210,6 +1218,26 @@ object ZoneLocationCoordinator {
         }
       }
       flushed
+    }
+
+  suspend fun callAppOpen(context: Context) =
+    withContext(Dispatchers.IO) {
+      val appCtx = context.applicationContext
+      val keyRepo = SecureKeyRepository(appCtx)
+      val serverUrl = keyRepo.getTabletServerUrl()
+      val appToken = keyRepo.getTabletAppToken()
+      if (appToken.isBlank() || !TabletMcpClient.isValidServerUrl(serverUrl)) return@withContext
+      val outcome =
+        tabletMcpClient.callTool(
+          serverUrl = serverUrl,
+          appToken = appToken,
+          toolName = "app_open",
+          arguments = JSONObject(),
+        )
+      if (outcome is TabletCallOutcome.Success && outcome.ok && outcome.value.optBoolean("ok", true)) {
+        ScheduleAlarmCoordinator.applyAlertsFromTabletReply(appCtx, outcome.value)
+        speakArrivalReplyIfRequested(context = appCtx, placeId = "home", structured = outcome.value)
+      }
     }
 
   /**

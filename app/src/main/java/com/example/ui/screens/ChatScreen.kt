@@ -3964,8 +3964,11 @@ internal fun AssistantMessageBubble(
             StatusShape(status = statusShapeType, size = 12.dp)
             Text(
               text =
-                if (isH9NoReplyNotice) "No reply came back. Try again."
-                else message.errorMessage,
+                if (isH9NoReplyNotice) {
+                  val detail = message.errorMessage.removePrefix("No reply").trimStart(':', ' ')
+                  if (detail.isBlank()) "No reply came back. Try again."
+                  else "No reply came back ($detail). Try again."
+                } else message.errorMessage,
               style = MaterialTheme.typography.bodySmall,
               color = statusColor,
               modifier =

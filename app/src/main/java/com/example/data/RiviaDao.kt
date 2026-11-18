@@ -475,6 +475,16 @@ interface RiviaDao {
   )
   suspend fun getLastNonBounceExitEvent(): ZoneEventEntity?
 
+  @Query(
+    """
+    SELECT * FROM zone_events
+    WHERE place_id = :placeId AND transition = 'EXIT' AND is_bounce = 0 AND event_time_ms < :beforeMs
+    ORDER BY event_time_ms DESC, id DESC
+    LIMIT 1
+    """
+  )
+  suspend fun getLastNonBounceExitForPlaceBefore(placeId: String, beforeMs: Long): ZoneEventEntity?
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertZoneEvent(event: ZoneEventEntity): Long
 

@@ -1333,6 +1333,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           )
         _zoneSyncStatusText.value = outcome.summary
         ZoneLocationCoordinator.flushPendingArrivalCalls(application)
+        ZoneLocationCoordinator.callAppOpen(application)
       }
     }
 
@@ -2913,10 +2914,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
               val totalMs = System.currentTimeMillis() - startTimeMs
               val finalInteractionId = event.interactionId ?: assistantMsg.interactionId
 
-              // Handle requires_action function_call in Labs chats
+              // Handle requires_action function_call in Rivia and Labs chats
               if (
-                !isRivia &&
-                  includeTabletTools &&
+                includeTabletTools &&
                   event.completionStatus.equals("requires_action", ignoreCase = true) &&
                   event.functionCalls.isNotEmpty() &&
                   fnCallRound < 3
@@ -2943,116 +2943,125 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                     thoughtTokens = event.thoughtTokens,
                     latencyMs = totalMs,
                     error = null,
-                    chatKind = "Lab",
-                    profile = "",
+                    chatKind = if (isRivia) "Rivia" else "Lab",
+                    profile = if (isRivia) normalizedProfile else "",
                     channel = if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text",
                     fingerprint = "",
                     ruleEvents = "",
                   )
                 )
 
-                val fnCall = event.functionCalls.first()
-                assistantMsg = assistantMsg.copy(status = "calling ${fnCall.name}...")
+                val firstFnCall = event.functionCalls.first()
+                assistantMsg = assistantMsg.copy(status = "calling ${firstFnCall.name}...")
                 _streamingMessageOverlay.value = assistantMsg
 
-                val resolvedArgs =
-                  GeminiInteractionsClient.parseArgumentsObject(fnCall.arguments)
-                    ?: fnCall.arguments
                 val serverUrl = keyRepository.getTabletServerUrl()
                 val appToken = keyRepository.getTabletAppToken()
-                val outcome =
-                  withContext(Dispatchers.IO) {
-                    tabletMcpClient.callTool(
-                      serverUrl = serverUrl,
-                      appToken = appToken,
-                      toolName = fnCall.name,
-                      arguments = resolvedArgs,
-                    )
-                  }
-                logTabletCallOutcome(tool = fnCall.name, outcome = outcome)
-                if (outcome is TabletCallOutcome.Success && outcome.ok) {
-                  val alertRes = applyTabletAlertsFromOutcome(outcome)
-                  if (alertRes?.exactAlarmPermissionMissing == true) {
-                    showError("Exact alarm permission is off in system settings; leave-by alarm saved to Room.")
-                  }
+                val combinedFunctionResultSteps = JSONArray()
 
-                  // JOB-007 Step 2: After a change_schedule_setting or undo_schedule_change reply
-                  // that is ok and whose data.key ends in ".radius_m", pull app_places again right
-                  // away and re-register the geofences, and speak the reply's fallback_text.
-                  if (
-                    (fnCall.name == "change_schedule_setting" ||
-                      fnCall.name == "undo_schedule_change") &&
-                      outcome.value.optBoolean("ok", true)
-                  ) {
-                    val dataObj = outcome.value.optJSONObject("data")
-                    val dataKey = dataObj?.optString("key", "")?.trim().orEmpty()
-                    if (dataKey.endsWith(".radius_m")) {
-                      val fallbackText =
-                        outcome.value.optString("fallback_text", "").trim().ifBlank {
-                          outcome.value
-                            .optJSONObject("message")
-                            ?.optString("fallback_text", "")
-                            ?.trim()
-                            .orEmpty()
-                        }
-                      pendingRadiusResizeFallbackText = fallbackText.takeIf { it.isNotBlank() }
+                for (fnCall in event.functionCalls) {
+                  val resolvedArgs =
+                    GeminiInteractionsClient.parseArgumentsObject(fnCall.arguments)
+                      ?: fnCall.arguments
+                  val outcome =
+                    withContext(Dispatchers.IO) {
+                      tabletMcpClient.callTool(
+                        serverUrl = serverUrl,
+                        appToken = appToken,
+                        toolName = fnCall.name,
+                        arguments = resolvedArgs,
+                      )
+                    }
+                  logTabletCallOutcome(tool = fnCall.name, outcome = outcome)
+                  if (outcome is TabletCallOutcome.Success && outcome.ok) {
+                    val alertRes = applyTabletAlertsFromOutcome(outcome)
+                    if (alertRes?.exactAlarmPermissionMissing == true) {
+                      showError("Exact alarm permission is off in system settings; leave-by alarm saved to Room.")
+                    }
 
-                      viewModelScope.launch(Dispatchers.IO) {
-                        val appCtx = getApplication<Application>()
-                        val syncOutcome =
-                          ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(
-                            context = appCtx,
-                            reason = fnCall.name,
-                          )
-                        _zoneSyncStatusText.value = keyRepository.redact(syncOutcome.summary)
-                      }
+                    // JOB-007 Step 2: After a change_schedule_setting or undo_schedule_change reply
+                    // that is ok and whose data.key ends in ".radius_m", pull app_places again right
+                    // away and re-register the geofences, and speak the reply's fallback_text.
+                    if (
+                      (fnCall.name == "change_schedule_setting" ||
+                        fnCall.name == "undo_schedule_change") &&
+                        outcome.value.optBoolean("ok", true)
+                    ) {
+                      val dataObj = outcome.value.optJSONObject("data")
+                      val dataKey = dataObj?.optString("key", "")?.trim().orEmpty()
+                      if (dataKey.endsWith(".radius_m")) {
+                        val fallbackText =
+                          outcome.value.optString("fallback_text", "").trim().ifBlank {
+                            outcome.value
+                              .optJSONObject("message")
+                              ?.optString("fallback_text", "")
+                              ?.trim()
+                              .orEmpty()
+                          }
+                        pendingRadiusResizeFallbackText = fallbackText.takeIf { it.isNotBlank() }
 
-                      if (
-                        fallbackText.isNotBlank() &&
-                          channel != RiviaChannel.LIVE_VOICE &&
-                          !(channel == RiviaChannel.TYPED_CHAT && settings.autoReadAloud)
-                      ) {
                         viewModelScope.launch(Dispatchers.IO) {
-                          ZoneLocationCoordinator.speakFallbackTextAloud(
-                            context = getApplication(),
-                            fallbackText = fallbackText,
-                            messageIdPrefix = fnCall.name,
-                          )
+                          val appCtx = getApplication<Application>()
+                          val syncOutcome =
+                            ZoneLocationCoordinator.syncPlacesAndRegisterGeofences(
+                              context = appCtx,
+                              reason = fnCall.name,
+                            )
+                          _zoneSyncStatusText.value = keyRepository.redact(syncOutcome.summary)
+                        }
+
+                        if (
+                          fallbackText.isNotBlank() &&
+                            channel != RiviaChannel.LIVE_VOICE &&
+                            !(channel == RiviaChannel.TYPED_CHAT && settings.autoReadAloud)
+                        ) {
+                          viewModelScope.launch(Dispatchers.IO) {
+                            ZoneLocationCoordinator.speakFallbackTextAloud(
+                              context = getApplication(),
+                              fallbackText = fallbackText,
+                              messageIdPrefix = fnCall.name,
+                            )
+                          }
                         }
                       }
                     }
+                  }
+
+                  val toolResultJsonString =
+                    when (outcome) {
+                      is TabletCallOutcome.Success -> {
+                        outcome.value.toString()
+                      }
+                      is TabletCallOutcome.Failure -> {
+                        // Section 4: If the tablet call fails (no connection, timeout, 401/403, 5xx),
+                        // send Gemini a function_result with {"ok":false,"error":{"code":"tablet_unreachable","msg":...}}
+                        JSONObject()
+                          .apply {
+                            put("ok", false)
+                            put(
+                              "error",
+                              JSONObject().apply {
+                                put("code", "tablet_unreachable")
+                                put("msg", outcome.message)
+                              },
+                            )
+                          }
+                          .toString()
+                      }
+                    }
+
+                  val singleResultArr =
+                    geminiClient.buildFunctionResultInput(
+                      toolName = fnCall.name,
+                      callId = fnCall.id,
+                      resultJsonString = toolResultJsonString,
+                    )
+                  for (idx in 0 until singleResultArr.length()) {
+                    singleResultArr.optJSONObject(idx)?.let { combinedFunctionResultSteps.put(it) }
                   }
                 }
 
-                val toolResultJsonString =
-                  when (outcome) {
-                    is TabletCallOutcome.Success -> {
-                      outcome.value.toString()
-                    }
-                    is TabletCallOutcome.Failure -> {
-                      // Section 4: If the tablet call fails (no connection, timeout, 401/403, 5xx),
-                      // send Gemini a function_result with {"ok":false,"error":{"code":"tablet_unreachable","msg":...}}
-                      JSONObject()
-                        .apply {
-                          put("ok", false)
-                          put(
-                            "error",
-                            JSONObject().apply {
-                              put("code", "tablet_unreachable")
-                              put("msg", outcome.message)
-                            },
-                          )
-                        }
-                        .toString()
-                    }
-                  }
-
-                currentOverrideInputSteps =
-                  geminiClient.buildFunctionResultInput(
-                    toolName = fnCall.name,
-                    callId = fnCall.id,
-                    resultJsonString = toolResultJsonString,
-                  )
+                currentOverrideInputSteps = combinedFunctionResultSteps
                 currentPrevId = finalInteractionId
                 assistantMsg =
                   assistantMsg.copy(
@@ -3078,6 +3087,89 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
 
               val fullUntrimmedReply = assistantMsg.content
               val ruleEventsList = mutableListOf<String>()
+
+              if (
+                event.completionStatus.equals("requires_action", ignoreCase = true) &&
+                  fullUntrimmedReply.isBlank()
+              ) {
+                val toolName =
+                  event.functionCalls
+                    .mapNotNull { it.name.takeIf { n -> n.isNotBlank() } }
+                    .joinToString(", ")
+                    .ifBlank { "a tool" }
+                val noReplyToolMsg =
+                  "No reply: Rivia wanted to use $toolName but it could not run (tool rounds used up or tablet tools off)."
+                val h9Active =
+                  isRivia &&
+                    (bundle?.hardRules?.rules?.any { it.id == "H9" && it.active } ?: false)
+
+                if (h9Active) {
+                  ruleEventsList.add("H9: $noReplyToolMsg")
+                  dao.insertRuleEvent(
+                    RuleEventEntity(
+                      chatId = chat.id,
+                      requestId = requestId,
+                      ruleId = "H9",
+                      eventType = layerChannel,
+                      detail = noReplyToolMsg,
+                      timestamp = System.currentTimeMillis(),
+                    )
+                  )
+                }
+
+                val ruleEventsSummary =
+                  ruleEventsList.takeIf { it.isNotEmpty() }?.joinToString(" · ") ?: ""
+
+                assistantMsg =
+                  assistantMsg.copy(
+                    interactionId = finalInteractionId,
+                    serviceTier = event.serviceTier,
+                    inputTokens = event.inputTokens,
+                    outputTokens = event.outputTokens,
+                    thoughtTokens = event.thoughtTokens,
+                    ttftMs = firstTokenTimeMs ?: totalMs,
+                    totalTimeMs = totalMs,
+                    status = "error",
+                    errorMessage = noReplyToolMsg,
+                    rawStepsJson = accumulatedRawSteps.toString(),
+                    ruleEventsSummary = ruleEventsSummary,
+                  )
+                dao.updateMessage(assistantMsg)
+                _streamingMessageOverlay.value = null
+
+                if (isRivia && channel == RiviaChannel.LIVE_VOICE) {
+                  updateTurnDispatchCompletion(
+                    requestId = requestId,
+                    replyText = null,
+                    status = "error",
+                    error = noReplyToolMsg,
+                  )
+                }
+
+                dao.logRequestAndPrune(
+                  RequestLogEntity(
+                    timestamp = System.currentTimeMillis(),
+                    requestId = requestId,
+                    model = chosenModel,
+                    status = "empty",
+                    serviceTier = event.serviceTier,
+                    inputTokens = event.inputTokens,
+                    outputTokens = event.outputTokens,
+                    thoughtTokens = event.thoughtTokens,
+                    latencyMs = totalMs,
+                    error = noReplyToolMsg,
+                    chatKind = if (isRivia) "Rivia" else "Lab",
+                    profile = if (isRivia) normalizedProfile else "",
+                    channel =
+                      if (isRivia) layerChannel
+                      else (if (channel == RiviaChannel.LIVE_VOICE) "voice" else "text"),
+                    fingerprint = turnFingerprint,
+                    ruleEvents = ruleEventsSummary,
+                  )
+                )
+                onErrorCallback?.invoke(noReplyToolMsg, h9Active)
+                return@sendTurn
+              }
 
               // Section 6: H9 (no silent failure) on every user-started turn (Rivia and Lab)
               val isReplyEmpty =

@@ -1156,10 +1156,10 @@ class GeminiInteractionsClient {
               chainedWithPreviousInteractionId = usePreviousInteractionId != null,
             )
           )
-        } else if (interactionId == null) {
+        } else {
           onEvent(
             GeminiStreamEvent.Error(
-              "Stream closed before Gemini returned a response."
+              "Connection closed before Gemini finished"
             )
           )
         }
@@ -1987,15 +1987,14 @@ class GeminiInteractionsClient {
   }
 
   private fun extractApiErrorMessage(code: Int, rawBody: String): String {
-    if (rawBody.isBlank()) return "HTTP $code Error"
+    if (rawBody.isBlank()) return "HTTP $code: Empty error response"
     return try {
       val obj = JSONObject(rawBody)
       val err = obj.optJSONObject("error")
       if (err != null) {
         val msg = err.optString("message")
-        val status = err.optString("status")
         if (msg.isNotBlank()) {
-          if (status.isNotBlank()) "HTTP $code ($status): $msg" else "HTTP $code: $msg"
+          "HTTP $code: $msg"
         } else {
           "HTTP $code: $rawBody"
         }
