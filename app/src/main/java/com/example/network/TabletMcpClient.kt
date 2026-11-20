@@ -76,6 +76,8 @@ sealed class TabletLoginResult {
 
   data class Failure(
     val errorMessage: String,
+    val isTimeout: Boolean = false,
+    val httpStatusCode: Int? = null,
   ) : TabletLoginResult()
 }
 
@@ -167,12 +169,12 @@ class TabletMcpClient(
       val loginUrl =
         buildLoginUrl(serverUrl).getOrElse { err ->
           return@withContext TabletLoginResult.Failure(
-            err.message ?: "Server URL must start with https:// and end in /app/mcp"
+            errorMessage = err.message ?: "Server URL must start with https:// and end in /app/mcp"
           )
         }
       val cleanCode = serverAuthCode.trim()
       if (cleanCode.isBlank()) {
-        return@withContext TabletLoginResult.Failure("Missing server auth code.")
+        return@withContext TabletLoginResult.Failure(errorMessage = "Missing server auth code.")
       }
 
       val payload = JSONObject().apply { put("server_auth_code", cleanCode) }
@@ -186,6 +188,7 @@ class TabletMcpClient(
 
       try {
         httpClient.newCall(req).execute().use { resp ->
+          val statusCode = resp.code
           val rawBody = resp.body?.string().orEmpty()
           val parsed =
             try {
@@ -218,27 +221,48 @@ class TabletMcpClient(
                 JSONObject.NULL -> ""
                 else -> rawErr.toString().trim()
               }
+            if (statusCode == 429 || errStr.equals("rate_limited", ignoreCase = true)) {
+              return@withContext TabletLoginResult.Failure(
+                errorMessage = "Too many tries, wait a minute and try again",
+                httpStatusCode = statusCode,
+              )
+            }
             if (errStr.isNotBlank()) {
               val sanitized =
                 if (cleanCode.length >= 4) errStr.replace(cleanCode, "[REDACTED]") else errStr
-              return@withContext TabletLoginResult.Failure(sanitized)
+              return@withContext TabletLoginResult.Failure(
+                errorMessage = sanitized,
+                httpStatusCode = statusCode,
+              )
             }
           }
 
-          return@withContext TabletLoginResult.Failure("HTTP ${resp.code}")
+          if (statusCode == 429) {
+            return@withContext TabletLoginResult.Failure(
+              errorMessage = "Too many tries, wait a minute and try again",
+              httpStatusCode = statusCode,
+            )
+          }
+
+          return@withContext TabletLoginResult.Failure(
+            errorMessage = "HTTP $statusCode",
+            httpStatusCode = statusCode,
+          )
         }
       } catch (_: SocketTimeoutException) {
-        return@withContext TabletLoginResult.Failure("Try again")
-      } catch (e: InterruptedIOException) {
-        val msg = e.message.orEmpty()
-        if (msg.contains("timeout", ignoreCase = true) || msg.contains("timed out", ignoreCase = true)) {
-          return@withContext TabletLoginResult.Failure("Try again")
-        }
-        return@withContext TabletLoginResult.Failure("Try again")
+        return@withContext TabletLoginResult.Failure(
+          errorMessage = "Sign-in may not have finished. Tap Sign in with Google again.",
+          isTimeout = true,
+        )
+      } catch (_: InterruptedIOException) {
+        return@withContext TabletLoginResult.Failure(
+          errorMessage = "Sign-in may not have finished. Tap Sign in with Google again.",
+          isTimeout = true,
+        )
       } catch (e: Throwable) {
         val msg = e.message?.takeIf { it.isNotBlank() } ?: "Could not reach the tablet server."
         val sanitized = if (cleanCode.length >= 4) msg.replace(cleanCode, "[REDACTED]") else msg
-        return@withContext TabletLoginResult.Failure(sanitized)
+        return@withContext TabletLoginResult.Failure(errorMessage = sanitized)
       }
     }
 

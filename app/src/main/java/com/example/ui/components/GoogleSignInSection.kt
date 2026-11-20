@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.app.Activity
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,6 +44,9 @@ import com.example.ui.theme.RiviaTextPrimary
 import com.example.viewmodel.RiviaViewModel
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
+
+private const val RIVIA_SIGN_IN_LOG_TAG = "RiviaSignIn"
 
 /**
  * Reusable "Sign in with Google" action block backed by Play Services AuthorizationClient.
@@ -65,36 +69,63 @@ fun GoogleSignInActionBlock(
   val isError by viewModel.googleSignInIsError.collectAsStateWithLifecycle()
   val savedToken by viewModel.tabletAppToken.collectAsStateWithLifecycle()
 
+  fun handleApiException(source: String, e: ApiException) {
+    val code = e.statusCode
+    val statusName = CommonStatusCodes.getStatusCodeString(code)
+    Log.w(RIVIA_SIGN_IN_LOG_TAG, "$source ApiException statusCode=$code ($statusName)")
+    if (code == CommonStatusCodes.CANCELED) {
+      viewModel.setGoogleSignInCancelled()
+    } else {
+      viewModel.setGoogleSignInFailed("Google sign-in failed (code $code)")
+    }
+  }
+
   val authResolutionLauncher =
     rememberLauncherForActivityResult(
       ActivityResultContracts.StartIntentSenderForResult()
     ) { activityResult ->
-      if (activityResult.resultCode != Activity.RESULT_OK || activityResult.data == null) {
-        viewModel.setGoogleSignInCancelled()
-        return@rememberLauncherForActivityResult
-      }
-      try {
-        val authResult =
-          Identity.getAuthorizationClient(context)
-            .getAuthorizationResultFromIntent(activityResult.data)
-        val authCode = authResult.serverAuthCode
-        if (authCode.isNullOrBlank()) {
-          viewModel.setGoogleSignInFailed("Google did not return an authorization code.")
-        } else {
-          viewModel.completeGoogleSignInWithAuthCode(
-            serverAuthCode = authCode,
-            customRawUrl = currentServerUrlProvider?.invoke(),
+      val resultCode = activityResult.resultCode
+      val data = activityResult.data
+
+      if (data != null) {
+        try {
+          val authResult =
+            Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(data)
+          val authCode = authResult.serverAuthCode
+          if (authCode.isNullOrBlank()) {
+            if (resultCode == Activity.RESULT_CANCELED) {
+              Log.i(RIVIA_SIGN_IN_LOG_TAG, "Resolution cancelled (RESULT_CANCELED, empty code)")
+              viewModel.setGoogleSignInCancelled()
+            } else {
+              Log.w(
+                RIVIA_SIGN_IN_LOG_TAG,
+                "Resolution returned no serverAuthCode (resultCode=$resultCode)",
+              )
+              viewModel.setGoogleSignInFailed("Google sign-in failed (result $resultCode)")
+            }
+          } else {
+            viewModel.completeGoogleSignInWithAuthCode(
+              serverAuthCode = authCode,
+              customRawUrl = currentServerUrlProvider?.invoke(),
+            )
+          }
+        } catch (e: ApiException) {
+          handleApiException("getAuthorizationResultFromIntent", e)
+        } catch (e: Exception) {
+          Log.w(
+            RIVIA_SIGN_IN_LOG_TAG,
+            "getAuthorizationResultFromIntent unexpected error: ${e.javaClass.simpleName}",
           )
+          viewModel.setGoogleSignInFailed("Google sign-in failed (result $resultCode)")
         }
-      } catch (e: ApiException) {
-        viewModel.setGoogleSignInFailed(
-          e.localizedMessage?.takeIf { it.isNotBlank() }
-            ?: "Google sign-in failed (${e.statusCode})"
-        )
-      } catch (e: Exception) {
-        viewModel.setGoogleSignInFailed(
-          e.localizedMessage?.takeIf { it.isNotBlank() } ?: "Google sign-in failed"
-        )
+      } else {
+        if (resultCode == Activity.RESULT_CANCELED) {
+          Log.i(RIVIA_SIGN_IN_LOG_TAG, "Resolution cancelled (RESULT_CANCELED, no data)")
+          viewModel.setGoogleSignInCancelled()
+        } else {
+          Log.w(RIVIA_SIGN_IN_LOG_TAG, "Resolution returned no data (resultCode=$resultCode)")
+          viewModel.setGoogleSignInFailed("Google sign-in failed (result $resultCode)")
+        }
       }
     }
 
@@ -114,17 +145,20 @@ fun GoogleSignInActionBlock(
                 IntentSenderRequest.Builder(pendingIntent.intentSender).build()
               )
             } catch (e: Exception) {
-              viewModel.setGoogleSignInFailed(
-                e.localizedMessage?.takeIf { it.isNotBlank() }
-                  ?: "Could not open Google sign-in"
+              Log.w(
+                RIVIA_SIGN_IN_LOG_TAG,
+                "Failed to launch authorization resolution: ${e.javaClass.simpleName}",
               )
+              viewModel.setGoogleSignInFailed("Google sign-in failed (could not open prompt)")
             }
           } else {
+            Log.w(RIVIA_SIGN_IN_LOG_TAG, "authorize() had resolution=true but null pendingIntent")
             viewModel.setGoogleSignInFailed("Google sign-in resolution was unavailable.")
           }
         } else {
           val authCode = result.serverAuthCode
           if (authCode.isNullOrBlank()) {
+            Log.w(RIVIA_SIGN_IN_LOG_TAG, "authorize() succeeded without resolution or serverAuthCode")
             viewModel.setGoogleSignInFailed("Google did not return an authorization code.")
           } else {
             viewModel.completeGoogleSignInWithAuthCode(
@@ -135,9 +169,17 @@ fun GoogleSignInActionBlock(
         }
       }
       .addOnFailureListener { e ->
-        viewModel.setGoogleSignInFailed(
-          e.localizedMessage?.takeIf { it.isNotBlank() } ?: "Google sign-in failed"
-        )
+        if (e is ApiException) {
+          handleApiException("authorize", e)
+        } else {
+          Log.w(
+            RIVIA_SIGN_IN_LOG_TAG,
+            "authorize() failure: ${e.javaClass.simpleName}",
+          )
+          viewModel.setGoogleSignInFailed(
+            e.localizedMessage?.takeIf { it.isNotBlank() } ?: "Google sign-in failed"
+          )
+        }
       }
   }
 
@@ -174,7 +216,8 @@ fun GoogleSignInActionBlock(
       )
     }
 
-    if (!statusText.isNullOrBlank() || savedToken.isNotBlank()) {
+    val displayStatus = statusText ?: if (savedToken.isNotBlank()) "Token saved" else null
+    if (!displayStatus.isNullOrBlank()) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -184,13 +227,13 @@ fun GoogleSignInActionBlock(
           status =
             when {
               isError -> StatusType.ERROR
-              !statusText.isNullOrBlank() || savedToken.isNotBlank() -> StatusType.OK
-              else -> StatusType.WARNING
+              displayStatus == "Sign-in cancelled" -> StatusType.WARNING
+              else -> StatusType.OK
             },
           size = 8.dp,
         )
         Text(
-          text = statusText ?: "Signed in to Rivia",
+          text = displayStatus,
           style = MaterialTheme.typography.labelSmall,
           fontFamily = ChivoMonoFontFamily,
           color = if (isError) RiviaErrorRed else RiviaMutedText,

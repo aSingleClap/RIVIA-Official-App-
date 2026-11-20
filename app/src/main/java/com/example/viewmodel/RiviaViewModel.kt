@@ -3900,6 +3900,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
 
   fun setGoogleSignInCancelled() {
     _googleSignInRunning.value = false
+    _googleSignInIsError.value = false
+    _googleSignInStatusText.value = "Sign-in cancelled"
+    showNotice("Sign-in cancelled")
   }
 
   fun setGoogleSignInFailed(errorMessage: String) {
@@ -3934,10 +3937,6 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         return@launch
       }
 
-      if (customRawUrl != null) {
-        keyRepository.saveTabletServerUrl(cleanUrl)
-      }
-
       val result =
         withContext(Dispatchers.IO) {
           tabletMcpClient.loginWithGoogleAuthCode(
@@ -3949,6 +3948,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       _googleSignInRunning.value = false
       when (result) {
         is com.example.network.TabletLoginResult.Success -> {
+          if (customRawUrl != null) {
+            keyRepository.saveTabletServerUrl(cleanUrl)
+          }
           keyRepository.saveTabletAppToken(result.appToken)
           _tabletToolsCache.value = emptyList()
           _tabletToolsUnavailable.value = false
@@ -3957,10 +3959,42 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           showNotice("Signed in to Rivia")
         }
         is com.example.network.TabletLoginResult.Failure -> {
-          val errText = result.errorMessage.ifBlank { "Sign-in failed" }
+          val errText =
+            if (result.isTimeout) {
+              "Sign-in may not have finished. Tap Sign in with Google again."
+            } else if (
+              result.httpStatusCode == 429 ||
+                result.errorMessage.equals("rate_limited", ignoreCase = true)
+            ) {
+              "Too many tries, wait a minute and try again"
+            } else {
+              result.errorMessage.ifBlank { "Sign-in failed" }
+            }
           _googleSignInIsError.value = true
           _googleSignInStatusText.value = errText
           showError(errText)
+
+          if (result.isTimeout) {
+            val existingToken = keyRepository.getTabletAppToken()
+            if (existingToken.isNotBlank()) {
+              val checkOutcome =
+                withContext(Dispatchers.IO) {
+                  tabletMcpClient.listTools(
+                    serverUrl = cleanUrl,
+                    appToken = existingToken,
+                  )
+                }
+              if (
+                checkOutcome is TabletCallOutcome.Failure &&
+                  (checkOutcome.errorCode == "http_401" || checkOutcome.errorCode == "http_403")
+              ) {
+                val revokedMsg = "Saved token was revoked, sign in again"
+                _googleSignInIsError.value = true
+                _googleSignInStatusText.value = revokedMsg
+                showError(revokedMsg)
+              }
+            }
+          }
         }
       }
     }
