@@ -67,6 +67,8 @@ class SecureKeyRepository(private val context: Context) {
     private val ENC_ELEVEN_KEY = stringPreferencesKey("enc_elevenlabs_api_key")
     private val TABLET_SERVER_URL = stringPreferencesKey("tablet_server_url")
     private val ENC_TABLET_APP_TOKEN = stringPreferencesKey("enc_tablet_app_token")
+    private val GOOGLE_ACCOUNT_EMAIL = stringPreferencesKey("google_account_email")
+    private val GOOGLE_ACCOUNT_PICTURE_URL = stringPreferencesKey("google_account_picture_url")
     private val TABLET_TOOLS_ENABLED = booleanPreferencesKey("tablet_tools_enabled")
 
     private val ACTIVE_UI_MODE = stringPreferencesKey("active_ui_mode")
@@ -251,6 +253,12 @@ class SecureKeyRepository(private val context: Context) {
       val enc = prefs[ENC_TABLET_APP_TOKEN].orEmpty()
       KeystoreCrypto.decrypt(enc)
     }
+
+  val googleAccountEmailFlow: Flow<String> =
+    context.secureKeyDataStore.data.map { prefs -> prefs[GOOGLE_ACCOUNT_EMAIL].orEmpty() }
+
+  val googleAccountPictureUrlFlow: Flow<String> =
+    context.secureKeyDataStore.data.map { prefs -> prefs[GOOGLE_ACCOUNT_PICTURE_URL].orEmpty() }
 
   val tabletToolsEnabledFlow: Flow<Boolean> =
     context.secureKeyDataStore.data.map { prefs -> prefs[TABLET_TOOLS_ENABLED] ?: false }
@@ -445,6 +453,21 @@ class SecureKeyRepository(private val context: Context) {
     val clean = rawToken.replace("\r", "").replace("\n", "").trim()
     val encrypted = if (clean.isEmpty()) "" else KeystoreCrypto.encrypt(clean)
     context.secureKeyDataStore.edit { prefs -> prefs[ENC_TABLET_APP_TOKEN] = encrypted }
+  }
+
+  suspend fun saveGoogleAccountProfile(email: String, pictureUrl: String) {
+    context.secureKeyDataStore.edit { prefs ->
+      prefs[GOOGLE_ACCOUNT_EMAIL] = email.trim()
+      prefs[GOOGLE_ACCOUNT_PICTURE_URL] = pictureUrl.trim()
+    }
+  }
+
+  suspend fun clearTabletAuthAndProfile() {
+    context.secureKeyDataStore.edit { prefs ->
+      prefs[ENC_TABLET_APP_TOKEN] = ""
+      prefs[GOOGLE_ACCOUNT_EMAIL] = ""
+      prefs[GOOGLE_ACCOUNT_PICTURE_URL] = ""
+    }
   }
 
   suspend fun getGeminiKey(): String = geminiKeyFlow.first()

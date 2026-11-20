@@ -49,6 +49,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -98,6 +101,16 @@ object ZoneLocationCoordinator {
   const val TAG = "ZoneLocationCoord"
   const val ACTION_GEOFENCE_TRANSITION = "observer.rivia.app.action.GEOFENCE_TRANSITION"
   private const val GEOFENCE_PENDING_INTENT_REQUEST_CODE = 8410
+
+  private val _unauthorized401Events = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+  val unauthorized401Events: SharedFlow<Unit> = _unauthorized401Events.asSharedFlow()
+
+  private suspend fun handleHttp401IfNeeded(context: Context, errorCode: String?) {
+    if (errorCode != "http_401") return
+    toolSchemaCache.clear()
+    SecureKeyRepository(context.applicationContext).clearTabletAuthAndProfile()
+    _unauthorized401Events.tryEmit(Unit)
+  }
 
   const val DEFAULT_RADIUS_METERS = 150f
   const val MIN_RADIUS_METERS = 50f
@@ -291,17 +304,19 @@ object ZoneLocationCoordinator {
     }
   }
 
-  private suspend fun ensureToolSchemasCached(serverUrl: String, appToken: String) {
-    when (val listRes = tabletMcpClient.listTools(serverUrl, appToken)) {
+  private suspend fun ensureToolSchemasCached(context: Context, serverUrl: String, appToken: String): Boolean {
+    return when (val listRes = tabletMcpClient.listTools(serverUrl, appToken)) {
       is TabletCallOutcome.Success -> {
         for (def: TabletToolDef in listRes.value) {
           runCatching {
             toolSchemaCache[def.name] = JSONObject(def.inputSchemaJson)
           }
         }
+        true
       }
       is TabletCallOutcome.Failure -> {
-        // Keep any previously cached tool schemas
+        handleHttp401IfNeeded(context, listRes.errorCode)
+        listRes.errorCode != "http_401"
       }
     }
   }
@@ -533,34 +548,39 @@ object ZoneLocationCoordinator {
         var pullErrorNote: String? = null
 
         if (appToken.isNotBlank() && TabletMcpClient.isValidServerUrl(serverUrl)) {
-          ensureToolSchemasCached(serverUrl, appToken)
-          val placesArgs = JSONObject()
-          when (
-            val outcome =
-              tabletMcpClient.callTool(
-                serverUrl = serverUrl,
-                appToken = appToken,
-                toolName = "app_places",
-                arguments = placesArgs,
-              )
-          ) {
-            is TabletCallOutcome.Success -> {
-              val structured = outcome.value
-              if (outcome.ok && structured.optBoolean("ok", true)) {
-                val previousIds = zoneConfigs.map { it.id }.toSet()
-                zoneConfigs = parsePlacesFromEnvelope(structured)
-                val newIds = zoneConfigs.map { it.id }.toSet()
-                removedPlaceIds = (previousIds - newIds).toList()
-                dao.replaceZoneConfigsFromSync(zoneConfigs)
-              } else {
-                val errMsg =
-                  structured.optJSONObject("error")?.optString("msg", "")?.takeIf { it.isNotBlank() }
-                    ?: "app_places returned ok=false"
-                pullErrorNote = errMsg
+          val schemaOk = ensureToolSchemasCached(appCtx, serverUrl, appToken)
+          if (!schemaOk) {
+            pullErrorNote = "Signed out, sign in again"
+          } else {
+            val placesArgs = JSONObject()
+            when (
+              val outcome =
+                tabletMcpClient.callTool(
+                  serverUrl = serverUrl,
+                  appToken = appToken,
+                  toolName = "app_places",
+                  arguments = placesArgs,
+                )
+            ) {
+              is TabletCallOutcome.Success -> {
+                val structured = outcome.value
+                if (outcome.ok && structured.optBoolean("ok", true)) {
+                  val previousIds = zoneConfigs.map { it.id }.toSet()
+                  zoneConfigs = parsePlacesFromEnvelope(structured)
+                  val newIds = zoneConfigs.map { it.id }.toSet()
+                  removedPlaceIds = (previousIds - newIds).toList()
+                  dao.replaceZoneConfigsFromSync(zoneConfigs)
+                } else {
+                  val errMsg =
+                    structured.optJSONObject("error")?.optString("msg", "")?.takeIf { it.isNotBlank() }
+                      ?: "app_places returned ok=false"
+                  pullErrorNote = errMsg
+                }
               }
-            }
-            is TabletCallOutcome.Failure -> {
-              pullErrorNote = outcome.message
+              is TabletCallOutcome.Failure -> {
+                handleHttp401IfNeeded(appCtx, outcome.errorCode)
+                pullErrorNote = outcome.message
+              }
             }
           }
         } else {
@@ -1111,7 +1131,12 @@ object ZoneLocationCoordinator {
       return false
     }
 
-    ensureToolSchemasCached(serverUrl, appToken)
+    if (!ensureToolSchemasCached(appCtx, serverUrl, appToken)) {
+      if (zoneEvent != null) {
+        dao.updateZoneEvent(zoneEvent.copy(arrivalStatus = "failed:http_401"))
+      }
+      return false
+    }
     val arrivalSchema = toolSchemaCache["app_arrival"]
     val rawArgs = buildAppArrivalArguments(call, arrivalSchema)
     dao.getLastNonBounceExitForPlaceBefore(call.placeId, call.eventTimeMs)?.let { exitHere ->
@@ -1164,6 +1189,7 @@ object ZoneLocationCoordinator {
         }
       }
       is TabletCallOutcome.Failure -> {
+        handleHttp401IfNeeded(appCtx, outcome.errorCode)
         val isRetryableNetwork =
           outcome.errorCode == "tablet_unreachable" ||
             outcome.errorCode.startsWith("http_5") ||
@@ -1234,9 +1260,16 @@ object ZoneLocationCoordinator {
           toolName = "app_open",
           arguments = JSONObject(),
         )
-      if (outcome is TabletCallOutcome.Success && outcome.ok && outcome.value.optBoolean("ok", true)) {
-        ScheduleAlarmCoordinator.applyAlertsFromTabletReply(appCtx, outcome.value)
-        speakArrivalReplyIfRequested(context = appCtx, placeId = "home", structured = outcome.value)
+      when (outcome) {
+        is TabletCallOutcome.Success -> {
+          if (outcome.ok && outcome.value.optBoolean("ok", true)) {
+            ScheduleAlarmCoordinator.applyAlertsFromTabletReply(appCtx, outcome.value)
+            speakArrivalReplyIfRequested(context = appCtx, placeId = "home", structured = outcome.value)
+          }
+        }
+        is TabletCallOutcome.Failure -> {
+          handleHttp401IfNeeded(appCtx, outcome.errorCode)
+        }
       }
     }
 
@@ -1443,7 +1476,24 @@ object ZoneLocationCoordinator {
       val coordsStr =
         String.format(java.util.Locale.US, "%.6f,%.6f", location.latitude, location.longitude)
 
-      ensureToolSchemasCached(serverUrl, appToken)
+      if (!ensureToolSchemasCached(appCtx, serverUrl, appToken)) {
+        return@withContext PinPlaceOutcome(
+          ok = false,
+          status = "http_401",
+          isPendingApproval = false,
+          ticket = null,
+          coords = coordsStr,
+          targetLabel = targetLabel,
+          fallbackText = "",
+          summary = "Signed out, sign in again",
+          callOutcome =
+            TabletCallOutcome.Failure(
+              message = "The tablet refused the app token.",
+              errorCode = "http_401",
+              latencyMs = 0L,
+            ),
+        )
+      }
       val args =
         JSONObject().apply {
           put("coords", coordsStr)
@@ -1549,6 +1599,7 @@ object ZoneLocationCoordinator {
           }
         }
         is TabletCallOutcome.Failure -> {
+          handleHttp401IfNeeded(appCtx, outcome.errorCode)
           PinPlaceOutcome(
             ok = false,
             status = outcome.errorCode,

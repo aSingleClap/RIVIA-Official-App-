@@ -129,6 +129,7 @@ dependencies {
   implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.play.services.location)
   implementation(libs.play.services.auth)
+  implementation(libs.coil.compose)
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.common)
   implementation(libs.kotlinx.coroutines.android)

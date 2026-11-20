@@ -14,31 +14,43 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.network.GoogleRiviaAuthHelper
 import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaErrorRed
 import com.example.ui.theme.RiviaIconDefault
 import com.example.ui.theme.RiviaMutedText
+import com.example.ui.theme.RiviaSurface1
 import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaTextPrimary
 import com.example.viewmodel.RiviaViewModel
@@ -50,8 +62,9 @@ private const val RIVIA_SIGN_IN_LOG_TAG = "RiviaSignIn"
 
 /**
  * Reusable "Sign in with Google" action block backed by Play Services AuthorizationClient.
- * Requests offline access for the Rivia server Web client ID and posts serverAuthCode to
- * /app/login to receive and save a fresh Rivia app_token.
+ * Requests offline access for the Rivia server Web client ID, fetches Google OIDC profile
+ * (email + picture), and posts serverAuthCode to /app/login to receive and save a fresh
+ * Rivia app_token. Driven by saved token and email state so sign-out updates all instances.
  */
 @Composable
 fun GoogleSignInActionBlock(
@@ -68,6 +81,12 @@ fun GoogleSignInActionBlock(
   val statusText by viewModel.googleSignInStatusText.collectAsStateWithLifecycle()
   val isError by viewModel.googleSignInIsError.collectAsStateWithLifecycle()
   val savedToken by viewModel.tabletAppToken.collectAsStateWithLifecycle()
+  val savedEmail by viewModel.googleAccountEmail.collectAsStateWithLifecycle()
+  val savedPictureUrl by viewModel.googleAccountPictureUrl.collectAsStateWithLifecycle()
+
+  var showSignOutConfirm by remember { mutableStateOf(false) }
+
+  val isSignedInWithGoogle = savedToken.isNotBlank() && savedEmail.isNotBlank()
 
   fun handleApiException(source: String, e: ApiException) {
     val code = e.statusCode
@@ -106,6 +125,7 @@ fun GoogleSignInActionBlock(
           } else {
             viewModel.completeGoogleSignInWithAuthCode(
               serverAuthCode = authCode,
+              accessToken = authResult.accessToken,
               customRawUrl = currentServerUrlProvider?.invoke(),
             )
           }
@@ -163,6 +183,7 @@ fun GoogleSignInActionBlock(
           } else {
             viewModel.completeGoogleSignInWithAuthCode(
               serverAuthCode = authCode,
+              accessToken = result.accessToken,
               customRawUrl = currentServerUrlProvider?.invoke(),
             )
           }
@@ -187,59 +208,168 @@ fun GoogleSignInActionBlock(
     modifier = modifier.fillMaxWidth(),
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
-    OutlinedButton(
-      onClick = { startGoogleSignIn() },
-      enabled = !isRunning,
-      shape = RoundedCornerShape(14.dp),
-      border = BorderStroke(1.dp, RiviaBorder),
-      colors =
-        ButtonDefaults.outlinedButtonColors(
-          containerColor = RiviaSurface2,
-          contentColor = RiviaTextPrimary,
-        ),
-      modifier =
-        Modifier.fillMaxWidth()
-          .minimumInteractiveComponentSize()
-          .testTag(buttonTestTag),
-    ) {
-      Icon(
-        imageVector = Icons.Outlined.AccountCircle,
-        contentDescription = "Sign in with Google",
-        tint = RiviaIconDefault,
-        modifier = Modifier.size(18.dp),
-      )
-      Spacer(modifier = Modifier.width(8.dp))
-      Text(
-        text = if (isRunning) "Signing in…" else "Sign in with Google",
-        color = RiviaTextPrimary,
-        fontWeight = FontWeight.SemiBold,
-      )
-    }
-
-    val displayStatus = statusText ?: if (savedToken.isNotBlank()) "Token saved" else null
-    if (!displayStatus.isNullOrBlank()) {
+    if (isSignedInWithGoogle) {
+      val fallbackPainter = rememberVectorPainter(Icons.Outlined.AccountCircle)
       Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
       ) {
-        StatusShape(
-          status =
-            when {
-              isError -> StatusType.ERROR
-              displayStatus == "Sign-in cancelled" -> StatusType.WARNING
-              else -> StatusType.OK
-            },
-          size = 8.dp,
+        AsyncImage(
+          model = savedPictureUrl.takeIf { it.isNotBlank() },
+          contentDescription = "Google account profile picture",
+          placeholder = fallbackPainter,
+          error = fallbackPainter,
+          fallback = fallbackPainter,
+          contentScale = ContentScale.Crop,
+          modifier = Modifier.size(40.dp).clip(CircleShape),
         )
         Text(
-          text = displayStatus,
-          style = MaterialTheme.typography.labelSmall,
-          fontFamily = ChivoMonoFontFamily,
-          color = if (isError) RiviaErrorRed else RiviaMutedText,
-          modifier = Modifier.testTag(statusTestTag),
+          text = savedEmail,
+          style = MaterialTheme.typography.bodyMedium,
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.Medium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f).testTag("${buttonTestTag}_email"),
         )
       }
+
+      OutlinedButton(
+        onClick = { showSignOutConfirm = true },
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, RiviaBorder),
+        colors =
+          ButtonDefaults.outlinedButtonColors(
+            containerColor = RiviaSurface2,
+            contentColor = RiviaTextPrimary,
+          ),
+        modifier =
+          Modifier.fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .testTag("${buttonTestTag}_sign_out"),
+      ) {
+        Text(
+          text = "Sign out",
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+
+      if (!statusText.isNullOrBlank()) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+        ) {
+          StatusShape(
+            status = if (isError) StatusType.ERROR else StatusType.OK,
+            size = 8.dp,
+          )
+          Text(
+            text = statusText!!,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = ChivoMonoFontFamily,
+            color = if (isError) RiviaErrorRed else RiviaMutedText,
+            modifier = Modifier.testTag(statusTestTag),
+          )
+        }
+      }
+    } else {
+      OutlinedButton(
+        onClick = { startGoogleSignIn() },
+        enabled = !isRunning,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, RiviaBorder),
+        colors =
+          ButtonDefaults.outlinedButtonColors(
+            containerColor = RiviaSurface2,
+            contentColor = RiviaTextPrimary,
+          ),
+        modifier =
+          Modifier.fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .testTag(buttonTestTag),
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.AccountCircle,
+          contentDescription = "Sign in with Google",
+          tint = RiviaIconDefault,
+          modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+          text = if (isRunning) "Signing in…" else "Sign in with Google",
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+
+      val displayStatus = statusText ?: if (savedToken.isNotBlank()) "Token saved" else null
+      if (!displayStatus.isNullOrBlank()) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+        ) {
+          StatusShape(
+            status =
+              when {
+                isError -> StatusType.ERROR
+                displayStatus == "Sign-in cancelled" || displayStatus == "Signed out" ->
+                  StatusType.WARNING
+                else -> StatusType.OK
+              },
+            size = 8.dp,
+          )
+          Text(
+            text = displayStatus,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = ChivoMonoFontFamily,
+            color = if (isError) RiviaErrorRed else RiviaMutedText,
+            modifier = Modifier.testTag(statusTestTag),
+          )
+        }
+      }
     }
+  }
+
+  if (showSignOutConfirm) {
+    AlertDialog(
+      onDismissRequest = { showSignOutConfirm = false },
+      containerColor = RiviaSurface1,
+      title = {
+        Text(
+          text = "Sign out?",
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+        )
+      },
+      text = {
+        Text(
+          text = "Clear the saved token and disconnect this device from your Rivia server?",
+          color = RiviaMutedText,
+        )
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            showSignOutConfirm = false
+            viewModel.signOutGoogleAccount()
+          },
+          modifier = Modifier.testTag("${buttonTestTag}_sign_out_confirm"),
+        ) {
+          Text("Sign out", color = RiviaErrorRed, fontWeight = FontWeight.SemiBold)
+        }
+      },
+      dismissButton = {
+        TextButton(
+          onClick = { showSignOutConfirm = false },
+          modifier = Modifier.testTag("${buttonTestTag}_sign_out_cancel"),
+        ) {
+          Text("Cancel", color = RiviaTextPrimary)
+        }
+      },
+    )
   }
 }

@@ -46,6 +46,7 @@ import com.example.network.ElevenLabsModel
 import com.example.network.ElevenLabsVoice
 import com.example.network.GeminiInteractionsClient
 import com.example.network.GeminiStreamEvent
+import com.example.network.GoogleRiviaAuthHelper
 import com.example.network.TabletCallOutcome
 import com.example.network.TabletMcpClient
 import com.example.network.TabletToolDef
@@ -72,6 +73,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1228,6 +1230,23 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   private val _googleSignInIsError = MutableStateFlow(false)
   val googleSignInIsError: StateFlow<Boolean> = _googleSignInIsError.asStateFlow()
 
+  val googleAccountEmail: StateFlow<String> =
+    keyRepository.googleAccountEmailFlow.stateIn(
+      viewModelScope,
+      SharingStarted.WhileSubscribed(5000),
+      "",
+    )
+
+  val googleAccountPictureUrl: StateFlow<String> =
+    keyRepository.googleAccountPictureUrlFlow.stateIn(
+      viewModelScope,
+      SharingStarted.WhileSubscribed(5000),
+      "",
+    )
+
+  private val autoSignOutMutex = Mutex()
+  private var autoSignOutBannerShown = false
+
   val scheduleAlerts: StateFlow<List<ScheduleAlertEntity>> =
     dao
       .observeScheduleAlerts()
@@ -1327,6 +1346,12 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   val isLoadingVoices: StateFlow<Boolean> = _isLoadingVoices.asStateFlow()
 
   init {
+    viewModelScope.launch {
+      ZoneLocationCoordinator.unauthorized401Events.collect {
+        handleTabletHttp401IfNeeded("http_401")
+      }
+    }
+
     // 0. Ensure the high-importance leave-by alerts channel exists, re-arm any pending future alarms,
     // and initialize the 5 canonical geofence zones + periodic WorkManager jobs
     ScheduleAlarmCoordinator.ensureNotificationChannel(application)
@@ -3042,6 +3067,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                         outcome.value.toString()
                       }
                       is TabletCallOutcome.Failure -> {
+                        handleTabletHttp401IfNeeded(outcome.errorCode)
                         // Section 4: If the tablet call fails (no connection, timeout, 401/403, 5xx),
                         // send Gemini a function_result with {"ok":false,"error":{"code":"tablet_unreachable","msg":...}}
                         JSONObject()
@@ -3885,6 +3911,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       keyRepository.saveTabletServerUrl(cleanUrl)
       keyRepository.saveTabletAppToken(cleanToken)
+      if (cleanToken.isNotBlank()) {
+        autoSignOutBannerShown = false
+      }
       // Invalidate tool cache so next call uses updated credentials
       _tabletToolsCache.value = emptyList()
       showNotice("Tablet settings saved.")
@@ -3913,8 +3942,45 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     showError(cleanMsg)
   }
 
+  fun signOutGoogleAccount() {
+    viewModelScope.launch {
+      autoSignOutMutex.withLock {
+        keyRepository.clearTabletAuthAndProfile()
+        _tabletToolsCache.value = emptyList()
+        _tabletToolsUnavailable.value = true
+        _googleSignInRunning.value = false
+        _googleSignInIsError.value = false
+        _googleSignInStatusText.value = "Signed out"
+        autoSignOutBannerShown = false
+      }
+      showNotice("Signed out")
+    }
+  }
+
+  private suspend fun handleTabletHttp401IfNeeded(errorCode: String?): Boolean {
+    if (errorCode != "http_401") return false
+    var shouldShowBanner = false
+    autoSignOutMutex.withLock {
+      keyRepository.clearTabletAuthAndProfile()
+      _tabletToolsCache.value = emptyList()
+      _tabletToolsUnavailable.value = true
+      _googleSignInRunning.value = false
+      _googleSignInIsError.value = true
+      _googleSignInStatusText.value = "Signed out, sign in again"
+      if (!autoSignOutBannerShown) {
+        autoSignOutBannerShown = true
+        shouldShowBanner = true
+      }
+    }
+    if (shouldShowBanner) {
+      showError("Signed out, sign in again")
+    }
+    return true
+  }
+
   fun completeGoogleSignInWithAuthCode(
     serverAuthCode: String,
+    accessToken: String? = null,
     customRawUrl: String? = null,
   ) {
     viewModelScope.launch {
@@ -3937,6 +4003,15 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         return@launch
       }
 
+      val userInfoDeferred =
+        async(Dispatchers.IO) {
+          if (!accessToken.isNullOrBlank()) {
+            GoogleRiviaAuthHelper.fetchUserInfo(accessToken)
+          } else {
+            null
+          }
+        }
+
       val result =
         withContext(Dispatchers.IO) {
           tabletMcpClient.loginWithGoogleAuthCode(
@@ -3952,13 +4027,22 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
             keyRepository.saveTabletServerUrl(cleanUrl)
           }
           keyRepository.saveTabletAppToken(result.appToken)
+          val userInfo = runCatching { userInfoDeferred.await() }.getOrNull()
+          if (userInfo != null && userInfo.email.isNotBlank()) {
+            keyRepository.saveGoogleAccountProfile(
+              email = userInfo.email,
+              pictureUrl = userInfo.pictureUrl,
+            )
+          }
           _tabletToolsCache.value = emptyList()
           _tabletToolsUnavailable.value = false
+          autoSignOutBannerShown = false
           _googleSignInIsError.value = false
           _googleSignInStatusText.value = "Signed in to Rivia"
           showNotice("Signed in to Rivia")
         }
         is com.example.network.TabletLoginResult.Failure -> {
+          userInfoDeferred.cancel()
           val errText =
             if (result.isTimeout) {
               "Sign-in may not have finished. Tap Sign in with Google again."
@@ -3984,14 +4068,15 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                     appToken = existingToken,
                   )
                 }
-              if (
-                checkOutcome is TabletCallOutcome.Failure &&
-                  (checkOutcome.errorCode == "http_401" || checkOutcome.errorCode == "http_403")
-              ) {
-                val revokedMsg = "Saved token was revoked, sign in again"
-                _googleSignInIsError.value = true
-                _googleSignInStatusText.value = revokedMsg
-                showError(revokedMsg)
+              if (checkOutcome is TabletCallOutcome.Failure) {
+                if (checkOutcome.errorCode == "http_401") {
+                  handleTabletHttp401IfNeeded("http_401")
+                } else if (checkOutcome.errorCode == "http_403") {
+                  val forbiddenMsg = keyRepository.redact(checkOutcome.message)
+                  _googleSignInIsError.value = true
+                  _googleSignInStatusText.value = forbiddenMsg
+                  showError(forbiddenMsg)
+                }
               }
             }
           }
@@ -4066,6 +4151,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           _tabletTestResultText.value = displayLine
         }
         is TabletCallOutcome.Failure -> {
+          val signedOut = handleTabletHttp401IfNeeded(res.errorCode)
           val redactedMsg = keyRepository.redact(res.message)
           val errCode =
             res.errorCode.ifBlank {
@@ -4082,8 +4168,11 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           )
           _tabletToolsUnavailable.value = true
           _tabletTestIsError.value = true
-          _tabletTestResultText.value = redactedMsg
-          showError(redactedMsg)
+          _tabletTestResultText.value =
+            if (signedOut) "Signed out, sign in again" else redactedMsg
+          if (!signedOut) {
+            showError(redactedMsg)
+          }
         }
       }
     }
@@ -4183,7 +4272,15 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { JSONObject(def.inputSchemaJson) }.getOrNull()
               }
           }
-          is TabletCallOutcome.Failure -> null
+          is TabletCallOutcome.Failure -> {
+            if (handleTabletHttp401IfNeeded(listOutcome.errorCode)) {
+              _tabletArrivalRunning.value = false
+              _tabletArrivalIsError.value = true
+              _tabletArrivalResultText.value = "Signed out, sign in again"
+              return@launch
+            }
+            null
+          }
         }
 
       val args =
@@ -4262,10 +4359,14 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
           }
         }
         is TabletCallOutcome.Failure -> {
+          val signedOut = handleTabletHttp401IfNeeded(outcome.errorCode)
           val redactedMsg = keyRepository.redact(outcome.message)
           _tabletArrivalIsError.value = true
-          _tabletArrivalResultText.value = redactedMsg
-          showError(redactedMsg)
+          _tabletArrivalResultText.value =
+            if (signedOut) "Signed out, sign in again" else redactedMsg
+          if (!signedOut) {
+            showError(redactedMsg)
+          }
         }
       }
     }
@@ -4359,13 +4460,19 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         logTabletCallOutcome(tool = "app_pin_place", outcome = callOut)
       }
 
+      val pinCallFailureCode = (outcome.callOutcome as? TabletCallOutcome.Failure)?.errorCode
+      val signedOut401 = handleTabletHttp401IfNeeded(pinCallFailureCode)
+
       _pinLocationRunning.value = false
       _pinLocationIsError.value = !outcome.ok
       _pinLocationPendingApproval.value = outcome.ok && outcome.isPendingApproval
-      _pinLocationStatusText.value = keyRepository.redact(outcome.summary)
+      _pinLocationStatusText.value =
+        if (signedOut401) "Signed out, sign in again" else keyRepository.redact(outcome.summary)
 
       if (!outcome.ok) {
-        showError(keyRepository.redact(outcome.summary))
+        if (!signedOut401) {
+          showError(keyRepository.redact(outcome.summary))
+        }
         return@launch
       }
 
@@ -4458,6 +4565,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         }
       }
       is TabletCallOutcome.Failure -> {
+        handleTabletHttp401IfNeeded(res.errorCode)
         val errCode =
           res.errorCode.ifBlank {
             if (res.message.contains("refused the app token", ignoreCase = true)) "unauthorized"
