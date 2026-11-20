@@ -1219,6 +1219,15 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   private val _tabletArrivalIsError = MutableStateFlow(false)
   val tabletArrivalIsError: StateFlow<Boolean> = _tabletArrivalIsError.asStateFlow()
 
+  private val _googleSignInRunning = MutableStateFlow(false)
+  val googleSignInRunning: StateFlow<Boolean> = _googleSignInRunning.asStateFlow()
+
+  private val _googleSignInStatusText = MutableStateFlow<String?>(null)
+  val googleSignInStatusText: StateFlow<String?> = _googleSignInStatusText.asStateFlow()
+
+  private val _googleSignInIsError = MutableStateFlow(false)
+  val googleSignInIsError: StateFlow<Boolean> = _googleSignInIsError.asStateFlow()
+
   val scheduleAlerts: StateFlow<List<ScheduleAlertEntity>> =
     dao
       .observeScheduleAlerts()
@@ -3881,6 +3890,80 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       showNotice("Tablet settings saved.")
     }
     return true
+  }
+
+  fun setGoogleSignInStarted() {
+    _googleSignInRunning.value = true
+    _googleSignInIsError.value = false
+    _googleSignInStatusText.value = null
+  }
+
+  fun setGoogleSignInCancelled() {
+    _googleSignInRunning.value = false
+  }
+
+  fun setGoogleSignInFailed(errorMessage: String) {
+    val cleanMsg = errorMessage.ifBlank { "Google sign-in failed." }
+    _googleSignInRunning.value = false
+    _googleSignInIsError.value = true
+    _googleSignInStatusText.value = cleanMsg
+    showError(cleanMsg)
+  }
+
+  fun completeGoogleSignInWithAuthCode(
+    serverAuthCode: String,
+    customRawUrl: String? = null,
+  ) {
+    viewModelScope.launch {
+      _googleSignInRunning.value = true
+      _googleSignInIsError.value = false
+      _googleSignInStatusText.value = null
+
+      val cleanUrl =
+        customRawUrl
+          ?.let { SecureKeyRepository.normalizeNoWhitespace(it) }
+          ?.takeIf { it.isNotBlank() }
+          ?: keyRepository.getTabletServerUrl()
+
+      if (!TabletMcpClient.isValidServerUrl(cleanUrl)) {
+        val msg = "Server URL must start with https:// and end in /app/mcp."
+        _googleSignInRunning.value = false
+        _googleSignInIsError.value = true
+        _googleSignInStatusText.value = msg
+        showError(msg)
+        return@launch
+      }
+
+      if (customRawUrl != null) {
+        keyRepository.saveTabletServerUrl(cleanUrl)
+      }
+
+      val result =
+        withContext(Dispatchers.IO) {
+          tabletMcpClient.loginWithGoogleAuthCode(
+            serverUrl = cleanUrl,
+            serverAuthCode = serverAuthCode,
+          )
+        }
+
+      _googleSignInRunning.value = false
+      when (result) {
+        is com.example.network.TabletLoginResult.Success -> {
+          keyRepository.saveTabletAppToken(result.appToken)
+          _tabletToolsCache.value = emptyList()
+          _tabletToolsUnavailable.value = false
+          _googleSignInIsError.value = false
+          _googleSignInStatusText.value = "Signed in to Rivia"
+          showNotice("Signed in to Rivia")
+        }
+        is com.example.network.TabletLoginResult.Failure -> {
+          val errText = result.errorMessage.ifBlank { "Sign-in failed" }
+          _googleSignInIsError.value = true
+          _googleSignInStatusText.value = errText
+          showError(errText)
+        }
+      }
+    }
   }
 
   fun testTabletConnection(customRawUrl: String? = null, customRawToken: String? = null) {

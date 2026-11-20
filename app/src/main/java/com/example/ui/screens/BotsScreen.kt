@@ -88,6 +88,7 @@ import com.example.ui.theme.RiviaTextPrimary
 import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
+import com.example.ui.components.GoogleSignInActionBlock
 import com.example.viewmodel.RiviaViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -261,6 +262,12 @@ fun BotsScreen(
               "Encrypted with Android Keystore AES-256. Server URL must start with https:// and end in /app/mcp.",
             style = MaterialTheme.typography.bodySmall,
             color = RiviaMutedText,
+          )
+          GoogleSignInActionBlock(
+            viewModel = viewModel,
+            currentServerUrlProvider = { tabletUrlDraft },
+            buttonTestTag = "bots_google_sign_in_button",
+            statusTestTag = "bots_google_sign_in_status",
           )
           OutlinedTextField(
             value = tabletUrlDraft,

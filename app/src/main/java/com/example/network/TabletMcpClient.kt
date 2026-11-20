@@ -1,6 +1,8 @@
 package com.example.network
 
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +68,17 @@ sealed class TabletCallOutcome<out T> {
   ) : TabletCallOutcome<Nothing>()
 }
 
+sealed class TabletLoginResult {
+  data class Success(
+    val appToken: String,
+    val expiresInSeconds: Long? = null,
+  ) : TabletLoginResult()
+
+  data class Failure(
+    val errorMessage: String,
+  ) : TabletLoginResult()
+}
+
 /**
  * Standalone JSON-RPC 2.0 over HTTP client for Jordan's tablet tool server.
  * Kept strictly outside PluginRegistry.
@@ -101,6 +114,12 @@ class TabletMcpClient(
     }
 
     fun isValidServerUrl(raw: String): Boolean = validateServerUrl(raw).isSuccess
+
+    fun buildLoginUrl(rawServerUrl: String): Result<String> {
+      return validateServerUrl(rawServerUrl).map { cleanMcpUrl ->
+        cleanMcpUrl.removeSuffix("/app/mcp") + "/app/login"
+      }
+    }
   }
 
   private val rpcIdCounter = AtomicInteger(1)
@@ -134,6 +153,94 @@ class TabletMcpClient(
       .connectTimeout(10, TimeUnit.SECONDS)
       .readTimeout(30, TimeUnit.SECONDS)
       .build()
+
+  /**
+   * Exchanges a Google server_auth_code with the tablet's /app/login endpoint for a Rivia app_token.
+   * Reads the JSON body on every HTTP status code (including 400, 403, 429, 500) and never logs
+   * or exposes the server auth code or returned app token.
+   */
+  suspend fun loginWithGoogleAuthCode(
+    serverUrl: String,
+    serverAuthCode: String,
+  ): TabletLoginResult =
+    withContext(Dispatchers.IO) {
+      val loginUrl =
+        buildLoginUrl(serverUrl).getOrElse { err ->
+          return@withContext TabletLoginResult.Failure(
+            err.message ?: "Server URL must start with https:// and end in /app/mcp"
+          )
+        }
+      val cleanCode = serverAuthCode.trim()
+      if (cleanCode.isBlank()) {
+        return@withContext TabletLoginResult.Failure("Missing server auth code.")
+      }
+
+      val payload = JSONObject().apply { put("server_auth_code", cleanCode) }
+      val reqBody = payload.toString().toRequestBody(JSON_MEDIA_TYPE)
+      val req =
+        Request.Builder()
+          .url(loginUrl)
+          .post(reqBody)
+          .header("Content-Type", "application/json")
+          .build()
+
+      try {
+        httpClient.newCall(req).execute().use { resp ->
+          val rawBody = resp.body?.string().orEmpty()
+          val parsed =
+            try {
+              if (rawBody.trim().startsWith("{")) JSONObject(rawBody.trim()) else null
+            } catch (_: Exception) {
+              null
+            }
+
+          if (parsed != null) {
+            val ok = parsed.optBoolean("ok", false)
+            if (ok) {
+              val appToken = normalizeAppToken(parsed.optString("app_token", ""))
+              if (appToken.isNotBlank()) {
+                val expiresIn = if (parsed.has("expires_in")) parsed.optLong("expires_in") else null
+                return@withContext TabletLoginResult.Success(
+                  appToken = appToken,
+                  expiresInSeconds = expiresIn,
+                )
+              }
+            }
+            val rawErr = parsed.opt("error")
+            val errStr =
+              when (rawErr) {
+                is String -> rawErr.trim()
+                is JSONObject ->
+                  rawErr.optString("message", "").trim()
+                    .ifBlank { rawErr.optString("msg", "").trim() }
+                    .ifBlank { rawErr.optString("code", "").trim() }
+                null,
+                JSONObject.NULL -> ""
+                else -> rawErr.toString().trim()
+              }
+            if (errStr.isNotBlank()) {
+              val sanitized =
+                if (cleanCode.length >= 4) errStr.replace(cleanCode, "[REDACTED]") else errStr
+              return@withContext TabletLoginResult.Failure(sanitized)
+            }
+          }
+
+          return@withContext TabletLoginResult.Failure("HTTP ${resp.code}")
+        }
+      } catch (_: SocketTimeoutException) {
+        return@withContext TabletLoginResult.Failure("Try again")
+      } catch (e: InterruptedIOException) {
+        val msg = e.message.orEmpty()
+        if (msg.contains("timeout", ignoreCase = true) || msg.contains("timed out", ignoreCase = true)) {
+          return@withContext TabletLoginResult.Failure("Try again")
+        }
+        return@withContext TabletLoginResult.Failure("Try again")
+      } catch (e: Throwable) {
+        val msg = e.message?.takeIf { it.isNotBlank() } ?: "Could not reach the tablet server."
+        val sanitized = if (cleanCode.length >= 4) msg.replace(cleanCode, "[REDACTED]") else msg
+        return@withContext TabletLoginResult.Failure(sanitized)
+      }
+    }
 
   suspend fun listTools(
     serverUrl: String,

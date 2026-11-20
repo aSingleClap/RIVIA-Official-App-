@@ -102,6 +102,7 @@ import com.example.data.RequestLogEntity
 import com.example.data.VoiceEmotionLogEntity
 import com.example.network.ElevenLabsClient
 import com.example.plugin.PluginRegistry
+import com.example.ui.components.GoogleSignInActionBlock
 import com.example.ui.components.GuideHeaderButton
 import com.example.ui.components.InfoHelpIconButton
 import com.example.ui.components.RiviaSettingsGuide
@@ -764,6 +765,23 @@ private fun RiviaBackupTab(
   ) {
     item {
       SettingsCardSection(
+        title = "Rivia account",
+      ) {
+        Text(
+          text = "Sign in with Google to connect this device to your Rivia server.",
+          style = MaterialTheme.typography.bodySmall,
+          color = RiviaMutedText,
+        )
+        GoogleSignInActionBlock(
+          viewModel = viewModel,
+          buttonTestTag = "rivia_google_sign_in_button",
+          statusTestTag = "rivia_google_sign_in_status",
+        )
+      }
+    }
+
+    item {
+      SettingsCardSection(
         title = "Back up chats",
         onHelpClick = { onShowHelp("ev_backup") },
       ) {
@@ -1204,6 +1222,12 @@ private fun KeysAndBackupTab(
               "Encrypted with Android Keystore AES-256. Server URL must start with https:// and end in /app/mcp.",
             style = MaterialTheme.typography.bodySmall,
             color = RiviaMutedText,
+          )
+          GoogleSignInActionBlock(
+            viewModel = viewModel,
+            currentServerUrlProvider = { tabletUrlDraft },
+            buttonTestTag = "settings_google_sign_in_button",
+            statusTestTag = "settings_google_sign_in_status",
           )
           OutlinedTextField(
             value = tabletUrlDraft,
