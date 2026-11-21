@@ -425,13 +425,21 @@ private fun VadEngineLayerCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        Text(
-          text = "Layer 1: VAD Engine",
-          style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.SemiBold,
-          color = RiviaTextPrimary,
-          modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "Layer 1: VAD Engine",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = RiviaTextPrimary,
+          )
+          Text(
+            text =
+              "Rivia's behind-the-scenes mood, kept as three numbers: how good she feels, how wound up she is, and how in control she feels. Right now it only keeps track of her mood. It doesn't change her replies yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaSecondaryText,
+            modifier = Modifier.testTag("vad_description"),
+          )
+        }
 
         IconButton(
           onClick = onToggleExpanded,
@@ -452,68 +460,18 @@ private fun VadEngineLayerCard(
         enter = expandVertically() + fadeIn(),
         exit = shrinkVertically() + fadeOut(),
       ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(
+          modifier = Modifier.fillMaxWidth().testTag("vad_sublayers_container"),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
           Text(
-            text = "Valence, Arousal, Dominance mood model (display only).",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaSecondaryText,
+            text = "Sub-layers coming soon.",
+            style = MaterialTheme.typography.labelSmall,
+            color = RiviaTextTertiary,
           )
-
-          Surface(
-            color = MaterialTheme.colorScheme.background,
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, RiviaBorder),
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Column(
-              modifier = Modifier.padding(12.dp),
-              verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              VadDimensionRow(
-                label = "Valence",
-                description = "Pleasantness (negative to positive)",
-              )
-              HorizontalDivider(color = RiviaBorder)
-              VadDimensionRow(
-                label = "Arousal",
-                description = "Activation level (calm to energized)",
-              )
-              HorizontalDivider(color = RiviaBorder)
-              VadDimensionRow(
-                label = "Dominance",
-                description = "Agency and control (yielding to in-control)",
-              )
-            }
-          }
         }
       }
     }
-  }
-}
-
-@Composable
-private fun VadDimensionRow(
-  label: String,
-  description: String,
-) {
-  Row(
-    modifier = Modifier.fillMaxWidth(),
-    horizontalArrangement = Arrangement.SpaceBetween,
-    verticalAlignment = Alignment.CenterVertically,
-  ) {
-    Text(
-      text = label,
-      style = MaterialTheme.typography.labelMedium,
-      fontFamily = MonoFontFamily,
-      fontWeight = FontWeight.SemiBold,
-      color = RiviaTextPrimary,
-    )
-    Spacer(modifier = Modifier.width(12.dp))
-    Text(
-      text = description,
-      style = MaterialTheme.typography.bodySmall,
-      color = RiviaSecondaryText,
-    )
   }
 }
 
