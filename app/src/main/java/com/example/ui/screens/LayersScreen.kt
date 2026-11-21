@@ -40,11 +40,13 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,6 +60,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
@@ -68,6 +75,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -101,6 +109,8 @@ import com.example.model.LoadedLayersBundle
 import com.example.model.ProfileTestState
 import com.example.model.RunSettings
 import com.example.model.TestDefConfig
+import com.example.network.MoodResult
+import com.example.network.MoodState
 import androidx.compose.material3.TabRowDefaults
 import com.example.ui.components.InfoHelpIconButton
 import com.example.ui.components.RiviaSettingsGuide
@@ -308,6 +318,7 @@ fun LayersScreen(
           VadEngineLayerCard(
             expanded = vadExpanded,
             onToggleExpanded = { vadExpanded = !vadExpanded },
+            viewModel = viewModel,
           )
         }
       }
@@ -457,6 +468,7 @@ private val VAD_SUB_STEPS =
 private fun VadEngineLayerCard(
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
+  viewModel: RiviaViewModel,
 ) {
   Surface(
     color = RiviaPanelSurface,
@@ -515,29 +527,440 @@ private fun VadEngineLayerCard(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           for (step in VAD_SUB_STEPS) {
-            Surface(
-              color = MaterialTheme.colorScheme.background,
-              shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(1.dp, RiviaBorder),
-              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
-            ) {
-              Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            if (step.testTag == "vad_step_1_5") {
+              ManualMoodDialPill(step = step, viewModel = viewModel)
+            } else {
+              Surface(
+                color = MaterialTheme.colorScheme.background,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, RiviaBorder),
+                modifier = Modifier.fillMaxWidth().testTag(step.testTag),
               ) {
-                Text(
-                  text = step.title,
-                  style = MaterialTheme.typography.labelLarge,
-                  color = RiviaTextPrimary,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = step.description,
-                  style = MaterialTheme.typography.bodySmall,
-                  color = RiviaSecondaryText,
-                )
+                Column(
+                  modifier = Modifier.padding(10.dp),
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Text(
+                    text = step.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = RiviaTextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = step.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RiviaSecondaryText,
+                  )
+                }
               }
             }
+          }
+        }
+      }
+    }
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManualMoodDialPill(
+  step: VadSubStepSpec,
+  viewModel: RiviaViewModel,
+) {
+  val coroutineScope = rememberCoroutineScope()
+
+  var pillExpanded by remember { mutableStateOf(false) }
+  var hasLoadedOnce by remember { mutableStateOf(false) }
+  var isLoading by remember { mutableStateOf(false) }
+  var currentState by remember { mutableStateOf<MoodState?>(null) }
+  var isSetMode by remember { mutableStateOf(false) } // default is Nudge
+  var sliderV by remember { mutableFloatStateOf(0f) }
+  var sliderA by remember { mutableFloatStateOf(0f) }
+  var sliderD by remember { mutableFloatStateOf(0f) }
+  var noteText by remember { mutableStateOf("") }
+  var statusMessage by remember { mutableStateOf<String?>(null) }
+  var isStatusError by remember { mutableStateOf(false) }
+
+  fun snapSetValue(value: Double): Float {
+    val clamped = value.coerceIn(-1.0, 1.0)
+    val snapped = Math.round(clamped * 20.0) / 20.0
+    return if (snapped == 0.0) 0f else snapped.toFloat()
+  }
+
+  fun snapNudgeValue(value: Float): Float {
+    val clamped = value.toDouble().coerceIn(-0.5, 0.5)
+    val snapped = Math.round(clamped * 20.0) / 20.0
+    return if (snapped == 0.0) 0f else snapped.toFloat()
+  }
+
+  fun format2(value: Double): String {
+    val normalized = if (Math.abs(value) < 0.005) 0.0 else value
+    return String.format(Locale.US, "%.2f", normalized)
+  }
+
+  fun triggerLoad() {
+    if (isLoading) return
+    coroutineScope.launch {
+      isLoading = true
+      when (val res = viewModel.loadMoodDial()) {
+        is MoodResult.Success -> {
+          currentState = res.state
+          statusMessage = null
+          isStatusError = false
+          if (isSetMode) {
+            sliderV = snapSetValue(res.state.v)
+            sliderA = snapSetValue(res.state.a)
+            sliderD = snapSetValue(res.state.d)
+          }
+        }
+        is MoodResult.Failure -> {
+          statusMessage = res.message
+          isStatusError = true
+        }
+      }
+      isLoading = false
+    }
+  }
+
+  val isAllZeroNudge =
+    !isSetMode &&
+      Math.abs(sliderV) < 0.005f &&
+      Math.abs(sliderA) < 0.005f &&
+      Math.abs(sliderD) < 0.005f
+
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    shape = RoundedCornerShape(10.dp),
+    border = BorderStroke(1.dp, RiviaBorder),
+    modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+  ) {
+    Column(
+      modifier = Modifier.padding(10.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clickable {
+              val nextExpanded = !pillExpanded
+              pillExpanded = nextExpanded
+              if (nextExpanded && !hasLoadedOnce) {
+                hasLoadedOnce = true
+                triggerLoad()
+              }
+            }
+            .testTag("vad_step_1_5_header"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = step.title,
+          style = MaterialTheme.typography.labelLarge,
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+          modifier = Modifier.weight(1f),
+        )
+        Icon(
+          imageVector =
+            if (pillExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+          contentDescription =
+            if (pillExpanded) "Collapse ${step.title}" else "Expand ${step.title}",
+          tint = RiviaSecondaryText,
+          modifier = Modifier.size(18.dp),
+        )
+      }
+
+      Text(
+        text = step.description,
+        style = MaterialTheme.typography.bodySmall,
+        color = RiviaSecondaryText,
+      )
+
+      AnimatedVisibility(
+        visible = pillExpanded,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          // Current mood line + refresh button
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            val state = currentState
+            val currentMoodText =
+              if (state == null) {
+                if (isLoading) "Loading..." else "No mood loaded"
+              } else {
+                val moodPhrase =
+                  if (state.label.equals("neutral", ignoreCase = true)) {
+                    "neutral"
+                  } else {
+                    listOf(state.intensity.trim(), state.label.trim())
+                      .filter { it.isNotEmpty() }
+                      .joinToString(" ")
+                  }
+                val updatedPart = if (state.updated.isNotBlank()) " · ${state.updated}" else ""
+                "$moodPhrase · V ${format2(state.v)} A ${format2(state.a)} D ${format2(state.d)}$updatedPart"
+              }
+
+            Text(
+              text = currentMoodText,
+              style = MaterialTheme.typography.bodySmall,
+              color = RiviaTextPrimary,
+              modifier = Modifier.weight(1f).testTag("mood_dial_current"),
+            )
+
+            IconButton(
+              onClick = { triggerLoad() },
+              enabled = !isLoading,
+              modifier = Modifier.size(32.dp).testTag("mood_dial_refresh"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Refresh mood",
+                tint = RiviaSecondaryText,
+                modifier = Modifier.size(18.dp),
+              )
+            }
+          }
+
+          // Mode selector: Set / Nudge (default Nudge)
+          val modeOptions = listOf("Set", "Nudge")
+          SingleChoiceSegmentedButtonRow(
+            modifier = Modifier.fillMaxWidth().testTag("mood_dial_mode"),
+          ) {
+            modeOptions.forEachIndexed { index, label ->
+              val selected = if (index == 0) isSetMode else !isSetMode
+              SegmentedButton(
+                shape = SegmentedButtonDefaults.itemShape(index = index, count = modeOptions.size),
+                selected = selected,
+                enabled = !isLoading,
+                onClick = {
+                  val targetSet = (index == 0)
+                  if (targetSet != isSetMode) {
+                    isSetMode = targetSet
+                    if (targetSet) {
+                      val st = currentState
+                      sliderV = st?.let { snapSetValue(it.v) } ?: 0f
+                      sliderA = st?.let { snapSetValue(it.a) } ?: 0f
+                      sliderD = st?.let { snapSetValue(it.d) } ?: 0f
+                    } else {
+                      sliderV = 0f
+                      sliderA = 0f
+                      sliderD = 0f
+                    }
+                  }
+                },
+                colors =
+                  SegmentedButtonDefaults.colors(
+                    activeContainerColor = RiviaTeal,
+                    activeContentColor = RiviaOnAccent,
+                    activeBorderColor = RiviaTeal,
+                    inactiveContainerColor = MaterialTheme.colorScheme.background,
+                    inactiveContentColor = RiviaSecondaryText,
+                    inactiveBorderColor = RiviaBorder,
+                  ),
+                label = {
+                  Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                  )
+                },
+              )
+            }
+          }
+
+          val sliderRange = if (isSetMode) -1f..1f else -0.5f..0.5f
+          val sliderSteps = if (isSetMode) 39 else 19
+          val sliderColors =
+            SliderDefaults.colors(
+              thumbColor = RiviaTeal,
+              activeTrackColor = RiviaTeal,
+              inactiveTrackColor = RiviaBorder,
+              activeTickColor = RiviaBorder,
+              inactiveTickColor = RiviaBorder,
+            )
+
+          // Valence slider
+          Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = "Valence (feel good)",
+                style = MaterialTheme.typography.labelMedium,
+                color = RiviaTextPrimary,
+              )
+              Text(
+                text = format2(sliderV.toDouble()),
+                style = MaterialTheme.typography.labelMedium,
+                color = RiviaSecondaryText,
+              )
+            }
+            Slider(
+              value = sliderV,
+              onValueChange = { raw ->
+                sliderV = if (isSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+              },
+              valueRange = sliderRange,
+              steps = sliderSteps,
+              enabled = !isLoading,
+              colors = sliderColors,
+              modifier = Modifier.fillMaxWidth().testTag("mood_dial_v"),
+            )
+          }
+
+          // Arousal slider
+          Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = "Arousal (wound up)",
+                style = MaterialTheme.typography.labelMedium,
+                color = RiviaTextPrimary,
+              )
+              Text(
+                text = format2(sliderA.toDouble()),
+                style = MaterialTheme.typography.labelMedium,
+                color = RiviaSecondaryText,
+              )
+            }
+            Slider(
+              value = sliderA,
+              onValueChange = { raw ->
+                sliderA = if (isSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+              },
+              valueRange = sliderRange,
+              steps = sliderSteps,
+              enabled = !isLoading,
+              colors = sliderColors,
+              modifier = Modifier.fillMaxWidth().testTag("mood_dial_a"),
+            )
+          }
+
+          // Dominance slider
+          Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = "Dominance (in control)",
+                style = MaterialTheme.typography.labelMedium,
+                color = RiviaTextPrimary,
+              )
+              Text(
+                text = format2(sliderD.toDouble()),
+                style = MaterialTheme.typography.labelMedium,
+                color = RiviaSecondaryText,
+              )
+            }
+            Slider(
+              value = sliderD,
+              onValueChange = { raw ->
+                sliderD = if (isSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+              },
+              valueRange = sliderRange,
+              steps = sliderSteps,
+              enabled = !isLoading,
+              colors = sliderColors,
+              modifier = Modifier.fillMaxWidth().testTag("mood_dial_d"),
+            )
+          }
+
+          // Optional Note field (single line, max 200 chars)
+          OutlinedTextField(
+            value = noteText,
+            onValueChange = { noteText = it.take(200) },
+            singleLine = true,
+            enabled = !isLoading,
+            label = { Text("Note") },
+            modifier = Modifier.fillMaxWidth().testTag("mood_dial_note"),
+          )
+
+          // Apply button
+          Button(
+            onClick = {
+              coroutineScope.launch {
+                isLoading = true
+                val vVal = Math.round(sliderV.toDouble() * 100.0) / 100.0
+                val aVal = Math.round(sliderA.toDouble() * 100.0) / 100.0
+                val dVal = Math.round(sliderD.toDouble() * 100.0) / 100.0
+                when (
+                  val res =
+                    viewModel.applyMoodDial(
+                      isSet = isSetMode,
+                      v = vVal,
+                      a = aVal,
+                      d = dVal,
+                      note = noteText,
+                    )
+                ) {
+                  is MoodResult.Success -> {
+                    currentState = res.state
+                    if (!isSetMode) {
+                      sliderV = 0f
+                      sliderA = 0f
+                      sliderD = 0f
+                    } else {
+                      sliderV = snapSetValue(res.state.v)
+                      sliderA = snapSetValue(res.state.a)
+                      sliderD = snapSetValue(res.state.d)
+                    }
+                    noteText = ""
+                    statusMessage =
+                      if (res.clamped.isNotEmpty()) {
+                        "Mood updated (hit a limit)"
+                      } else {
+                        "Mood updated"
+                      }
+                    isStatusError = false
+                  }
+                  is MoodResult.Failure -> {
+                    statusMessage = res.message
+                    isStatusError = true
+                  }
+                }
+                isLoading = false
+              }
+            },
+            enabled = !isLoading && !isAllZeroNudge,
+            colors =
+              ButtonDefaults.buttonColors(
+                containerColor = RiviaTeal,
+                contentColor = RiviaOnAccent,
+              ),
+            modifier = Modifier.fillMaxWidth().testTag("mood_dial_apply"),
+          ) {
+            if (isLoading) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = RiviaOnAccent,
+              )
+              Spacer(modifier = Modifier.width(8.dp))
+            }
+            Text("Apply")
+          }
+
+          statusMessage?.let { msg ->
+            Text(
+              text = msg,
+              style = MaterialTheme.typography.bodySmall,
+              color = if (isStatusError) RiviaDestructive else RiviaSecondaryText,
+              modifier = Modifier.testTag("mood_dial_message"),
+            )
           }
         }
       }

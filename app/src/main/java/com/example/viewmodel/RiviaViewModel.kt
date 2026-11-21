@@ -47,8 +47,10 @@ import com.example.network.ElevenLabsVoice
 import com.example.network.GeminiInteractionsClient
 import com.example.network.GeminiStreamEvent
 import com.example.network.GoogleRiviaAuthHelper
+import com.example.network.MoodResult
 import com.example.network.TabletCallOutcome
 import com.example.network.TabletMcpClient
+import com.example.network.TabletMoodClient
 import com.example.network.TabletToolDef
 import com.example.plugin.PluginRegistry
 import com.example.plugin.RiviaBridgeHolder
@@ -1188,6 +1190,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
 
   // Bots Pass 1: Standalone Tablet MCP Client (outside PluginRegistry)
   val tabletMcpClient = TabletMcpClient()
+  private val tabletMoodClient = TabletMoodClient()
 
   val tabletServerUrl: StateFlow<String> =
     keyRepository.tabletServerUrlFlow.stateIn(
@@ -3976,6 +3979,47 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       showError("Signed out, sign in again")
     }
     return true
+  }
+
+  suspend fun loadMoodDial(): MoodResult {
+    val serverUrl = keyRepository.getTabletServerUrl()
+    val appToken = keyRepository.getTabletAppToken()
+    if (appToken.isBlank()) {
+      return MoodResult.Failure(message = "Sign in first")
+    }
+    val result = tabletMoodClient.getEmotion(serverUrl = serverUrl, appToken = appToken)
+    if (result is MoodResult.Failure && result.errorCode == "http_401") {
+      handleTabletHttp401IfNeeded("http_401")
+    }
+    return result
+  }
+
+  suspend fun applyMoodDial(
+    isSet: Boolean,
+    v: Double,
+    a: Double,
+    d: Double,
+    note: String,
+  ): MoodResult {
+    val serverUrl = keyRepository.getTabletServerUrl()
+    val appToken = keyRepository.getTabletAppToken()
+    if (appToken.isBlank()) {
+      return MoodResult.Failure(message = "Sign in first")
+    }
+    val result =
+      tabletMoodClient.postEmotion(
+        serverUrl = serverUrl,
+        appToken = appToken,
+        isSet = isSet,
+        v = v,
+        a = a,
+        d = d,
+        note = note,
+      )
+    if (result is MoodResult.Failure && result.errorCode == "http_401") {
+      handleTabletHttp401IfNeeded("http_401")
+    }
+    return result
   }
 
   fun completeGoogleSignInWithAuthCode(
