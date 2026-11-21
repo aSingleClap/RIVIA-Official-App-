@@ -600,25 +600,28 @@ private fun ManualMoodDialPill(
 
   fun triggerLoad() {
     if (isLoading) return
+    isLoading = true
     coroutineScope.launch {
-      isLoading = true
-      when (val res = viewModel.loadMoodDial()) {
-        is MoodResult.Success -> {
-          currentState = res.state
-          statusMessage = null
-          isStatusError = false
-          if (isSetMode) {
-            sliderV = snapSetValue(res.state.v)
-            sliderA = snapSetValue(res.state.a)
-            sliderD = snapSetValue(res.state.d)
+      try {
+        when (val res = viewModel.loadMoodDial()) {
+          is MoodResult.Success -> {
+            currentState = res.state
+            statusMessage = null
+            isStatusError = false
+            if (isSetMode) {
+              sliderV = snapSetValue(res.state.v)
+              sliderA = snapSetValue(res.state.a)
+              sliderD = snapSetValue(res.state.d)
+            }
+          }
+          is MoodResult.Failure -> {
+            statusMessage = res.message
+            isStatusError = true
           }
         }
-        is MoodResult.Failure -> {
-          statusMessage = res.message
-          isStatusError = true
-        }
+      } finally {
+        isLoading = false
       }
-      isLoading = false
     }
   }
 
@@ -892,50 +895,55 @@ private fun ManualMoodDialPill(
           // Apply button
           Button(
             onClick = {
+              if (isLoading) return@Button
+              if (isSetMode && currentState == null) return@Button
+              isLoading = true
               coroutineScope.launch {
-                isLoading = true
-                val vVal = Math.round(sliderV.toDouble() * 100.0) / 100.0
-                val aVal = Math.round(sliderA.toDouble() * 100.0) / 100.0
-                val dVal = Math.round(sliderD.toDouble() * 100.0) / 100.0
-                when (
-                  val res =
-                    viewModel.applyMoodDial(
-                      isSet = isSetMode,
-                      v = vVal,
-                      a = aVal,
-                      d = dVal,
-                      note = noteText,
-                    )
-                ) {
-                  is MoodResult.Success -> {
-                    currentState = res.state
-                    if (!isSetMode) {
-                      sliderV = 0f
-                      sliderA = 0f
-                      sliderD = 0f
-                    } else {
-                      sliderV = snapSetValue(res.state.v)
-                      sliderA = snapSetValue(res.state.a)
-                      sliderD = snapSetValue(res.state.d)
-                    }
-                    noteText = ""
-                    statusMessage =
-                      if (res.clamped.isNotEmpty()) {
-                        "Mood updated (hit a limit)"
+                try {
+                  val vVal = Math.round(sliderV.toDouble() * 100.0) / 100.0
+                  val aVal = Math.round(sliderA.toDouble() * 100.0) / 100.0
+                  val dVal = Math.round(sliderD.toDouble() * 100.0) / 100.0
+                  when (
+                    val res =
+                      viewModel.applyMoodDial(
+                        isSet = isSetMode,
+                        v = vVal,
+                        a = aVal,
+                        d = dVal,
+                        note = noteText,
+                      )
+                  ) {
+                    is MoodResult.Success -> {
+                      currentState = res.state
+                      if (!isSetMode) {
+                        sliderV = 0f
+                        sliderA = 0f
+                        sliderD = 0f
                       } else {
-                        "Mood updated"
+                        sliderV = snapSetValue(res.state.v)
+                        sliderA = snapSetValue(res.state.a)
+                        sliderD = snapSetValue(res.state.d)
                       }
-                    isStatusError = false
+                      noteText = ""
+                      statusMessage =
+                        if (res.clamped.isNotEmpty()) {
+                          "Mood updated (hit a limit)"
+                        } else {
+                          "Mood updated"
+                        }
+                      isStatusError = false
+                    }
+                    is MoodResult.Failure -> {
+                      statusMessage = res.message
+                      isStatusError = true
+                    }
                   }
-                  is MoodResult.Failure -> {
-                    statusMessage = res.message
-                    isStatusError = true
-                  }
+                } finally {
+                  isLoading = false
                 }
-                isLoading = false
               }
             },
-            enabled = !isLoading && !isAllZeroNudge,
+            enabled = !isLoading && !isAllZeroNudge && !(isSetMode && currentState == null),
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = RiviaTeal,
@@ -952,6 +960,15 @@ private fun ManualMoodDialPill(
               Spacer(modifier = Modifier.width(8.dp))
             }
             Text("Apply")
+          }
+
+          if (isSetMode && currentState == null) {
+            Text(
+              text = "Load the current mood first (tap Refresh)",
+              style = MaterialTheme.typography.bodySmall,
+              color = RiviaSecondaryText,
+              modifier = Modifier.testTag("mood_dial_set_hint"),
+            )
           }
 
           statusMessage?.let { msg ->
