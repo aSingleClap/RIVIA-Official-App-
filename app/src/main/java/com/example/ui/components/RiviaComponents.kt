@@ -2,6 +2,8 @@ package com.example.ui.components
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Paint as AndroidPaint
+import android.graphics.RectF as AndroidRectF
 import android.provider.Settings
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -34,8 +36,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +51,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -69,86 +76,154 @@ import com.example.ui.theme.RiviaText
 import com.example.ui.theme.RiviaTextPrimary
 import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaWarningAmber
-import kotlin.math.asin
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
-import kotlin.math.sqrt
-import kotlin.random.Random
 
 private const val SPHERE_PREFS_NAME = "rivia_particle_sphere_prefs"
-private const val PREF_KEY_PARTICLE_COUNT = "particle_count"
+private const val PREF_KEY_PARTICLE_COUNT = "particle_count_v2"
 private const val PREF_KEY_ROTATION_PERIOD_SEC = "rotation_period_sec"
-private const val DEFAULT_PARTICLE_COUNT = 650
+private const val DEFAULT_PARTICLE_COUNT = 1350
+private const val MIN_PARTICLE_COUNT = 400
+private const val MAX_PARTICLE_COUNT = 2000
 private const val DEFAULT_ROTATION_PERIOD_SEC = 40
-private const val PARTICLE_RANDOM_SEED = 0x52495649L
 
-private class PrecomputedSphereParticles(
-  val count: Int,
-  val ux: FloatArray,
-  val uy: FloatArray,
-  val uz: FloatArray,
-  val radiusDp: FloatArray,
-  val frontBaseOpacity: FloatArray,
-  val twinkleOmega: FloatArray,
-  val twinklePhase: FloatArray,
-  val rotX: FloatArray,
-  val rotY: FloatArray,
-  val rotZ: FloatArray,
-)
+class RiviaSphereSettingsState internal constructor(
+  private val prefs: android.content.SharedPreferences,
+  initialParticleCount: Int,
+  initialRotationPeriodSec: Int,
+) {
+  var particleCount by mutableIntStateOf(initialParticleCount)
+    private set
 
-private fun buildFibonacciSphereParticles(count: Int): PrecomputedSphereParticles {
-  val ux = FloatArray(count)
-  val uy = FloatArray(count)
-  val uz = FloatArray(count)
-  val radiusDp = FloatArray(count)
-  val frontBaseOpacity = FloatArray(count)
-  val twinkleOmega = FloatArray(count)
-  val twinklePhase = FloatArray(count)
-  val rotX = FloatArray(count)
-  val rotY = FloatArray(count)
-  val rotZ = FloatArray(count)
+  var rotationPeriodSec by mutableIntStateOf(initialRotationPeriodSec)
+    private set
 
-  val rng = Random(PARTICLE_RANDOM_SEED)
-  val goldenAngle = Math.PI * (3.0 - sqrt(5.0))
-  val twoPi = (2.0 * Math.PI).toFloat()
-
-  for (i in 0 until count) {
-    val y = (1.0 - 2.0 * (i + 0.5) / count.toDouble()).coerceIn(-1.0, 1.0)
-    val latitude = asin(y)
-    val longitude = i.toDouble() * goldenAngle
-    val cosLat = cos(latitude)
-
-    ux[i] = (cosLat * cos(longitude)).toFloat()
-    uy[i] = sin(latitude).toFloat()
-    uz[i] = (cosLat * sin(longitude)).toFloat()
-
-    // White (#FFFFFF), diameter 0.9-2.4 dp -> radius 0.45-1.2 dp
-    val diameterDp = 0.9f + rng.nextFloat() * (2.4f - 0.9f)
-    radiusDp[i] = diameterDp * 0.5f
-
-    // Front-facing base opacity 0.55-1.0
-    frontBaseOpacity[i] = 0.55f + rng.nextFloat() * (1.0f - 0.55f)
-
-    // Twinkle period 1.6-4.2 s, random phase
-    val periodSec = 1.6f + rng.nextFloat() * (4.2f - 1.6f)
-    twinkleOmega[i] = twoPi / periodSec
-    twinklePhase[i] = rng.nextFloat() * twoPi
+  fun updateParticleCount(raw: Float) {
+    val snapped = ((raw / 50f).roundToInt() * 50).coerceIn(MIN_PARTICLE_COUNT, MAX_PARTICLE_COUNT)
+    if (snapped != particleCount) {
+      particleCount = snapped
+      prefs.edit().putInt(PREF_KEY_PARTICLE_COUNT, snapped).apply()
+    }
   }
 
-  return PrecomputedSphereParticles(
-    count = count,
-    ux = ux,
-    uy = uy,
-    uz = uz,
-    radiusDp = radiusDp,
-    frontBaseOpacity = frontBaseOpacity,
-    twinkleOmega = twinkleOmega,
-    twinklePhase = twinklePhase,
-    rotX = rotX,
-    rotY = rotY,
-    rotZ = rotZ,
-  )
+  fun updateRotationPeriodSec(raw: Float) {
+    val snapped = ((raw / 5f).roundToInt() * 5).coerceIn(10, 90)
+    if (snapped != rotationPeriodSec) {
+      rotationPeriodSec = snapped
+      prefs.edit().putInt(PREF_KEY_ROTATION_PERIOD_SEC, snapped).apply()
+    }
+  }
+
+  fun resetToDefaults() {
+    particleCount = DEFAULT_PARTICLE_COUNT
+    rotationPeriodSec = DEFAULT_ROTATION_PERIOD_SEC
+    prefs
+      .edit()
+      .putInt(PREF_KEY_PARTICLE_COUNT, DEFAULT_PARTICLE_COUNT)
+      .putInt(PREF_KEY_ROTATION_PERIOD_SEC, DEFAULT_ROTATION_PERIOD_SEC)
+      .apply()
+  }
+}
+
+@Composable
+fun rememberRiviaSphereSettingsState(): RiviaSphereSettingsState {
+  val context = LocalContext.current
+  val prefs =
+    remember(context) { context.getSharedPreferences(SPHERE_PREFS_NAME, Context.MODE_PRIVATE) }
+  return remember(prefs) {
+    RiviaSphereSettingsState(
+      prefs = prefs,
+      initialParticleCount =
+        prefs
+          .getInt(PREF_KEY_PARTICLE_COUNT, DEFAULT_PARTICLE_COUNT)
+          .coerceIn(MIN_PARTICLE_COUNT, MAX_PARTICLE_COUNT),
+      initialRotationPeriodSec =
+        prefs.getInt(PREF_KEY_ROTATION_PERIOD_SEC, DEFAULT_ROTATION_PERIOD_SEC).coerceIn(10, 90),
+    )
+  }
+}
+
+/**
+ * Shared app-wide controller for Rivia's single persistent particle sphere living in RiviaAppRoot.
+ * Screens configure position, scale/mode, surface bounds, and passive audio levels on this single
+ * instance rather than creating separate sphere copies.
+ */
+@Stable
+class RiviaParticleFieldController(
+  val settingsState: RiviaSphereSettingsState,
+) {
+  var hostVisible by mutableStateOf(true)
+  var elevateAboveDrawerScrim by mutableStateOf(false)
+
+  // Draw-invalidating version counter for static/accessibility mode or layout rect updates
+  var invalidationTick by mutableIntStateOf(0)
+    private set
+
+  var desiredMode: ParticleSceneMode = ParticleSceneMode.HOME
+    private set
+  var wantDrawerOpen: Boolean = false
+    private set
+
+  var viewportScale: ViewportScale = ViewportScale(1f, 1f, 1f)
+  var canvasOriginInWindow: Offset = Offset.Zero
+  var slotCenterInWindow: Offset = Offset.Zero
+
+  var chatBarWindowRect: SimpleRectPx = SimpleRectPx()
+  var chatBarFillAlpha: Float = 0f
+
+  var dictationPanelWindowRect: SimpleRectPx = SimpleRectPx()
+  var dictationWaveformWindowRect: SimpleRectPx = SimpleRectPx()
+  var dictationPanelFillAlpha: Float = 0f
+
+  var drawerWindowRect: SimpleRectPx = SimpleRectPx()
+
+  var dictateMicLevel: Float = 0f
+  var liveOrbState: OrbState = OrbState.IDLE
+  var liveMicLevel: Float = 0f
+  var livePlaybackLevel: Float = 0f
+  var isLiveSpeakingFallback: Boolean = false
+
+  fun requestRedraw() {
+    invalidationTick++
+  }
+
+  fun updateDesiredMode(mode: ParticleSceneMode) {
+    if (desiredMode != mode) {
+      desiredMode = mode
+      invalidationTick++
+    }
+  }
+
+  fun updateWantDrawerOpen(open: Boolean, removeAnimations: Boolean) {
+    if (wantDrawerOpen != open) {
+      wantDrawerOpen = open
+      if (open && !removeAnimations) {
+        elevateAboveDrawerScrim = true
+      } else if (removeAnimations) {
+        elevateAboveDrawerScrim = false
+      }
+      invalidationTick++
+    }
+  }
+
+  fun localRect(windowRect: SimpleRectPx): SimpleRectPx {
+    if (!windowRect.isValid) return windowRect
+    return SimpleRectPx(
+      left = windowRect.left - canvasOriginInWindow.x,
+      top = windowRect.top - canvasOriginInWindow.y,
+      width = windowRect.width,
+      height = windowRect.height,
+      cornerRadius = windowRect.cornerRadius,
+    )
+  }
+}
+
+val LocalRiviaParticleFieldController = compositionLocalOf<RiviaParticleFieldController?> { null }
+
+@Composable
+fun rememberRiviaParticleFieldController(
+  settingsState: RiviaSphereSettingsState = rememberRiviaSphereSettingsState(),
+): RiviaParticleFieldController {
+  return remember(settingsState) { RiviaParticleFieldController(settingsState) }
 }
 
 internal fun isSystemRemoveAnimationsEnabled(context: Context): Boolean {
@@ -166,41 +241,19 @@ internal fun isSystemRemoveAnimationsEnabled(context: Context): Boolean {
 }
 
 /**
- * Home-screen rotating particle sphere (Compose Canvas, no images/video/GIF):
- * - 650 particles (default) on a Fibonacci / golden-angle sphere, radius 115 dp in a 300 dp box
- * - Spins around vertical axis (40 s default, linear), tilted -16 deg on horizontal axis
- * - Perspective projection with camera distance 700 dp
- * - White (#FFFFFF) particles, diameter 0.9-2.4 dp, front glow 2.2x size, back opacity 0.22
- * - Twinkle down to 40% of base opacity and back over 1.6-4.2 s
- * - Core pale-blue radial glow rgba(220,235,255,0.9), 160 dp across, breathing 0.16-0.24 over 5 s
- * - Whole sphere breathing scale 1.0 -> 1.015 -> 1.0 over 6 s ease-in-out
- * - Dev-only tuning sliders (particle count 200-1000 step 50, rotation period 10-90 s step 5, Reset to defaults)
+ * Single-pass, zero-allocation Canvas renderer for Rivia's persistent Fibonacci sphere and all
+ * particle transitions (Chat bar border, Dictation panel border + 60 interior scatter + 64 voice
+ * waveform, Live mode Listening/Thinking/Speaking modulators, and Chats Drawer border).
  */
 @Composable
-fun RiviaHomeParticleSphere(
+fun RiviaParticleFieldCanvas(
+  controller: RiviaParticleFieldController,
   modifier: Modifier = Modifier,
-  sphereModifier: Modifier = Modifier,
-  devTuningModifier: Modifier = Modifier,
-  devTuningEnabled: Boolean = true,
-  showDevTuning: Boolean = false,
-  contentDesc: String = "Rivia Orb",
-  onSphereClick: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
-  val prefs = remember(context) { context.getSharedPreferences(SPHERE_PREFS_NAME, Context.MODE_PRIVATE) }
-
-  var particleCount by remember {
-    mutableIntStateOf(
-      prefs.getInt(PREF_KEY_PARTICLE_COUNT, DEFAULT_PARTICLE_COUNT).coerceIn(200, 1000)
-    )
-  }
-  var rotationPeriodSec by remember {
-    mutableIntStateOf(
-      prefs.getInt(PREF_KEY_ROTATION_PERIOD_SEC, DEFAULT_ROTATION_PERIOD_SEC).coerceIn(10, 90)
-    )
-  }
-
-  val particles = remember(particleCount) { buildFibonacciSphereParticles(particleCount) }
+  val particleCount = controller.settingsState.particleCount
+  val rotationPeriodSec = controller.settingsState.rotationPeriodSec
+  val engine = remember(particleCount) { ParticleFieldEngine(count = particleCount) }
 
   val lifecycleOwner = LocalLifecycleOwner.current
   var isAppResumed by remember {
@@ -226,27 +279,291 @@ fun RiviaHomeParticleSphere(
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
-  var elapsedSec by remember { mutableFloatStateOf(0f) }
+  LaunchedEffect(removeAnimations) {
+    if (removeAnimations && controller.elevateAboveDrawerScrim) {
+      controller.elevateAboveDrawerScrim = false
+    }
+  }
 
-  LaunchedEffect(isAppResumed, removeAnimations) {
-    if (!isAppResumed || removeAnimations) return@LaunchedEffect
+  // Frame clock read only inside Canvas draw scope -> zero recomposition per frame (60 fps)
+  var frameTick by remember { mutableIntStateOf(0) }
+  val pendingDtHolder = remember { FloatArray(1) }
+
+  LaunchedEffect(isAppResumed, controller.hostVisible, removeAnimations, engine) {
+    if (!isAppResumed || !controller.hostVisible || removeAnimations) {
+      pendingDtHolder[0] = 0f
+      return@LaunchedEffect
+    }
     var lastFrameNanos = -1L
     while (true) {
       withFrameNanos { frameNanos ->
-        if (lastFrameNanos >= 0L) {
-          val deltaSec = ((frameNanos - lastFrameNanos).coerceAtLeast(0L)) / 1_000_000_000f
-          elapsedSec += deltaSec.coerceAtMost(0.1f)
-        }
+        val dt =
+          if (lastFrameNanos >= 0L) {
+            (((frameNanos - lastFrameNanos).coerceAtLeast(0L)) / 1_000_000_000f).coerceAtMost(0.1f)
+          } else {
+            1f / 60f
+          }
         lastFrameNanos = frameNanos
+        pendingDtHolder[0] += dt
+        frameTick++
+
+        val shouldElevate =
+          !removeAnimations &&
+            (controller.wantDrawerOpen || engine.hasActiveDrawerOverlayParticles())
+        if (controller.elevateAboveDrawerScrim != shouldElevate) {
+          controller.elevateAboveDrawerScrim = shouldElevate
+        }
       }
     }
   }
 
-  val tiltRad = remember { Math.toRadians(-16.0).toFloat() }
-  val cosTilt = remember { cos(tiltRad) }
-  val sinTilt = remember { sin(tiltRad) }
+  val fillPaint = remember {
+    AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+      style = AndroidPaint.Style.FILL
+      color = android.graphics.Color.WHITE
+    }
+  }
+  val strokePaint = remember {
+    AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+      style = AndroidPaint.Style.STROKE
+      color = 0xFF262626.toInt()
+    }
+  }
+  val scratchRectF = remember { AndroidRectF() }
   val coreGlowBaseColor = remember { Color(220, 235, 255) }
 
+  if (!controller.hostVisible) return
+
+  Canvas(
+    modifier =
+      modifier.onGloballyPositioned { coords ->
+        controller.canvasOriginInWindow = coords.positionInWindow()
+      }
+  ) {
+    // Subscribe only the DrawNode to frameTick & controller.invalidationTick
+    @Suppress("UNUSED_VARIABLE") val tick = frameTick + controller.invalidationTick
+    val dt = pendingDtHolder[0].coerceAtMost(0.1f)
+    pendingDtHolder[0] = 0f
+
+    val effectiveMode =
+      if (controller.wantDrawerOpen && !removeAnimations) {
+        ParticleSceneMode.DRAWER_OUTLINE
+      } else {
+        controller.desiredMode
+      }
+    if (engine.mode != effectiveMode) {
+      engine.setMode(effectiveMode, removeAnimations = removeAnimations)
+    }
+
+    val pxPerDp = 1.dp.toPx()
+    val slotWin = controller.slotCenterInWindow
+    val localSlotX =
+      if (slotWin != Offset.Zero) slotWin.x - controller.canvasOriginInWindow.x else 0f
+    val localSlotY =
+      if (slotWin != Offset.Zero) slotWin.y - controller.canvasOriginInWindow.y else 0f
+
+    val localChatRect = controller.localRect(controller.chatBarWindowRect)
+    val localDictateRect = controller.localRect(controller.dictationPanelWindowRect)
+    val localWaveRect = controller.localRect(controller.dictationWaveformWindowRect)
+    val localDrawerRect = controller.localRect(controller.drawerWindowRect)
+
+    engine.step(
+      dtSec = dt,
+      canvasWidthPx = this.size.width,
+      canvasHeightPx = this.size.height,
+      pxPerDp = pxPerDp,
+      viewportScale = controller.viewportScale,
+      slotCenterXPx = localSlotX,
+      slotCenterYPx = localSlotY,
+      rotationPeriodSec = rotationPeriodSec.toFloat(),
+      removeAnimations = removeAnimations,
+      chatBarRect = localChatRect,
+      dictationPanelRect = localDictateRect,
+      dictationWaveformRect = localWaveRect,
+      drawerRect = localDrawerRect,
+      dictateMicLevel = controller.dictateMicLevel,
+      liveOrbState = controller.liveOrbState,
+      liveMicLevel = controller.liveMicLevel,
+      livePlaybackLevel = controller.livePlaybackLevel,
+      isLiveSpeakingFallback = controller.isLiveSpeakingFallback,
+    )
+
+    val n = engine.count
+    val cxArr = engine.currX
+    val cyArr = engine.currY
+    val rArr = engine.currRadiusPx
+    val aArr = engine.currAlpha
+    val detArr = engine.detached
+    val rzArr = engine.rotZ
+    val blur = engine.sphereBlurFactor
+
+    // 1. Pass 1: Back-facing on-sphere particles (rz < 0, not detached)
+    if (engine.sphereBrightness > 0.001f) {
+      drawIntoCanvas { composeCanvas ->
+        val nc = composeCanvas.nativeCanvas
+        fillPaint.color = android.graphics.Color.WHITE
+        for (i in 0 until n) {
+          if (detArr[i] <= 0.001f && rzArr[i] < 0f) {
+            val alphaInt = (aArr[i] * 255f).toInt()
+            if (alphaInt > 0) {
+              fillPaint.alpha = alphaInt.coerceAtMost(255)
+              nc.drawCircle(cxArr[i], cyArr[i], rArr[i], fillPaint)
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Core pale-blue radial glow
+    val peakCoreAlpha = engine.coreGlowAlpha
+    if (peakCoreAlpha > 0.002f) {
+      val glowCenter = Offset(engine.sphereCenterX, engine.sphereCenterY)
+      val glowRadius = engine.coreGlowRadiusPx
+      drawCircle(
+        brush =
+          Brush.radialGradient(
+            0.0f to coreGlowBaseColor.copy(alpha = peakCoreAlpha),
+            0.32f to coreGlowBaseColor.copy(alpha = peakCoreAlpha * 0.65f),
+            0.62f to coreGlowBaseColor.copy(alpha = peakCoreAlpha * 0.26f),
+            0.84f to coreGlowBaseColor.copy(alpha = peakCoreAlpha * 0.07f),
+            1.0f to Color.Transparent,
+            center = glowCenter,
+            radius = glowRadius,
+          ),
+        radius = glowRadius,
+        center = glowCenter,
+      )
+    }
+
+    // 3. Pass 2A + Under-Particle Fills (#161616 / #121212) + Pass 2B Detached Particles
+    drawIntoCanvas { composeCanvas ->
+      val nc = composeCanvas.nativeCanvas
+
+      // 3a. Front-facing on-sphere particles (with optical blur halo when sphereBlurFactor > 0)
+      if (engine.sphereBrightness > 0.001f) {
+        val sphereHaloMult = 2.2f + 2.0f * blur
+        val sphereHaloAlphaScale = 0.187f + 0.14f * blur
+        fillPaint.color = android.graphics.Color.WHITE
+        for (i in 0 until n) {
+          if (detArr[i] <= 0.001f && rzArr[i] >= 0f) {
+            val a = aArr[i]
+            if (a > 0.002f) {
+              val r = rArr[i]
+              val haloA = (a * sphereHaloAlphaScale * 255f).toInt().coerceIn(0, 255)
+              if (haloA > 0) {
+                fillPaint.alpha = haloA
+                nc.drawCircle(cxArr[i], cyArr[i], r * sphereHaloMult, fillPaint)
+              }
+              val coreA = (a * 255f).toInt().coerceIn(0, 255)
+              if (coreA > 0) {
+                fillPaint.alpha = coreA
+                nc.drawCircle(cxArr[i], cyArr[i], r, fillPaint)
+              }
+            }
+          }
+        }
+      }
+
+      // 3b. Under-particle surface fills (#161616 message bar, #121212 dictation panel)
+      // Drawn strictly under the border/scatter/waveform particles when not elevated over the drawer
+      if (!controller.elevateAboveDrawerScrim) {
+        val chatFillA = controller.chatBarFillAlpha.coerceIn(0f, 1f)
+        if (chatFillA > 0.002f && localChatRect.isValid) {
+          scratchRectF.set(
+            localChatRect.left,
+            localChatRect.top,
+            localChatRect.left + localChatRect.width,
+            localChatRect.top + localChatRect.height,
+          )
+          fillPaint.color = 0xFF161616.toInt()
+          fillPaint.alpha = (chatFillA * 255f).toInt().coerceIn(0, 255)
+          nc.drawRoundRect(
+            scratchRectF,
+            localChatRect.cornerRadius,
+            localChatRect.cornerRadius,
+            fillPaint,
+          )
+          strokePaint.strokeWidth = pxPerDp
+          strokePaint.color = 0xFF262626.toInt()
+          strokePaint.alpha = (chatFillA * 0.55f * 255f).toInt().coerceIn(0, 255)
+          nc.drawRoundRect(
+            scratchRectF,
+            localChatRect.cornerRadius,
+            localChatRect.cornerRadius,
+            strokePaint,
+          )
+        }
+
+        val dictFillA = controller.dictationPanelFillAlpha.coerceIn(0f, 1f)
+        if (dictFillA > 0.002f && localDictateRect.isValid) {
+          scratchRectF.set(
+            localDictateRect.left,
+            localDictateRect.top,
+            localDictateRect.left + localDictateRect.width,
+            localDictateRect.top + localDictateRect.height,
+          )
+          fillPaint.color = 0xFF121212.toInt()
+          fillPaint.alpha = (dictFillA * 255f).toInt().coerceIn(0, 255)
+          nc.drawRoundRect(
+            scratchRectF,
+            localDictateRect.cornerRadius,
+            localDictateRect.cornerRadius,
+            fillPaint,
+          )
+          strokePaint.strokeWidth = pxPerDp
+          strokePaint.color = 0xFF262626.toInt()
+          strokePaint.alpha = (dictFillA * 0.45f * 255f).toInt().coerceIn(0, 255)
+          nc.drawRoundRect(
+            scratchRectF,
+            localDictateRect.cornerRadius,
+            localDictateRect.cornerRadius,
+            strokePaint,
+          )
+        }
+      }
+
+      // 3c. Detached particles (in-flight, twinkling outline borders, interior scatter, 64-waveform)
+      fillPaint.color = android.graphics.Color.WHITE
+      for (i in 0 until n) {
+        val det = detArr[i]
+        if (det > 0.001f) {
+          val a = aArr[i]
+          if (a > 0.002f) {
+            val r = rArr[i]
+            val haloFactor = if (rzArr[i] >= 0f) 1f else det.coerceIn(0f, 1f)
+            val haloA = (a * 0.187f * haloFactor * 255f).toInt().coerceIn(0, 255)
+            if (haloA > 0) {
+              fillPaint.alpha = haloA
+              nc.drawCircle(cxArr[i], cyArr[i], r * 2.2f, fillPaint)
+            }
+            val coreA = (a * 255f).toInt().coerceIn(0, 255)
+            if (coreA > 0) {
+              fillPaint.alpha = coreA
+              nc.drawCircle(cxArr[i], cyArr[i], r, fillPaint)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Invisible layout/interaction anchor for Rivia's shared global sphere.
+ * Reports its center to [RiviaParticleFieldController], handles tap gestures in Live mode, and
+ * optionally shows the Dev-only sphere tuning card.
+ */
+@Composable
+fun RiviaSharedSphereSlot(
+  controller: RiviaParticleFieldController,
+  modifier: Modifier = Modifier,
+  sphereModifier: Modifier = Modifier,
+  devTuningModifier: Modifier = Modifier,
+  devTuningEnabled: Boolean = true,
+  showDevTuning: Boolean = false,
+  contentDesc: String = "Rivia Orb",
+  onSphereClick: (() -> Unit)? = null,
+) {
   Column(
     modifier = modifier,
     horizontalAlignment = Alignment.CenterHorizontally,
@@ -256,6 +573,20 @@ fun RiviaHomeParticleSphere(
       modifier =
         sphereModifier
           .size(300.dp)
+          .onGloballyPositioned { coords ->
+            if (coords.size.width > 0 && coords.size.height > 0) {
+              val pos = coords.positionInWindow()
+              val nextCenter =
+                Offset(
+                  pos.x + coords.size.width * 0.5f,
+                  pos.y + coords.size.height * 0.5f,
+                )
+              if (controller.slotCenterInWindow != nextCenter) {
+                controller.slotCenterInWindow = nextCenter
+                controller.requestRedraw()
+              }
+            }
+          }
           .let { base ->
             if (onSphereClick != null) {
               base.clickable(
@@ -271,290 +602,177 @@ fun RiviaHomeParticleSphere(
           .semantics { contentDescription = contentDesc },
       contentAlignment = Alignment.Center,
     ) {
-      Canvas(
-        modifier =
-          Modifier.fillMaxSize()
-            .let { base ->
-              if (onSphereClick != null) base.testTag("live_mode_orb") else base
-            }
-      ) {
-        val t = if (removeAnimations) 0f else elapsedSec
-        val twoPi = (2.0 * Math.PI).toFloat()
-
-        // Whole sphere breathing: 1.0 -> 1.015 -> 1.0 over 6 s, ease-in-out
-        val breathEase =
-          if (removeAnimations) {
-            0f
-          } else {
-            0.5f - 0.5f * cos(twoPi * (t / 6.0f))
-          }
-        val sphereScale = 1.0f + 0.015f * breathEase
-
-        // Core glow opacity breathing: 0.16 -> 0.24 over 5 s, ease-in-out
-        val coreGlowBreath =
-          if (removeAnimations) {
-            0.20f
-          } else {
-            0.16f + 0.08f * (0.5f - 0.5f * cos(twoPi * (t / 5.0f)))
-          }
-
-        // Linear spin around vertical axis, 1 full turn every rotationPeriodSec
-        val spinAngle =
-          if (removeAnimations) {
-            0f
-          } else {
-            twoPi * ((t / rotationPeriodSec.toFloat()) % 1.0f)
-          }
-        val cosSpin = cos(spinAngle)
-        val sinSpin = sin(spinAngle)
-
-        val centerX = this.size.width * 0.5f
-        val centerY = this.size.height * 0.5f
-        val centerOffset = Offset(centerX, centerY)
-
-        val sphereRadiusPx = 115.dp.toPx() * sphereScale
-        val cameraDistancePx = 700.dp.toPx()
-        val pxPerDp = 1.dp.toPx()
-
-        val n = particles.count
-        val ux = particles.ux
-        val uy = particles.uy
-        val uz = particles.uz
-        val radiusDp = particles.radiusDp
-        val frontBaseOpacity = particles.frontBaseOpacity
-        val twinkleOmega = particles.twinkleOmega
-        val twinklePhase = particles.twinklePhase
-        val rotX = particles.rotX
-        val rotY = particles.rotY
-        val rotZ = particles.rotZ
-
-        // Rotate all precomputed unit vectors once for this frame
-        for (i in 0 until n) {
-          val x1 = ux[i] * cosSpin + uz[i] * sinSpin
-          val y1 = uy[i]
-          val z1 = -ux[i] * sinSpin + uz[i] * cosSpin
-
-          rotX[i] = x1
-          rotY[i] = y1 * cosTilt - z1 * sinTilt
-          rotZ[i] = y1 * sinTilt + z1 * cosTilt
-        }
-
-        // Pass 1: Back-facing particles (no glow, base opacity 0.22)
-        for (i in 0 until n) {
-          val rz = rotZ[i]
-          if (rz < 0f) {
-            val wx = rotX[i] * sphereRadiusPx
-            val wy = rotY[i] * sphereRadiusPx
-            val wz = rz * sphereRadiusPx
-            val persp = cameraDistancePx / (cameraDistancePx - wz)
-
-            val sx = centerX + wx * persp
-            val sy = centerY - wy * persp
-            val rPx = radiusDp[i] * pxPerDp * sphereScale * persp
-
-            val twinkleFactor =
-              if (removeAnimations) {
-                1.0f
-              } else {
-                // Eases down to 40% of base and back (range 0.40..1.00)
-                0.70f + 0.30f * sin(t * twinkleOmega[i] + twinklePhase[i])
-              }
-            val alpha = (0.22f * twinkleFactor).coerceIn(0f, 1f)
-
-            drawCircle(
-              color = Color.White.copy(alpha = alpha),
-              radius = rPx,
-              center = Offset(sx, sy),
-            )
-          }
-        }
-
-        // Core Glow: 160 dp across (80 dp radius), pale-blue rgba(220,235,255,0.9) fading to transparent
-        val coreGlowRadiusPx = (80.dp.toPx() * sphereScale).coerceAtLeast(1f)
-        val peakCoreAlpha = (0.9f * coreGlowBreath).coerceIn(0f, 1f)
-        drawCircle(
-          brush =
-            Brush.radialGradient(
-              0.0f to coreGlowBaseColor.copy(alpha = peakCoreAlpha),
-              0.32f to coreGlowBaseColor.copy(alpha = peakCoreAlpha * 0.65f),
-              0.62f to coreGlowBaseColor.copy(alpha = peakCoreAlpha * 0.26f),
-              0.84f to coreGlowBaseColor.copy(alpha = peakCoreAlpha * 0.07f),
-              1.0f to Color.Transparent,
-              center = centerOffset,
-              radius = coreGlowRadiusPx,
-            ),
-          radius = coreGlowRadiusPx,
-          center = centerOffset,
-        )
-
-        // Pass 2: Front-facing particles (base opacity 0.55-1.0, soft glow of radius 2.2x size)
-        for (i in 0 until n) {
-          val rz = rotZ[i]
-          if (rz >= 0f) {
-            val wx = rotX[i] * sphereRadiusPx
-            val wy = rotY[i] * sphereRadiusPx
-            val wz = rz * sphereRadiusPx
-            val persp = cameraDistancePx / (cameraDistancePx - wz)
-
-            val sx = centerX + wx * persp
-            val sy = centerY - wy * persp
-            val pos = Offset(sx, sy)
-            val rPx = radiusDp[i] * pxPerDp * sphereScale * persp
-
-            val twinkleFactor =
-              if (removeAnimations) {
-                1.0f
-              } else {
-                // Eases down to 40% of base and back (range 0.40..1.00)
-                0.70f + 0.30f * sin(t * twinkleOmega[i] + twinklePhase[i])
-              }
-            val particleAlpha = (frontBaseOpacity[i] * twinkleFactor).coerceIn(0f, 1f)
-
-            // Second, larger, low-alpha circle for the 2.2x radius soft glow (white, 85% alpha scaled for halo)
-            val glowAlpha = (particleAlpha * 0.85f * 0.22f).coerceIn(0f, 1f)
-            drawCircle(
-              color = Color.White.copy(alpha = glowAlpha),
-              radius = rPx * 2.2f,
-              center = pos,
-            )
-
-            // Crisp white particle core
-            drawCircle(
-              color = Color.White.copy(alpha = particleAlpha),
-              radius = rPx,
-              center = pos,
-            )
-          }
-        }
+      if (onSphereClick != null) {
+        Box(modifier = Modifier.fillMaxSize().testTag("live_mode_orb"))
       }
     }
 
     if (showDevTuning) {
-      Surface(
-        color = RiviaSurface1,
-        border = BorderStroke(1.dp, RiviaBorder),
-        shape = RoundedCornerShape(14.dp),
-        modifier =
-          devTuningModifier
-            .widthIn(max = 320.dp)
-            .fillMaxWidth()
-            .testTag("sphere_dev_tuning_card"),
+      RiviaSphereDevTuningCard(
+        settingsState = controller.settingsState,
+        enabled = devTuningEnabled,
+        modifier = devTuningModifier,
+      )
+    }
+  }
+}
+
+@Composable
+fun RiviaSphereDevTuningCard(
+  settingsState: RiviaSphereSettingsState,
+  enabled: Boolean = true,
+  modifier: Modifier = Modifier,
+) {
+  Surface(
+    color = RiviaSurface1,
+    border = BorderStroke(1.dp, RiviaBorder),
+    shape = RoundedCornerShape(14.dp),
+    modifier =
+      modifier
+        .widthIn(max = 320.dp)
+        .fillMaxWidth()
+        .testTag("sphere_dev_tuning_card"),
+  ) {
+    Column(
+      modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
       ) {
-        Column(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-          verticalArrangement = Arrangement.spacedBy(4.dp),
+        Text(
+          text = "Particles",
+          style = MaterialTheme.typography.labelMedium,
+          color = RiviaTextSecondary,
+        )
+        Text(
+          text = "${settingsState.particleCount}",
+          style = MaterialTheme.typography.labelMedium,
+          fontFamily = ChivoMonoFontFamily,
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+      Slider(
+        value = settingsState.particleCount.toFloat(),
+        enabled = enabled,
+        onValueChange = settingsState::updateParticleCount,
+        valueRange = MIN_PARTICLE_COUNT.toFloat()..MAX_PARTICLE_COUNT.toFloat(),
+        steps = 31,
+        colors =
+          SliderDefaults.colors(
+            thumbColor = RiviaMint,
+            activeTrackColor = RiviaMint,
+            inactiveTrackColor = RiviaSurface2,
+          ),
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(28.dp)
+            .testTag("sphere_particle_count_slider"),
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = "Rotation period",
+          style = MaterialTheme.typography.labelMedium,
+          color = RiviaTextSecondary,
+        )
+        Text(
+          text = "${settingsState.rotationPeriodSec}s",
+          style = MaterialTheme.typography.labelMedium,
+          fontFamily = ChivoMonoFontFamily,
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+      Slider(
+        value = settingsState.rotationPeriodSec.toFloat(),
+        enabled = enabled,
+        onValueChange = settingsState::updateRotationPeriodSec,
+        valueRange = 10f..90f,
+        steps = 15,
+        colors =
+          SliderDefaults.colors(
+            thumbColor = RiviaMint,
+            activeTrackColor = RiviaMint,
+            inactiveTrackColor = RiviaSurface2,
+          ),
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(28.dp)
+            .testTag("sphere_rotation_period_slider"),
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+      ) {
+        TextButton(
+          enabled = enabled,
+          onClick = settingsState::resetToDefaults,
+          modifier = Modifier.testTag("sphere_reset_defaults_button"),
         ) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(
-              text = "Particles",
-              style = MaterialTheme.typography.labelMedium,
-              color = RiviaTextSecondary,
-            )
-            Text(
-              text = "$particleCount",
-              style = MaterialTheme.typography.labelMedium,
-              fontFamily = ChivoMonoFontFamily,
-              color = RiviaTextPrimary,
-              fontWeight = FontWeight.SemiBold,
-            )
-          }
-          Slider(
-            value = particleCount.toFloat(),
-            enabled = devTuningEnabled,
-            onValueChange = { raw ->
-              val snapped = ((raw / 50f).roundToInt() * 50).coerceIn(200, 1000)
-              if (snapped != particleCount) {
-                particleCount = snapped
-                prefs.edit().putInt(PREF_KEY_PARTICLE_COUNT, snapped).apply()
-              }
-            },
-            valueRange = 200f..1000f,
-            steps = 15,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
-                inactiveTrackColor = RiviaSurface2,
-              ),
-            modifier =
-              Modifier.fillMaxWidth()
-                .height(28.dp)
-                .testTag("sphere_particle_count_slider"),
+          Text(
+            text = "Reset to defaults",
+            color = RiviaTextSecondary,
+            fontSize = 12.sp,
           )
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(
-              text = "Rotation period",
-              style = MaterialTheme.typography.labelMedium,
-              color = RiviaTextSecondary,
-            )
-            Text(
-              text = "${rotationPeriodSec}s",
-              style = MaterialTheme.typography.labelMedium,
-              fontFamily = ChivoMonoFontFamily,
-              color = RiviaTextPrimary,
-              fontWeight = FontWeight.SemiBold,
-            )
-          }
-          Slider(
-            value = rotationPeriodSec.toFloat(),
-            enabled = devTuningEnabled,
-            onValueChange = { raw ->
-              val snapped = ((raw / 5f).roundToInt() * 5).coerceIn(10, 90)
-              if (snapped != rotationPeriodSec) {
-                rotationPeriodSec = snapped
-                prefs.edit().putInt(PREF_KEY_ROTATION_PERIOD_SEC, snapped).apply()
-              }
-            },
-            valueRange = 10f..90f,
-            steps = 15,
-            colors =
-              SliderDefaults.colors(
-                thumbColor = RiviaMint,
-                activeTrackColor = RiviaMint,
-                inactiveTrackColor = RiviaSurface2,
-              ),
-            modifier =
-              Modifier.fillMaxWidth()
-                .height(28.dp)
-                .testTag("sphere_rotation_period_slider"),
-          )
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-          ) {
-            TextButton(
-              enabled = devTuningEnabled,
-              onClick = {
-                particleCount = DEFAULT_PARTICLE_COUNT
-                rotationPeriodSec = DEFAULT_ROTATION_PERIOD_SEC
-                prefs
-                  .edit()
-                  .putInt(PREF_KEY_PARTICLE_COUNT, DEFAULT_PARTICLE_COUNT)
-                  .putInt(PREF_KEY_ROTATION_PERIOD_SEC, DEFAULT_ROTATION_PERIOD_SEC)
-                  .apply()
-              },
-              modifier = Modifier.testTag("sphere_reset_defaults_button"),
-            ) {
-              Text(
-                text = "Reset to defaults",
-                color = RiviaTextSecondary,
-                fontSize = 12.sp,
-              )
-            }
-          }
         }
       }
     }
+  }
+}
+
+/**
+ * Delegates to the global shared sphere slot if hosted under RiviaAppRoot, or renders a standalone
+ * particle field canvas only in isolated component previews/tests.
+ */
+@Composable
+fun RiviaHomeParticleSphere(
+  modifier: Modifier = Modifier,
+  sphereModifier: Modifier = Modifier,
+  devTuningModifier: Modifier = Modifier,
+  devTuningEnabled: Boolean = true,
+  showDevTuning: Boolean = false,
+  contentDesc: String = "Rivia Orb",
+  onSphereClick: (() -> Unit)? = null,
+) {
+  val sharedController = LocalRiviaParticleFieldController.current
+  if (sharedController != null) {
+    RiviaSharedSphereSlot(
+      controller = sharedController,
+      modifier = modifier,
+      sphereModifier = sphereModifier,
+      devTuningModifier = devTuningModifier,
+      devTuningEnabled = devTuningEnabled,
+      showDevTuning = showDevTuning,
+      contentDesc = contentDesc,
+      onSphereClick = onSphereClick,
+    )
+    return
+  }
+
+  val fallbackController = rememberRiviaParticleFieldController()
+  Box(modifier = modifier, contentAlignment = Alignment.Center) {
+    RiviaParticleFieldCanvas(
+      controller = fallbackController,
+      modifier = Modifier.size(300.dp),
+    )
+    RiviaSharedSphereSlot(
+      controller = fallbackController,
+      sphereModifier = sphereModifier,
+      devTuningModifier = devTuningModifier,
+      devTuningEnabled = devTuningEnabled,
+      showDevTuning = showDevTuning,
+      contentDesc = contentDesc,
+      onSphereClick = onSphereClick,
+    )
   }
 }
 
@@ -572,11 +790,7 @@ enum class StatusType {
 }
 
 /**
- * Rivia's abstract orb avatar:
- * - Mode accent radial glow (#F5F5F5 in Rivia, #A78BFA in Dev, #60A5FA in Labs)
- * - Primary core (#EDEDED)
- * - Thin ring
- * - Pulses while she speaks and breathes slowly while she listens.
+ * Rivia's abstract small inline orb avatar used beside assistant replies and drawer headers.
  */
 @Composable
 fun RiviaOrb(
@@ -587,7 +801,6 @@ fun RiviaOrb(
 ) {
   val transition = rememberInfiniteTransition(label = "orb_transition")
 
-  // Speaking pulse: lively 550ms pulse; Listening breath: slow 2400ms breath; Thinking: 1100ms shimmer
   val durationMs =
     when (state) {
       OrbState.SPEAKING -> 520
@@ -646,7 +859,6 @@ fun RiviaOrb(
       }
 
     val glowRadius = (maxRadius * glowScale).coerceAtLeast(1f)
-    // 1. Mint radial glow
     drawCircle(
       brush =
         Brush.radialGradient(
@@ -663,7 +875,6 @@ fun RiviaOrb(
       center = center,
     )
 
-    // Optional outer ripple ring when speaking
     if (state == OrbState.SPEAKING) {
       drawCircle(
         color = RiviaMint.copy(alpha = (1f - animProgress) * 0.55f),
@@ -673,7 +884,6 @@ fun RiviaOrb(
       )
     }
 
-    // 2. Thin mint ring
     drawCircle(
       color = RiviaMint.copy(alpha = if (state == OrbState.IDLE) 0.75f else 0.95f),
       radius = maxRadius * ringScale,
@@ -681,7 +891,6 @@ fun RiviaOrb(
       style = Stroke(width = (1.5.dp.toPx()).coerceAtLeast(1.5f)),
     )
 
-    // 3. White core
     drawCircle(
       color = RiviaText,
       radius = maxRadius * coreScale,

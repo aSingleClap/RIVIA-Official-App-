@@ -207,6 +207,9 @@ object LiveSessionManager {
   private val _uiState = MutableStateFlow(LiveUiState())
   val uiState: StateFlow<LiveUiState> = _uiState.asStateFlow()
 
+  private val _liveMicLevel = MutableStateFlow(0f)
+  val liveMicLevel: StateFlow<Float> = _liveMicLevel.asStateFlow()
+
   private val _lastTurnEmotionBarrierResult = MutableStateFlow<TurnEmotionBarrierResult?>(null)
   val lastTurnEmotionBarrierResult: StateFlow<TurnEmotionBarrierResult?> =
     _lastTurnEmotionBarrierResult.asStateFlow()
@@ -576,6 +579,7 @@ object LiveSessionManager {
     closeMic()
     appContext?.let { clearEarbudMicRouting(it) }
     audioPlayerManager?.releaseLiveSessionAudioFocus()
+    _liveMicLevel.value = 0f
     _uiState.value = LiveUiState(isActive = false, orbState = OrbState.IDLE)
   }
 
@@ -588,6 +592,7 @@ object LiveSessionManager {
       vadFallbackTimerJob?.cancel()
       vadFallbackTimerJob = null
       userSpeechStartedInTurn = false
+      _liveMicLevel.value = 0f
       closeMic()
       if (_uiState.value.orbState == OrbState.LISTENING) {
         _uiState.value = _uiState.value.copy(orbState = OrbState.IDLE)
@@ -608,6 +613,7 @@ object LiveSessionManager {
       activeTurnJob?.cancel()
       userSpeechStartedInTurn = false
       userTurnFinalizingOrExecuting = false
+      _liveMicLevel.value = 0f
       MicSharingRecorder.clearLivePlaybackGateImmediate()
       closeMic()
       audioPlayerManager?.stopPlayback()
@@ -686,6 +692,7 @@ object LiveSessionManager {
   }
 
   private fun closeRecognizerOnly() {
+    _liveMicLevel.value = 0f
     try {
       speechRecognizer?.stopListening()
       speechRecognizer?.cancel()
@@ -1127,11 +1134,24 @@ object LiveSessionManager {
               recordCallbackEvent("onBeginningOfSpeech")
             }
 
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+              if (
+                isLivePlaybackOrGateActive() ||
+                  _uiState.value.isMuted ||
+                  _uiState.value.isPaused
+              ) {
+                _liveMicLevel.value = 0f
+                return
+              }
+              val normalized = ((rmsdB + 2f) / 10f).coerceIn(0f, 1f)
+              val prev = _liveMicLevel.value
+              _liveMicLevel.value = prev * 0.45f + normalized * 0.55f
+            }
 
             override fun onBufferReceived(buffer: ByteArray?) {}
 
             override fun onEndOfSpeech() {
+              _liveMicLevel.value = 0f
               if (isLivePlaybackOrGateActive() && !userSpeechStartedInTurn) {
                 gateSeenWhileIdleInTurn.set(true)
                 return

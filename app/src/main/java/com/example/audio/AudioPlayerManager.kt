@@ -15,11 +15,18 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import com.example.network.ElevenLabsClient
 import com.example.security.SecureKeyRepository
 import com.example.util.TextAudioTagProcessor
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.sqrt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -82,6 +89,10 @@ class AudioPlayerManager(
 
   private val _lastAudioNotice = MutableStateFlow<String?>(null)
   val lastAudioNotice: StateFlow<String?> = _lastAudioNotice.asStateFlow()
+
+  private val _playbackAudioLevel = MutableStateFlow(0f)
+  val playbackAudioLevel: StateFlow<Float> = _playbackAudioLevel.asStateFlow()
+  @Volatile private var meterPcmEncoding: Int = C.ENCODING_PCM_16BIT
 
   private val exceptionHandler =
     CoroutineExceptionHandler { _, throwable ->
@@ -189,7 +200,78 @@ class AudioPlayerManager(
         .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
         .build()
 
-    return ExoPlayer.Builder(context.applicationContext)
+    val playbackMeterSink =
+      object : TeeAudioProcessor.AudioBufferSink {
+        override fun flush(sampleRateHz: Int, channelCount: Int, encoding: Int) {
+          meterPcmEncoding = encoding
+        }
+
+        override fun handleBuffer(buffer: ByteBuffer) {
+          try {
+            if (!_isSpeaking.value) {
+              _playbackAudioLevel.value = 0f
+              return
+            }
+            val dup = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            val rem = dup.remaining()
+            if (rem < 4) return
+            var sumSq = 0.0
+            var samples = 0
+            when (meterPcmEncoding) {
+              C.ENCODING_PCM_16BIT -> {
+                val totalShorts = rem / 2
+                val step = (totalShorts / 96).coerceAtLeast(1)
+                var idx = 0
+                val basePos = dup.position()
+                while (idx < totalShorts) {
+                  val s = dup.getShort(basePos + idx * 2).toFloat() / 32768f
+                  sumSq += (s * s).toDouble()
+                  samples++
+                  idx += step
+                }
+              }
+              C.ENCODING_PCM_FLOAT -> {
+                val totalFloats = rem / 4
+                val step = (totalFloats / 96).coerceAtLeast(1)
+                var idx = 0
+                val basePos = dup.position()
+                while (idx < totalFloats) {
+                  val s = dup.getFloat(basePos + idx * 4)
+                  if (s.isFinite()) {
+                    sumSq += (s * s).toDouble()
+                    samples++
+                  }
+                  idx += step
+                }
+              }
+            }
+            if (samples > 0) {
+              val rms = sqrt(sumSq / samples.toDouble()).toFloat()
+              val norm = ((rms - 0.008f) / 0.21f).coerceIn(0f, 1f)
+              val prev = _playbackAudioLevel.value
+              _playbackAudioLevel.value =
+                if (norm >= prev) prev * 0.40f + norm * 0.60f else prev * 0.72f + norm * 0.28f
+            }
+          } catch (_: Throwable) {}
+        }
+      }
+
+    val renderersFactory =
+      object : DefaultRenderersFactory(context.applicationContext) {
+        override fun buildAudioSink(
+          context: Context,
+          enableFloatOutput: Boolean,
+          enableAudioTrackPlaybackParams: Boolean,
+        ): AudioSink {
+          return DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setAudioProcessors(arrayOf(TeeAudioProcessor(playbackMeterSink)))
+            .build()
+        }
+      }
+
+    return ExoPlayer.Builder(context.applicationContext, renderersFactory)
       .setLoadControl(loadControl)
       .build()
       .apply {
@@ -208,17 +290,21 @@ class AudioPlayerManager(
                 if (liveSessionHoldsFocus || currentPlaybackIsLive) {
                   MicSharingRecorder.setLivePlaybackActive(true)
                 }
-              } else if (
-                playbackState == Player.STATE_ENDED &&
-                  allChunksEnqueued &&
-                  !pausedByTransientFocusLoss
-              ) {
-                onAllPlaybackCompletedOnMain()
+              } else {
+                _playbackAudioLevel.value = 0f
+                if (
+                  playbackState == Player.STATE_ENDED &&
+                    allChunksEnqueued &&
+                    !pausedByTransientFocusLoss
+                ) {
+                  onAllPlaybackCompletedOnMain()
+                }
               }
             }
 
             override fun onPlayerError(error: PlaybackException) {
               Log.e("AudioPlayerManager", "Audio playback error: ${error.message}", error)
+              _playbackAudioLevel.value = 0f
               _lastAudioError.value = "Couldn't play Rivia's voice. Try again."
               if (allChunksEnqueued) {
                 onAllPlaybackCompletedOnMain()
@@ -836,6 +922,7 @@ class AudioPlayerManager(
     } catch (_: Throwable) {}
     allChunksEnqueued = true
     _isSpeaking.value = false
+    _playbackAudioLevel.value = 0f
     _speakingMessageId.value = null
     if (wasLivePlayback) {
       if (applyLiveTailGate) {
@@ -876,6 +963,7 @@ class AudioPlayerManager(
     val wasLive = currentPlaybackIsLive || liveSessionHoldsFocus
     currentPlaybackIsLive = false
     _isSpeaking.value = false
+    _playbackAudioLevel.value = 0f
     _speakingMessageId.value = null
     pausedByTransientFocusLoss = false
     if (wasLive) {

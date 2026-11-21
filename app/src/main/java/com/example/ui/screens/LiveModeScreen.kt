@@ -7,20 +7,22 @@ import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,7 +32,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,10 +48,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,22 +63,25 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.ui.graphics.graphicsLayer
 import com.example.service.LiveSessionManager
 import com.example.service.LiveVoiceService
+import com.example.ui.components.LocalRiviaParticleFieldController
 import com.example.ui.components.OrbState
+import com.example.ui.components.ParticleSceneMode
 import com.example.ui.components.RiviaHomeParticleSphere
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
+import com.example.ui.components.ViewportScale
+import com.example.ui.components.isSystemRemoveAnimationsEnabled
 import com.example.ui.theme.ChivoMonoFontFamily
 import com.example.ui.theme.RiviaBackground
 import com.example.ui.theme.RiviaBorder
@@ -88,7 +92,6 @@ import com.example.ui.theme.RiviaMint
 import com.example.ui.theme.RiviaMutedText
 import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaRaisedSurface
-import com.example.ui.theme.RiviaSurface
 import com.example.ui.theme.RiviaSurface2
 import com.example.ui.theme.RiviaSurface3
 import com.example.ui.theme.RiviaText
@@ -96,6 +99,9 @@ import com.example.ui.theme.RiviaTextSecondary
 import com.example.ui.theme.RiviaTextTertiary
 import com.example.ui.theme.RiviaWarningAmber
 import com.example.viewmodel.RiviaViewModel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun LiveModeScreen(
@@ -104,7 +110,14 @@ fun LiveModeScreen(
 ) {
   val context = LocalContext.current
   val view = LocalView.current
+  val removeAnimations = isSystemRemoveAnimationsEnabled(context)
+  val particleController = LocalRiviaParticleFieldController.current
+
   val liveState by LiveSessionManager.uiState.collectAsStateWithLifecycle()
+  val liveMicLevel by LiveSessionManager.liveMicLevel.collectAsStateWithLifecycle()
+  val playbackAudioLevel by
+    viewModel.audioPlayerManager.playbackAudioLevel.collectAsStateWithLifecycle()
+  val isAudioSpeaking by viewModel.audioPlayerManager.isSpeaking.collectAsStateWithLifecycle()
   val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
   val runSettings by viewModel.currentRunSettings.collectAsStateWithLifecycle()
 
@@ -125,7 +138,7 @@ fun LiveModeScreen(
     onDispose { view.keepScreenOn = prev }
   }
 
-  // Subtle haptics on state transitions (Confirmed Decision 2)
+  // Subtle haptics on state transitions
   LaunchedEffect(liveState.orbState) {
     if (liveState.isActive) {
       view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -147,7 +160,6 @@ fun LiveModeScreen(
         micPermissionDeniedReason = null
         LiveVoiceService.start(context)
       } else {
-        // Correction 8: if RECORD_AUDIO is denied, don't start LiveVoiceService and say why.
         micPermissionDeniedReason =
           "Rivia needs the microphone to hear you in Live."
       }
@@ -181,8 +193,30 @@ fun LiveModeScreen(
     }
   }
 
+  // Staged Live UI reveal: ~500 ms state line + captions, ~750 ms Mute / Pause / End
+  val captionsAlpha = remember { Animatable(if (removeAnimations) 1f else 0f) }
+  val controlsAlpha = remember { Animatable(if (removeAnimations) 1f else 0f) }
+  LaunchedEffect(removeAnimations) {
+    if (removeAnimations) {
+      captionsAlpha.snapTo(1f)
+      controlsAlpha.snapTo(1f)
+    } else {
+      val easeOut = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
+      coroutineScope {
+        launch {
+          delay(500L)
+          captionsAlpha.animateTo(1f, tween(durationMillis = 220, easing = easeOut))
+        }
+        launch {
+          delay(750L)
+          controlsAlpha.animateTo(1f, tween(durationMillis = 220, easing = easeOut))
+        }
+      }
+    }
+  }
+
   val edgeGlowTransition = rememberInfiniteTransition(label = "edge_glow")
-  val edgeGlowAlpha by
+  val edgeGlowPulse by
     edgeGlowTransition.animateFloat(
       initialValue = 0.25f,
       targetValue = 0.70f,
@@ -195,14 +229,24 @@ fun LiveModeScreen(
     )
 
   val isSpeaking = liveState.orbState == OrbState.SPEAKING
+  val edgeGlowEnvelope by
+    animateFloatAsState(
+      targetValue = if (isSpeaking) 1f else 0f,
+      animationSpec =
+        if (removeAnimations) snap()
+        else tween(durationMillis = 320, easing = FastOutSlowInEasing),
+      label = "live_edge_glow_envelope",
+    )
 
-  // Full screen with a faint mint glow tracing the screen edges while Rivia speaks
-  Box(
+  BoxWithConstraints(
     modifier =
       Modifier.fillMaxSize()
-        .background(RiviaBackground)
+        .let { base ->
+          if (particleController == null) base.background(RiviaBackground) else base
+        }
         .drawBehind {
-          if (isSpeaking) {
+          val effAlpha = edgeGlowPulse * edgeGlowEnvelope
+          if (effAlpha > 0.004f) {
             val strokePx = 14.dp.toPx()
             drawRect(
               brush =
@@ -210,13 +254,13 @@ fun LiveModeScreen(
                   colors =
                     listOf(
                       Color.Transparent,
-                      RiviaMint.copy(alpha = edgeGlowAlpha * 0.45f),
+                      RiviaMint.copy(alpha = effAlpha * 0.45f),
                     ),
                   radius = size.maxDimension * 0.72f,
                 )
             )
             drawRect(
-              color = RiviaMint.copy(alpha = edgeGlowAlpha),
+              color = RiviaMint.copy(alpha = effAlpha),
               style = Stroke(width = strokePx),
             )
           }
@@ -225,9 +269,31 @@ fun LiveModeScreen(
         .navigationBarsPadding()
         .padding(20.dp)
   ) {
-    // Top Header Info
+    val viewportScale =
+      remember(maxWidth, maxHeight) {
+        ViewportScale.fromPaneDp(maxWidth.value, maxHeight.value)
+      }
+
+    SideEffect {
+      particleController?.let { ctrl ->
+        ctrl.viewportScale = viewportScale
+        ctrl.chatBarFillAlpha = 0f
+        ctrl.dictationPanelFillAlpha = 0f
+        ctrl.liveOrbState = liveState.orbState
+        ctrl.liveMicLevel = liveMicLevel
+        ctrl.livePlaybackLevel = playbackAudioLevel
+        ctrl.isLiveSpeakingFallback = isAudioSpeaking || isSpeaking
+        ctrl.updateWantDrawerOpen(false, removeAnimations)
+        ctrl.updateDesiredMode(ParticleSceneMode.LIVE)
+      }
+    }
+
+    // Top Header Info (~500 ms state line fade-in)
     Row(
-      modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+      modifier =
+        Modifier.fillMaxWidth()
+          .align(Alignment.TopCenter)
+          .graphicsLayer { alpha = captionsAlpha.value },
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -283,7 +349,9 @@ fun LiveModeScreen(
           shape = RoundedCornerShape(14.dp),
           color = RiviaRaisedSurface,
           border = BorderStroke(1.dp, RiviaErrorRed),
-          modifier = Modifier.widthIn(max = 420.dp),
+          modifier =
+            Modifier.widthIn(max = 420.dp)
+              .graphicsLayer { alpha = captionsAlpha.value },
         ) {
           Column(
             modifier = Modifier.padding(18.dp),
@@ -312,13 +380,8 @@ fun LiveModeScreen(
           }
         }
       } else {
-        // Tapping the sphere while she speaks stops her and starts listening
+        // Shared global sphere slot: tapping while she speaks stops her and starts listening
         RiviaHomeParticleSphere(
-          sphereModifier =
-            Modifier.graphicsLayer {
-              scaleX = 1.05f
-              scaleY = 1.05f
-            },
           contentDesc = "Tap to stop Rivia and listen",
           onSphereClick = {
             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
@@ -326,21 +389,23 @@ fun LiveModeScreen(
           },
         )
 
-        Text(
-          text =
-            if (isSpeaking) "Talk over her or tap the orb to cut in"
-            else if (liveState.stoppedAfterThreeErrors) "Tap the orb to try again"
-            else "Just talk",
-          style = MaterialTheme.typography.labelMedium,
-          color = RiviaMutedText,
-        )
-
-        // Live Captions of my words and hers
         Column(
-          modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+          modifier =
+            Modifier.widthIn(max = 520.dp)
+              .fillMaxWidth()
+              .graphicsLayer { alpha = captionsAlpha.value },
           verticalArrangement = Arrangement.spacedBy(12.dp),
           horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+          Text(
+            text =
+              if (isSpeaking) "Talk over her or tap the orb to cut in"
+              else if (liveState.stoppedAfterThreeErrors) "Tap the orb to try again"
+              else "Just talk",
+            style = MaterialTheme.typography.labelMedium,
+            color = RiviaMutedText,
+          )
+
           if (liveState.userCaption.isNotBlank()) {
             Surface(
               shape = RoundedCornerShape(12.dp),
@@ -440,15 +505,20 @@ fun LiveModeScreen(
       }
     }
 
-    // Bottom Controls: Mute, Pause, and End buttons
+    // Bottom Controls: Mute, Pause, and End buttons (~750 ms fade-in, usable as soon as fade starts)
+    val controlsUsable = controlsAlpha.value > 0.01f
     Row(
-      modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+      modifier =
+        Modifier.fillMaxWidth()
+          .align(Alignment.BottomCenter)
+          .graphicsLayer { alpha = controlsAlpha.value },
       horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
       verticalAlignment = Alignment.CenterVertically,
     ) {
       // Mute Button
       Column(horizontalAlignment = Alignment.CenterHorizontally) {
         IconButton(
+          enabled = controlsUsable,
           onClick = {
             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             LiveSessionManager.toggleMute()
@@ -478,6 +548,7 @@ fun LiveModeScreen(
       // Pause Button
       Column(horizontalAlignment = Alignment.CenterHorizontally) {
         IconButton(
+          enabled = controlsUsable,
           onClick = {
             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             LiveSessionManager.togglePause()
@@ -507,6 +578,7 @@ fun LiveModeScreen(
       // End Button
       Column(horizontalAlignment = Alignment.CenterHorizontally) {
         IconButton(
+          enabled = controlsUsable,
           onClick = {
             view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             LiveVoiceService.stop(context)

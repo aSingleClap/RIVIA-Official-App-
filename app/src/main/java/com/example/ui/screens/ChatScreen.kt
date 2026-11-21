@@ -18,8 +18,10 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -29,6 +31,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -117,14 +120,17 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,16 +138,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -149,6 +157,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -157,7 +167,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.ChatEntity
 import com.example.data.MessageEntity
@@ -167,12 +181,18 @@ import com.example.model.LoadedLayersBundle
 import com.example.model.ModePreset
 import com.example.model.ProfileTestState
 import com.example.model.RunSettings
+import com.example.ui.components.LocalRiviaParticleFieldController
 import com.example.ui.components.MarkdownText
 import com.example.ui.components.OrbState
+import com.example.ui.components.ParticleSceneMode
 import com.example.ui.components.RiviaHomeParticleSphere
 import com.example.ui.components.RiviaOrb
+import com.example.ui.components.RiviaParticleFieldController
+import com.example.ui.components.RiviaSharedSphereSlot
+import com.example.ui.components.SimpleRectPx
 import com.example.ui.components.StatusShape
 import com.example.ui.components.StatusType
+import com.example.ui.components.ViewportScale
 import com.example.ui.components.copyToClipboard
 import com.example.ui.components.isSystemRemoveAnimationsEnabled
 import com.example.ui.theme.AppUiMode
@@ -239,6 +259,8 @@ fun ChatScreen(
   val elevenKey by viewModel.elevenLabsKey.collectAsStateWithLifecycle()
   val voicePrefs by viewModel.voicePreferences.collectAsStateWithLifecycle()
   val isSpeaking by viewModel.audioPlayerManager.isSpeaking.collectAsStateWithLifecycle()
+  val playbackAudioLevel by
+    viewModel.audioPlayerManager.playbackAudioLevel.collectAsStateWithLifecycle()
   val speakingMsgId by viewModel.audioPlayerManager.speakingMessageId.collectAsStateWithLifecycle()
   val audioError by viewModel.audioPlayerManager.lastAudioError.collectAsStateWithLifecycle()
   val audioNotice by viewModel.audioPlayerManager.lastAudioNotice.collectAsStateWithLifecycle()
@@ -253,6 +275,7 @@ fun ChatScreen(
   val loadedBundle by viewModel.loadedLayersBundle.collectAsStateWithLifecycle()
   val cardMetas by viewModel.layerCardMetas.collectAsStateWithLifecycle()
 
+  val particleController = LocalRiviaParticleFieldController.current
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val scope = rememberCoroutineScope()
   val keyboardController = LocalSoftwareKeyboardController.current
@@ -333,13 +356,18 @@ fun ChatScreen(
   BoxWithConstraints(
     modifier =
       Modifier.fillMaxSize()
-        .background(RiviaBackground)
+        .let { base ->
+          if (particleController == null) base.background(RiviaBackground) else base
+        }
         .statusBarsPadding()
         .navigationBarsPadding()
   ) {
     val isUnfoldedOrExpanded = maxWidth >= 600.dp
 
     if (isUnfoldedOrExpanded) {
+      SideEffect {
+        particleController?.updateWantDrawerOpen(open = false, removeAnimations = false)
+      }
       Row(modifier = Modifier.fillMaxSize()) {
         // Persistent left chat list pane (kept clear of center hinge)
         Box(
@@ -451,6 +479,8 @@ fun ChatScreen(
             newChatResetToken = newChatResetToken,
             showDrawerButton = false,
             onOpenDrawer = {},
+            particleController = particleController,
+            playbackAudioLevel = playbackAudioLevel,
             appUiMode = appUiMode,
             onSelectUiMode = viewModel::setAppUiMode,
             onOpenDevLabsSheet = {
@@ -520,134 +550,311 @@ fun ChatScreen(
         }
       }
     } else {
+      val context = LocalContext.current
+      val density = LocalDensity.current
+      val lifecycleOwner = LocalLifecycleOwner.current
+      var removeAnimations by remember { mutableStateOf(isSystemRemoveAnimationsEnabled(context)) }
+      DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+          if (event == Lifecycle.Event.ON_RESUME) {
+            removeAnimations = isSystemRemoveAnimationsEnabled(context)
+          }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+      }
+
+      val drawerCornerRadius = 22.dp
+      val drawerCornerRadiusPx = with(density) { drawerCornerRadius.toPx() }
+      val defaultDrawerWidthPx = with(density) { minOf(300.dp, maxWidth).toPx() }
+      val defaultDrawerHeightPx = with(density) { maxHeight.toPx() }
+
+      var measuredDrawerWidthPx by remember { mutableFloatStateOf(defaultDrawerWidthPx) }
+
+      var wantDrawerOpen by remember { mutableStateOf(false) }
+      var drawerRevealElapsedMs by remember { mutableFloatStateOf(0f) }
+      val drawerCloseAlpha = remember { Animatable(0f) }
+
+      SideEffect {
+        particleController?.let { ctrl ->
+          if (!ctrl.drawerWindowRect.isValid) {
+            ctrl.drawerWindowRect =
+              SimpleRectPx(
+                left = 0f,
+                top = ctrl.canvasOriginInWindow.y,
+                width = defaultDrawerWidthPx,
+                height = defaultDrawerHeightPx,
+                cornerRadius = drawerCornerRadiusPx,
+              )
+          }
+          ctrl.updateWantDrawerOpen(open = wantDrawerOpen, removeAnimations = removeAnimations)
+        }
+      }
+
       LaunchedEffect(drawerState.isClosed) {
         if (drawerState.isClosed && selectedChatIds.isNotEmpty()) {
           selectedChatIds = emptySet()
         }
       }
 
-      ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-          ModalDrawerSheet(
-            drawerContainerColor = RiviaSurface,
-            drawerContentColor = RiviaText,
-            modifier = Modifier.width(300.dp),
-          ) {
-            ChatDrawerContent(
-              viewModel = viewModel,
-              appUiMode = appUiMode,
-              chats = chats,
-              activeChatId = activeChat?.id,
-              searchQuery = searchQuery,
-              onSearchQueryChange = viewModel::setDrawerSearchQuery,
-              selectedChatIds = selectedChatIds,
-              onToggleSelectChat = { chat ->
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                selectedChatIds =
-                  if (chat.id in selectedChatIds) selectedChatIds - chat.id
-                  else selectedChatIds + chat.id
-              },
-              onSelectAllChats = {
-                selectedChatIds = chats.map { it.id }.toSet()
-              },
-              onClearSelection = {
-                selectedChatIds = emptySet()
-              },
-              onRenameSelectedChat = {
-                if (selectedChatIds.size == 1) {
-                  val targetId = selectedChatIds.first()
-                  val targetChat = chats.firstOrNull { it.id == targetId }
-                  if (targetChat != null) {
-                    keyboardController?.hide()
-                    focusManager.clearFocus()
-                    chatToRename = targetChat
-                    renameDraftText = targetChat.title
+      LaunchedEffect(drawerState, removeAnimations) {
+        var prevFrac = if (drawerState.currentValue == DrawerValue.Open) 1f else 0f
+        var dragDir = 0
+        snapshotFlow {
+          Triple(drawerState.currentValue, drawerState.targetValue, drawerState.currentOffset)
+        }.collect { (curVal, tgtVal, rawOffset) ->
+          if (removeAnimations) {
+            wantDrawerOpen = false
+            return@collect
+          }
+          val w = measuredDrawerWidthPx.coerceAtLeast(1f)
+          val frac =
+            if (rawOffset.isNaN()) {
+              if (curVal == DrawerValue.Open || tgtVal == DrawerValue.Open) 1f else 0f
+            } else {
+              ((w + rawOffset) / w).coerceIn(0f, 1f)
+            }
+          val delta = frac - prevFrac
+          if (delta > 0.004f) dragDir = 1
+          else if (delta < -0.004f) dragDir = -1
+          if (frac <= 0.005f || frac >= 0.995f) dragDir = 0
+          prevFrac = frac
+
+          val desired =
+            when {
+              tgtVal == DrawerValue.Open && curVal == DrawerValue.Closed -> true
+              tgtVal == DrawerValue.Closed && curVal == DrawerValue.Open -> false
+              curVal == DrawerValue.Closed -> frac > 0.04f && dragDir >= 0
+              else -> !(frac < 0.96f && dragDir < 0)
+            }
+          if (desired != wantDrawerOpen) {
+            wantDrawerOpen = desired
+          }
+        }
+      }
+
+      LaunchedEffect(wantDrawerOpen, removeAnimations) {
+        if (removeAnimations) {
+          drawerRevealElapsedMs = 3000f
+          drawerCloseAlpha.snapTo(1f)
+          return@LaunchedEffect
+        }
+        if (wantDrawerOpen) {
+          if (drawerCloseAlpha.value < 0.25f || drawerRevealElapsedMs <= 1f) {
+            drawerRevealElapsedMs = 0f
+            drawerCloseAlpha.snapTo(1f)
+          } else {
+            launch {
+              drawerCloseAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 120, easing = FastOutSlowInEasing),
+              )
+            }
+          }
+          var lastNanos = -1L
+          while (drawerRevealElapsedMs < 2400f) {
+            withFrameNanos { nanos ->
+              if (lastNanos >= 0L) {
+                val dtMs = ((nanos - lastNanos).coerceAtLeast(0L)) / 1_000_000f
+                drawerRevealElapsedMs += dtMs.coerceAtMost(100f)
+              }
+              lastNanos = nanos
+            }
+          }
+        } else {
+          if (drawerRevealElapsedMs > 0f) {
+            drawerCloseAlpha.animateTo(
+              targetValue = 0f,
+              animationSpec = tween(durationMillis = 160, easing = FastOutSlowInEasing),
+            )
+            drawerRevealElapsedMs = 0f
+          } else {
+            drawerCloseAlpha.snapTo(0f)
+          }
+        }
+      }
+
+      val requestOpenDrawer: () -> Unit = {
+        keyboardController?.hide()
+        focusManager.clearFocus()
+        if (!removeAnimations) {
+          wantDrawerOpen = true
+          particleController?.updateWantDrawerOpen(open = true, removeAnimations = false)
+        }
+        scope.launch { drawerState.open() }
+      }
+      val requestCloseDrawer: () -> Unit = {
+        wantDrawerOpen = false
+        particleController?.updateWantDrawerOpen(open = false, removeAnimations = removeAnimations)
+        scope.launch { drawerState.close() }
+      }
+
+      Box(modifier = Modifier.fillMaxSize()) {
+        ModalNavigationDrawer(
+          drawerState = drawerState,
+          modifier = Modifier.fillMaxSize().zIndex(0f),
+          drawerContent = {
+            ModalDrawerSheet(
+              drawerShape = RoundedCornerShape(drawerCornerRadius),
+              drawerContainerColor = if (removeAnimations) RiviaSurface else Color.Transparent,
+              drawerContentColor = RiviaText,
+              drawerTonalElevation = 0.dp,
+              modifier =
+                Modifier.width(300.dp)
+                  .onGloballyPositioned { coords ->
+                    if (coords.size.width > 0 && coords.size.height > 0) {
+                      val w = coords.size.width.toFloat()
+                      val h = coords.size.height.toFloat()
+                      measuredDrawerWidthPx = w
+                      val winPos = coords.positionInWindow()
+                      particleController?.let { ctrl ->
+                        val nextRect =
+                          SimpleRectPx(
+                            left = 0f,
+                            top = winPos.y,
+                            width = w,
+                            height = h,
+                            cornerRadius = drawerCornerRadiusPx,
+                          )
+                        if (ctrl.drawerWindowRect != nextRect) {
+                          ctrl.drawerWindowRect = nextRect
+                          ctrl.requestRedraw()
+                        }
+                      }
+                    }
                   }
-                }
-              },
-              onDeleteSelectedChats = {
-                if (selectedChatIds.isNotEmpty()) {
+                  .drawBehind {
+                    if (!removeAnimations) {
+                      val bgAlpha =
+                        stagedDrawerAlpha(
+                          elapsedMs = drawerRevealElapsedMs,
+                          closeAlpha = drawerCloseAlpha.value,
+                          startMs = 700f,
+                          durationMs = 180f,
+                        )
+                      if (bgAlpha > 0.002f) {
+                        drawRoundRect(
+                          color = RiviaSurface.copy(alpha = bgAlpha),
+                          cornerRadius = CornerRadius(drawerCornerRadiusPx, drawerCornerRadiusPx),
+                        )
+                      }
+                    }
+                  },
+            ) {
+              ChatDrawerContent(
+                viewModel = viewModel,
+                appUiMode = appUiMode,
+                chats = chats,
+                activeChatId = activeChat?.id,
+                searchQuery = searchQuery,
+                onSearchQueryChange = viewModel::setDrawerSearchQuery,
+                selectedChatIds = selectedChatIds,
+                onToggleSelectChat = { chat ->
                   keyboardController?.hide()
                   focusManager.clearFocus()
-                  showBulkDeleteConfirm = true
-                }
-              },
-              onNewChat = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                newChatResetToken++
-                viewModel.startNewChat()
-                scope.launch { drawerState.close() }
-              },
-              onSelectChat = { chat ->
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                viewModel.selectChat(chat.id)
-                scope.launch { drawerState.close() }
-              },
-              onOpenTests = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                onOpenTests()
-              },
-              onOpenBots = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                onOpenBots()
-              },
-              onOpenLiveMode = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                isInLiveMode = true
-              },
-              onOpenPipeline = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                onOpenPipeline()
-              },
-              onOpenLayers = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                onOpenLayers(null)
-              },
-              onOpenRunSettings = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                onOpenRunSettings()
-              },
-              onOpenGlobalSettings = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                onOpenGlobalSettings()
-              },
-              onOpenDevLabsSheet = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                scope.launch { drawerState.close() }
-                showDevLabsModeSheet = true
-              },
-            )
-          }
-        },
-      ) {
-        ChatConversationPane(
-          activeChatId = activeChat?.id,
-          newChatResetToken = newChatResetToken,
-          showDrawerButton = true,
-          onOpenDrawer = {
-            keyboardController?.hide()
-            focusManager.clearFocus()
-            scope.launch { drawerState.open() }
+                  selectedChatIds =
+                    if (chat.id in selectedChatIds) selectedChatIds - chat.id
+                    else selectedChatIds + chat.id
+                },
+                onSelectAllChats = {
+                  selectedChatIds = chats.map { it.id }.toSet()
+                },
+                onClearSelection = {
+                  selectedChatIds = emptySet()
+                },
+                onRenameSelectedChat = {
+                  if (selectedChatIds.size == 1) {
+                    val targetId = selectedChatIds.first()
+                    val targetChat = chats.firstOrNull { it.id == targetId }
+                    if (targetChat != null) {
+                      keyboardController?.hide()
+                      focusManager.clearFocus()
+                      chatToRename = targetChat
+                      renameDraftText = targetChat.title
+                    }
+                  }
+                },
+                onDeleteSelectedChats = {
+                  if (selectedChatIds.isNotEmpty()) {
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                    showBulkDeleteConfirm = true
+                  }
+                },
+                onNewChat = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  newChatResetToken++
+                  viewModel.startNewChat()
+                  requestCloseDrawer()
+                },
+                onSelectChat = { chat ->
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  viewModel.selectChat(chat.id)
+                  requestCloseDrawer()
+                },
+                onOpenTests = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  onOpenTests()
+                },
+                onOpenBots = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  onOpenBots()
+                },
+                onOpenLiveMode = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  isInLiveMode = true
+                },
+                onOpenPipeline = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  onOpenPipeline()
+                },
+                onOpenLayers = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  onOpenLayers(null)
+                },
+                onOpenRunSettings = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  onOpenRunSettings()
+                },
+                onOpenGlobalSettings = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  onOpenGlobalSettings()
+                },
+                onOpenDevLabsSheet = {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  requestCloseDrawer()
+                  showDevLabsModeSheet = true
+                },
+                revealElapsedMsProvider = if (removeAnimations) null else ({ drawerRevealElapsedMs }),
+                closeAlphaProvider = if (removeAnimations) null else ({ drawerCloseAlpha.value }),
+              )
+            }
           },
+        ) {
+          ChatConversationPane(
+            activeChatId = activeChat?.id,
+            newChatResetToken = newChatResetToken,
+            showDrawerButton = true,
+            onOpenDrawer = requestOpenDrawer,
+            particleController = particleController,
+            playbackAudioLevel = playbackAudioLevel,
           appUiMode = appUiMode,
           onSelectUiMode = viewModel::setAppUiMode,
           onOpenDevLabsSheet = {
@@ -714,6 +921,7 @@ fun ChatScreen(
             editDraftText = msg.content
           },
         )
+        }
       }
     }
   }
@@ -1086,6 +1294,38 @@ fun ChatScreen(
   }
 }
 
+
+private fun stagedDrawerAlpha(
+  elapsedMs: Float,
+  closeAlpha: Float,
+  startMs: Float,
+  durationMs: Float = 160f,
+): Float {
+  val raw = ((elapsedMs - startMs) / durationMs).coerceIn(0f, 1f)
+  val inv = 1f - raw
+  val eased = 1f - inv * inv * inv
+  return (eased * closeAlpha).coerceIn(0f, 1f)
+}
+
+private fun Modifier.drawerStaggerReveal(
+  revealElapsedMsProvider: (() -> Float)?,
+  closeAlphaProvider: (() -> Float)?,
+  startMs: Float,
+  durationMs: Float = 160f,
+  slideUpDp: Float = 5f,
+): Modifier {
+  if (revealElapsedMsProvider == null || closeAlphaProvider == null) return this
+  return this.graphicsLayer {
+    val elapsed = revealElapsedMsProvider()
+    val closeA = closeAlphaProvider()
+    val raw = ((elapsed - startMs) / durationMs).coerceIn(0f, 1f)
+    val inv = 1f - raw
+    val eased = 1f - inv * inv * inv
+    alpha = (eased * closeA).coerceIn(0f, 1f)
+    translationY = (1f - eased) * slideUpDp.dp.toPx()
+  }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatDrawerContent(
@@ -1111,6 +1351,8 @@ private fun ChatDrawerContent(
   onOpenRunSettings: () -> Unit = {},
   onOpenGlobalSettings: () -> Unit,
   onOpenDevLabsSheet: () -> Unit = {},
+  revealElapsedMsProvider: (() -> Float)? = null,
+  closeAlphaProvider: (() -> Float)? = null,
 ) {
   val dateFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.US) }
   val haptic = LocalHapticFeedback.current
@@ -1129,6 +1371,8 @@ private fun ChatDrawerContent(
       else -> "New chat"
     }
 
+  val bottomBaseStartMs = 870f + minOf(chats.size.coerceAtLeast(1), 16) * 30f + 30f
+
   Column(
     modifier = Modifier.fillMaxSize().padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1136,7 +1380,13 @@ private fun ChatDrawerContent(
     // Header + "+ New chat" (or selection action bar in selection mode)
     if (inSelectionMode) {
       Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+          Modifier.fillMaxWidth()
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = 750f,
+            ),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         IconButton(
@@ -1192,7 +1442,13 @@ private fun ChatDrawerContent(
       }
     } else {
       Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier =
+          Modifier.fillMaxWidth()
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = 750f,
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
       ) {
@@ -1234,7 +1490,7 @@ private fun ChatDrawerContent(
       }
     }
 
-    // Search field
+    // Search field (fades in after background)
     OutlinedTextField(
       value = searchQuery,
       onValueChange = onSearchQueryChange,
@@ -1255,7 +1511,14 @@ private fun ChatDrawerContent(
       },
       singleLine = true,
       shape = RoundedCornerShape(16.dp),
-      modifier = Modifier.fillMaxWidth().testTag("drawer_search_input"),
+      modifier =
+        Modifier.fillMaxWidth()
+          .drawerStaggerReveal(
+            revealElapsedMsProvider = revealElapsedMsProvider,
+            closeAlphaProvider = closeAlphaProvider,
+            startMs = 810f,
+          )
+          .testTag("drawer_search_input"),
       colors =
         OutlinedTextFieldDefaults.colors(
           focusedTextColor = RiviaTextPrimary,
@@ -1270,10 +1533,17 @@ private fun ChatDrawerContent(
 
     Spacer(modifier = Modifier.height(2.dp))
 
-    // Chat list newest first
+    // Chat list newest first (rows stagger top-to-bottom 30 ms apart)
     if (chats.isEmpty()) {
       Box(
-        modifier = Modifier.weight(1f).fillMaxWidth(),
+        modifier =
+          Modifier.weight(1f)
+            .fillMaxWidth()
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = 870f,
+            ),
         contentAlignment = Alignment.Center,
       ) {
         Text(
@@ -1292,9 +1562,10 @@ private fun ChatDrawerContent(
         modifier = Modifier.weight(1f).fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
-        itemsIndexed(chats, key = { _, item -> item.id }) { _, chat ->
+        itemsIndexed(chats, key = { _, item -> item.id }) { index, chat ->
           val isChecked = chat.id in selectedChatIds
           val isSelected = if (inSelectionMode) isChecked else (chat.id == activeChatId)
+          val rowStartMs = 870f + minOf(index, 16) * 30f
           Surface(
             shape = RoundedCornerShape(14.dp),
             color =
@@ -1305,6 +1576,11 @@ private fun ChatDrawerContent(
               else null,
             modifier =
               Modifier.fillMaxWidth()
+                .drawerStaggerReveal(
+                  revealElapsedMsProvider = revealElapsedMsProvider,
+                  closeAlphaProvider = closeAlphaProvider,
+                  startMs = rowStartMs,
+                )
                 .clip(RoundedCornerShape(14.dp))
                 .combinedClickable(
                   onClick = {
@@ -1442,6 +1718,13 @@ private fun ChatDrawerContent(
     HorizontalDivider(
       color = Color(0xFF262626),
       thickness = 1.dp,
+      modifier =
+        Modifier.drawerStaggerReveal(
+          revealElapsedMsProvider = revealElapsedMsProvider,
+          closeAlphaProvider = closeAlphaProvider,
+          startMs = bottomBaseStartMs,
+          slideUpDp = 2f,
+        ),
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -1450,6 +1733,11 @@ private fun ChatDrawerContent(
         modifier =
           Modifier.fillMaxWidth()
             .height(44.dp)
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = bottomBaseStartMs + 25f,
+            )
             .clickable(onClick = onOpenBots)
             .padding(horizontal = 8.dp)
             .testTag("open_bots_button"),
@@ -1475,6 +1763,11 @@ private fun ChatDrawerContent(
         modifier =
           Modifier.fillMaxWidth()
             .height(44.dp)
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = bottomBaseStartMs + 55f,
+            )
             .clickable(onClick = onOpenLayers)
             .padding(horizontal = 8.dp)
             .testTag("open_vad_layer_button"),
@@ -1500,6 +1793,11 @@ private fun ChatDrawerContent(
         modifier =
           Modifier.fillMaxWidth()
             .height(44.dp)
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = bottomBaseStartMs + 85f,
+            )
             .clickable(onClick = onOpenPipeline)
             .padding(horizontal = 8.dp)
             .testTag("open_pipeline_button"),
@@ -1532,6 +1830,11 @@ private fun ChatDrawerContent(
           modifier =
             Modifier.fillMaxWidth()
               .height(44.dp)
+              .drawerStaggerReveal(
+                revealElapsedMsProvider = revealElapsedMsProvider,
+                closeAlphaProvider = closeAlphaProvider,
+                startMs = bottomBaseStartMs + 115f,
+              )
               .clickable(onClick = onOpenRunSettings)
               .padding(horizontal = 8.dp)
               .testTag("open_run_settings_drawer_button"),
@@ -1556,6 +1859,11 @@ private fun ChatDrawerContent(
           modifier =
             Modifier.fillMaxWidth()
               .height(44.dp)
+              .drawerStaggerReveal(
+                revealElapsedMsProvider = revealElapsedMsProvider,
+                closeAlphaProvider = closeAlphaProvider,
+                startMs = bottomBaseStartMs + 145f,
+              )
               .clickable(onClick = onOpenTests)
               .padding(horizontal = 8.dp)
               .testTag("open_tests_button"),
@@ -1577,11 +1885,19 @@ private fun ChatDrawerContent(
         }
       }
 
+      val settingsStartMs =
+        if (appUiMode == AppUiMode.LABS) bottomBaseStartMs + 175f else bottomBaseStartMs + 115f
+
       // Settings row (flask icon)
       Row(
         modifier =
           Modifier.fillMaxWidth()
             .height(44.dp)
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = settingsStartMs,
+            )
             .clickable(onClick = onOpenGlobalSettings)
             .padding(horizontal = 8.dp)
             .testTag("open_settings_button"),
@@ -1603,20 +1919,37 @@ private fun ChatDrawerContent(
       }
     }
 
+    val footerStartMs =
+      if (appUiMode == AppUiMode.LABS) bottomBaseStartMs + 205f else bottomBaseStartMs + 145f
+
     if (appUiMode == AppUiMode.RIVIA) {
       Text(
         text = "Everyday mode. Dev and Labs are for building and testing.",
         color = RiviaTextTertiary,
         fontSize = 12.sp,
         textAlign = TextAlign.Center,
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        modifier =
+          Modifier.fillMaxWidth()
+            .padding(top = 4.dp)
+            .drawerStaggerReveal(
+              revealElapsedMsProvider = revealElapsedMsProvider,
+              closeAlphaProvider = closeAlphaProvider,
+              startMs = footerStartMs,
+            ),
       )
     }
 
     // Single hollow purple outlined pill with the selected mode's corresponding color and name inside
     val selectedModeColor = accentColorForMode(appUiMode)
     Box(
-      modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+      modifier =
+        Modifier.fillMaxWidth()
+          .padding(top = 4.dp)
+          .drawerStaggerReveal(
+            revealElapsedMsProvider = revealElapsedMsProvider,
+            closeAlphaProvider = closeAlphaProvider,
+            startMs = footerStartMs + 20f,
+          ),
       contentAlignment = Alignment.Center,
     ) {
       Surface(
@@ -1847,6 +2180,8 @@ private fun ChatConversationPane(
   newChatResetToken: Int = 0,
   showDrawerButton: Boolean,
   onOpenDrawer: () -> Unit,
+  particleController: RiviaParticleFieldController? = null,
+  playbackAudioLevel: Float = 0f,
   appUiMode: AppUiMode,
   onSelectUiMode: (AppUiMode) -> Unit,
   onOpenDevLabsSheet: () -> Unit = {},
@@ -1898,17 +2233,29 @@ private fun ChatConversationPane(
   val density = LocalDensity.current
   val keyboardController = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
+  val removeAnimations = isSystemRemoveAnimationsEnabled(context)
+
   val liveState by LiveSessionManager.uiState.collectAsStateWithLifecycle()
+  val liveMicLevel by LiveSessionManager.liveMicLevel.collectAsStateWithLifecycle()
   var micPermissionDeniedReason by remember { mutableStateOf<String?>(null) }
 
   var showPresetMenu by remember { mutableStateOf(false) }
   var presetForMoreMenu by remember { mutableStateOf<String?>(null) }
   var composerText by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf("") }
-  var showComposerInEmptyChat by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
-  var isInDictationPanel by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
-  var dictationOpenedFromComposer by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
-  var focusComposerOnReveal by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
-  var startDictationOnReveal by rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var priorComposerTextBeforeDictation by
+    rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf("") }
+  var showComposerInEmptyChat by
+    rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var isInDictationPanel by
+    rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var dictationOpenedFromComposer by
+    rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var dictationExitedViaError by remember { mutableStateOf(false) }
+  var currentDictationVoiceLevel by remember { mutableFloatStateOf(0f) }
+  var focusComposerOnReveal by
+    rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
+  var startDictationOnReveal by
+    rememberSaveable(activeChatId, newChatResetToken) { mutableStateOf(false) }
   var requestKeyboardFocusNow by remember { mutableStateOf(false) }
   var sphereColumnTopPx by remember { mutableIntStateOf(0) }
   val listState = rememberLazyListState()
@@ -1917,6 +2264,12 @@ private fun ChatConversationPane(
     !isInLiveMode &&
       !isInDictationPanel &&
       (messages.isNotEmpty() || showComposerInEmptyChat || composerText.isNotEmpty())
+
+  LaunchedEffect(isInTypedChat) {
+    if (!isInTypedChat) {
+      dictationExitedViaError = false
+    }
+  }
 
   val livePermissionsLauncher =
     rememberLauncherForActivityResult(
@@ -2019,7 +2372,7 @@ private fun ChatConversationPane(
   }
 
   val edgeGlowTransition = rememberInfiniteTransition(label = "edge_glow")
-  val edgeGlowAlpha by
+  val edgeGlowPulse by
     edgeGlowTransition.animateFloat(
       initialValue = 0.25f,
       targetValue = 0.70f,
@@ -2031,6 +2384,14 @@ private fun ChatConversationPane(
       label = "edge_glow_alpha",
     )
   val isLiveSpeaking = liveState.orbState == OrbState.SPEAKING
+  val edgeGlowEnvelope by
+    animateFloatAsState(
+      targetValue = if (isInLiveMode && isLiveSpeaking) 1f else 0f,
+      animationSpec =
+        if (removeAnimations) snap()
+        else tween(durationMillis = 320, easing = FastOutSlowInEasing),
+      label = "chat_live_edge_glow_envelope",
+    )
 
   // System Back leaves the Live screen while keeping Live running in the background; End stops it.
   BackHandler(enabled = isInLiveMode) {
@@ -2042,12 +2403,14 @@ private fun ChatConversationPane(
     onEndLiveMode()
   }
 
-  // Cancel dictation panel on system Back and return to composer (if opened from composer) or sphere screen
+  // Cancel dictation panel on system Back: return to active chat (discarding only dictated text) or Home
   BackHandler(enabled = !isInLiveMode && isInDictationPanel) {
     requestKeyboardFocusNow = false
     focusComposerOnReveal = false
     startDictationOnReveal = false
-    if (dictationOpenedFromComposer || messages.isNotEmpty()) {
+    dictationExitedViaError = false
+    if (dictationOpenedFromComposer || messages.isNotEmpty() || priorComposerTextBeforeDictation.isNotEmpty()) {
+      composerText = priorComposerTextBeforeDictation
       showComposerInEmptyChat = true
     } else {
       composerText = ""
@@ -2057,7 +2420,7 @@ private fun ChatConversationPane(
     isInDictationPanel = false
   }
 
-  // Going back from the empty typed chat returns to the sphere screen and plays the animation in reverse
+  // Going back from the empty typed chat returns to the sphere Home screen and reverses cleanly
   BackHandler(
     enabled =
       !isInLiveMode &&
@@ -2070,29 +2433,20 @@ private fun ChatConversationPane(
     requestKeyboardFocusNow = false
     focusComposerOnReveal = false
     startDictationOnReveal = false
+    dictationExitedViaError = false
     composerText = ""
     showComposerInEmptyChat = false
   }
 
-  val sphereProgress = remember { Animatable(if (isInTypedChat || isInDictationPanel) 1f else 0f) }
-  val sphereAlpha =
-    remember {
-      Animatable(
-        when {
-          isInTypedChat -> 0.12f
-          isInDictationPanel -> 0.22f
-          else -> 1f
-        }
-      )
-    }
-  val liveProgress = remember { Animatable(if (isInLiveMode) 1f else 0f) }
+  // UI opacity channels (0-200 ms home fade-out, ~700 ms chat bar fill, ~750 ms dictation fill, ~500/~750 ms live UI)
   val buttonsAlpha =
     remember {
       Animatable(if (isInTypedChat || isInLiveMode || isInDictationPanel) 0f else 1f)
     }
   val composerAlpha = remember { Animatable(if (isInTypedChat) 1f else 0f) }
-  val liveUiAlpha = remember { Animatable(if (isInLiveMode) 1f else 0f) }
-  val dictationPanelProgress = remember { Animatable(if (isInDictationPanel) 1f else 0f) }
+  val dictationContentAlpha = remember { Animatable(if (isInDictationPanel) 1f else 0f) }
+  val liveCaptionsAlpha = remember { Animatable(if (isInLiveMode) 1f else 0f) }
+  val liveControlsAlpha = remember { Animatable(if (isInLiveMode) 1f else 0f) }
   var isFirstTransitionPass by remember { mutableStateOf(true) }
   var wasInDictationPanel by remember { mutableStateOf(isInDictationPanel) }
 
@@ -2111,11 +2465,9 @@ private fun ChatConversationPane(
         if (skipAnim) {
           buttonsAlpha.snapTo(0f)
           composerAlpha.snapTo(0f)
-          dictationPanelProgress.snapTo(0f)
-          sphereProgress.snapTo(0f)
-          sphereAlpha.snapTo(1f)
-          liveProgress.snapTo(1f)
-          liveUiAlpha.snapTo(1f)
+          dictationContentAlpha.snapTo(0f)
+          liveCaptionsAlpha.snapTo(1f)
+          liveControlsAlpha.snapTo(1f)
         } else {
           coroutineScope {
             launch {
@@ -2127,38 +2479,27 @@ private fun ChatConversationPane(
             launch {
               composerAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               )
             }
             launch {
-              dictationPanelProgress.animateTo(
+              dictationContentAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
-              )
-            }
-            launch {
-              sphereProgress.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              sphereAlpha.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              liveProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
             }
             launch {
               delay(500L)
-              liveUiAlpha.animateTo(
+              liveCaptionsAlpha.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
+                animationSpec = tween(durationMillis = 220, easing = easeOut),
+              )
+            }
+            launch {
+              delay(750L)
+              liveControlsAlpha.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 220, easing = easeOut),
               )
             }
           }
@@ -2171,11 +2512,9 @@ private fun ChatConversationPane(
         if (skipAnim) {
           buttonsAlpha.snapTo(0f)
           composerAlpha.snapTo(0f)
-          liveUiAlpha.snapTo(0f)
-          liveProgress.snapTo(0f)
-          sphereProgress.snapTo(1f)
-          sphereAlpha.snapTo(0.22f)
-          dictationPanelProgress.snapTo(1f)
+          liveCaptionsAlpha.snapTo(0f)
+          liveControlsAlpha.snapTo(0f)
+          dictationContentAlpha.snapTo(1f)
         } else {
           coroutineScope {
             launch {
@@ -2187,37 +2526,27 @@ private fun ChatConversationPane(
             launch {
               composerAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               )
             }
             launch {
-              liveUiAlpha.animateTo(
+              liveCaptionsAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               )
             }
             launch {
-              liveProgress.animateTo(
+              liveControlsAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               )
             }
             launch {
-              sphereProgress.animateTo(
+              // ~750 ms: panel's #121212 fill and contents fade in under the particles
+              delay(730L)
+              dictationContentAlpha.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              sphereAlpha.animateTo(
-                targetValue = 0.22f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              dictationPanelProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 450, easing = easeOut),
+                animationSpec = tween(durationMillis = 200, easing = easeOut),
               )
             }
           }
@@ -2226,47 +2555,33 @@ private fun ChatConversationPane(
       isInTypedChat -> {
         if (skipAnim) {
           buttonsAlpha.snapTo(0f)
-          liveUiAlpha.snapTo(0f)
-          dictationPanelProgress.snapTo(0f)
-          liveProgress.snapTo(0f)
-          sphereProgress.snapTo(1f)
-          sphereAlpha.snapTo(0.12f)
+          liveCaptionsAlpha.snapTo(0f)
+          liveControlsAlpha.snapTo(0f)
+          dictationContentAlpha.snapTo(0f)
           composerAlpha.snapTo(1f)
           if (focusComposerOnReveal) {
             focusComposerOnReveal = false
             requestKeyboardFocusNow = true
           }
-        } else if (cameFromDictation) {
-          // Done from dictation panel: lower the panel, settle sphere opacity to 12%, and show the message bar with keyboard
+        } else if (cameFromDictation && !dictationExitedViaError) {
+          // Done from dictation panel: particles slide down into the message bar outline
           coroutineScope {
             launch {
-              dictationPanelProgress.animateTo(
+              dictationContentAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 300, easing = easeOut),
+                animationSpec = tween(durationMillis = 160, easing = easeOut),
               )
             }
             launch {
-              sphereProgress.animateTo(
+              delay(320L)
+              composerAlpha.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 300, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
-            }
-            launch {
-              sphereAlpha.animateTo(
-                targetValue = 0.12f,
-                animationSpec = tween(durationMillis = 400, easing = easeOut),
-              )
-            }
-            launch {
-              delay(150L)
               if (focusComposerOnReveal) {
                 focusComposerOnReveal = false
                 requestKeyboardFocusNow = true
               }
-              composerAlpha.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
-              )
             }
           }
         } else {
@@ -2278,45 +2593,36 @@ private fun ChatConversationPane(
               )
             }
             launch {
-              liveUiAlpha.animateTo(
+              liveCaptionsAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               )
             }
             launch {
-              dictationPanelProgress.animateTo(
+              liveControlsAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
               )
             }
             launch {
-              liveProgress.animateTo(
+              dictationContentAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
             }
             launch {
-              sphereProgress.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              sphereAlpha.animateTo(
-                targetValue = 0.12f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              delay(600L)
+              // ~700 ms: bar's #161616 fill fades in under the particles; keyboard opens once in place
+              delay(680L)
+              launch {
+                composerAlpha.animateTo(
+                  targetValue = 1f,
+                  animationSpec = tween(durationMillis = 200, easing = easeOut),
+                )
+              }
               if (focusComposerOnReveal) {
                 focusComposerOnReveal = false
                 requestKeyboardFocusNow = true
               }
-              composerAlpha.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
-              )
             }
           }
         }
@@ -2327,52 +2633,38 @@ private fun ChatConversationPane(
         focusManager.clearFocus()
         if (skipAnim) {
           composerAlpha.snapTo(0f)
-          liveUiAlpha.snapTo(0f)
-          dictationPanelProgress.snapTo(0f)
-          sphereProgress.snapTo(0f)
-          sphereAlpha.snapTo(1f)
-          liveProgress.snapTo(0f)
+          liveCaptionsAlpha.snapTo(0f)
+          liveControlsAlpha.snapTo(0f)
+          dictationContentAlpha.snapTo(0f)
           buttonsAlpha.snapTo(1f)
         } else {
           coroutineScope {
             launch {
               composerAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
             }
             launch {
-              liveUiAlpha.animateTo(
+              liveCaptionsAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 250, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
             }
             launch {
-              dictationPanelProgress.animateTo(
+              liveControlsAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 300, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
             }
             launch {
-              sphereProgress.animateTo(
+              dictationContentAlpha.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
+                animationSpec = tween(durationMillis = 180, easing = easeOut),
               )
             }
             launch {
-              sphereAlpha.animateTo(
-                targetValue = 1f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              liveProgress.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 1000, easing = easeOut),
-              )
-            }
-            launch {
-              delay(800L)
+              delay(740L)
               buttonsAlpha.animateTo(
                 targetValue = 1f,
                 animationSpec = tween(durationMillis = 200, easing = easeOut),
@@ -2381,6 +2673,52 @@ private fun ChatConversationPane(
           }
         }
       }
+    }
+  }
+
+  // Existing messages staggered entrance (From 450 ms, 10 dp rise, 80 ms apart from oldest visible)
+  var entranceChatId by remember { mutableStateOf<String?>(activeChatId) }
+  var entranceMessageIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+  var entranceCapturedForChat by remember { mutableStateOf(activeChatId != null) }
+  var entranceElapsedMs by remember { mutableFloatStateOf(5000f) }
+
+  LaunchedEffect(activeChatId, removeAnimations) {
+    if (activeChatId == null || removeAnimations) {
+      entranceChatId = activeChatId
+      entranceMessageIds = emptySet()
+      entranceCapturedForChat = true
+      entranceElapsedMs = 5000f
+      return@LaunchedEffect
+    }
+    if (activeChatId != entranceChatId) {
+      entranceChatId = activeChatId
+      entranceMessageIds = emptySet()
+      entranceCapturedForChat = false
+      entranceElapsedMs = 0f
+      var lastNanos = -1L
+      while (entranceElapsedMs < 2600f) {
+        withFrameNanos { nanos ->
+          if (lastNanos >= 0L) {
+            val dtMs = ((nanos - lastNanos).coerceAtLeast(0L)) / 1_000_000f
+            entranceElapsedMs += dtMs.coerceAtMost(100f)
+          }
+          lastNanos = nanos
+        }
+      }
+    }
+  }
+
+  LaunchedEffect(activeChatId, messages) {
+    if (
+      !entranceCapturedForChat &&
+        activeChatId != null &&
+        messages.isNotEmpty() &&
+        messages.first().chatId == activeChatId
+    ) {
+      entranceMessageIds = messages.map { it.id }.toSet()
+      entranceCapturedForChat = true
+    } else if (!entranceCapturedForChat && entranceElapsedMs > 420f) {
+      entranceCapturedForChat = true
     }
   }
 
@@ -2423,31 +2761,62 @@ private fun ChatConversationPane(
       loadedBundle?.engine?.profiles?.get(normRiviaProfile)?.model ?: "gemini-3.8-flash"
     }
 
-  Column(
-    modifier =
-      Modifier.fillMaxSize()
-        .imePadding()
-        .drawBehind {
-          if (isInLiveMode && isLiveSpeaking) {
-            val strokePx = 14.dp.toPx()
-            drawRect(
-              brush =
-                Brush.radialGradient(
-                  colors =
-                    listOf(
-                      Color.Transparent,
-                      RiviaMint.copy(alpha = edgeGlowAlpha * 0.45f),
-                    ),
-                  radius = size.maxDimension * 0.72f,
-                )
-            )
-            drawRect(
-              color = RiviaMint.copy(alpha = edgeGlowAlpha),
-              style = Stroke(width = strokePx),
-            )
+  val desiredParticleMode =
+    when {
+      isInLiveMode -> ParticleSceneMode.LIVE
+      isInDictationPanel -> ParticleSceneMode.DICTATION_PANEL
+      isInTypedChat ->
+        if (dictationExitedViaError) ParticleSceneMode.CHAT_BAR_AFTER_DICTATION_ERROR
+        else ParticleSceneMode.CHAT_BAR
+      else -> ParticleSceneMode.HOME
+    }
+
+  BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val viewportScale =
+      remember(maxWidth, maxHeight) {
+        ViewportScale.fromPaneDp(maxWidth.value, maxHeight.value)
+      }
+
+    SideEffect {
+      particleController?.let { ctrl ->
+        ctrl.viewportScale = viewportScale
+        ctrl.chatBarFillAlpha = composerAlpha.value
+        ctrl.dictationPanelFillAlpha = dictationContentAlpha.value
+        ctrl.dictateMicLevel = if (isInDictationPanel) currentDictationVoiceLevel else 0f
+        ctrl.liveOrbState = liveState.orbState
+        ctrl.liveMicLevel = liveMicLevel
+        ctrl.livePlaybackLevel = playbackAudioLevel
+        ctrl.isLiveSpeakingFallback = isSpeaking || isLiveSpeaking
+        ctrl.updateDesiredMode(desiredParticleMode)
+      }
+    }
+
+    Column(
+      modifier =
+        Modifier.fillMaxSize()
+          .imePadding()
+          .drawBehind {
+            val effGlowAlpha = edgeGlowPulse * edgeGlowEnvelope
+            if (effGlowAlpha > 0.004f) {
+              val strokePx = 14.dp.toPx()
+              drawRect(
+                brush =
+                  Brush.radialGradient(
+                    colors =
+                      listOf(
+                        Color.Transparent,
+                        RiviaMint.copy(alpha = effGlowAlpha * 0.45f),
+                      ),
+                    radius = size.maxDimension * 0.72f,
+                  )
+              )
+              drawRect(
+                color = RiviaMint.copy(alpha = effGlowAlpha),
+                style = Stroke(width = strokePx),
+              )
+            }
           }
-        }
-  ) {
+    ) {
     // Clean modern Top Bar with 3-Mode Segmented Pill (Rivia | Dev | Labs)
     Surface(
       color = RiviaBackground,
@@ -2857,16 +3226,21 @@ private fun ChatConversationPane(
     }
 
     // Main content + bottom controls container:
-    // Keeps a single rotating RiviaHomeParticleSphere mounted in the background for the entire chat
-    // and Live mode so it animates smoothly without remounting or jumping.
+    // Anchors Rivia's single global particle sphere and coordinates foreground messages,
+    // dictation panel, and Live UI without ever duplicating the sphere.
     Box(
       modifier = Modifier.weight(1f).fillMaxWidth()
     ) {
-      // Background layer: single rotating sphere + empty-screen copy
+      // Background anchor slot for the shared global sphere + empty-screen copy
       Box(
         modifier =
           Modifier.fillMaxSize()
-            .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 146.dp),
+            .padding(
+              start = (24f * viewportScale.widthScale).dp,
+              end = (24f * viewportScale.widthScale).dp,
+              top = (24f * viewportScale.heightScale).dp,
+              bottom = (146f * viewportScale.heightScale).dp,
+            ),
         contentAlignment = Alignment.Center,
       ) {
         Column(
@@ -2877,38 +3251,51 @@ private fun ChatConversationPane(
               sphereColumnTopPx = coords.positionInParent().y.roundToInt()
             },
         ) {
-          RiviaHomeParticleSphere(
-            showDevTuning = appUiMode == AppUiMode.DEV,
-            devTuningEnabled =
-              !isInTypedChat && !isInLiveMode && !isInDictationPanel && buttonsAlpha.value > 0.5f,
-            devTuningModifier =
-              Modifier.graphicsLayer {
-                alpha = buttonsAlpha.value
-              },
-            sphereModifier =
-              Modifier.graphicsLayer {
-                val chatP = sphereProgress.value
-                val liveP = liveProgress.value
-                translationY = ((-110f * chatP) + (-50f * liveP)).dp.toPx()
-                val s = 1f - (0.25f * chatP) + (0.05f * liveP)
-                scaleX = s
-                scaleY = s
-                alpha = sphereAlpha.value.coerceIn(0f, 1f)
-                compositingStrategy = CompositingStrategy.Offscreen
-              },
-            contentDesc =
-              if (isInLiveMode) "Tap to stop Rivia and listen"
-              else "Rivia Orb",
-            onSphereClick =
-              if (isInLiveMode) {
-                {
-                  view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                  LiveSessionManager.onOrbTapped()
-                }
-              } else {
-                null
-              },
-          )
+          val sphereContentDesc =
+            if (isInLiveMode) "Tap to stop Rivia and listen" else "Rivia Orb"
+          val sphereClickHandler: (() -> Unit)? =
+            if (isInLiveMode) {
+              {
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                LiveSessionManager.onOrbTapped()
+              }
+            } else {
+              null
+            }
+
+          if (particleController != null) {
+            RiviaSharedSphereSlot(
+              controller = particleController,
+              showDevTuning = appUiMode == AppUiMode.DEV,
+              devTuningEnabled =
+                !isInTypedChat &&
+                  !isInLiveMode &&
+                  !isInDictationPanel &&
+                  buttonsAlpha.value > 0.01f,
+              devTuningModifier =
+                Modifier.graphicsLayer {
+                  alpha = buttonsAlpha.value
+                },
+              contentDesc = sphereContentDesc,
+              onSphereClick = sphereClickHandler,
+            )
+          } else {
+            RiviaHomeParticleSphere(
+              showDevTuning = appUiMode == AppUiMode.DEV,
+              devTuningEnabled =
+                !isInTypedChat &&
+                  !isInLiveMode &&
+                  !isInDictationPanel &&
+                  buttonsAlpha.value > 0.01f,
+              devTuningModifier =
+                Modifier.graphicsLayer {
+                  alpha = buttonsAlpha.value
+                },
+              contentDesc = sphereContentDesc,
+              onSphereClick = sphereClickHandler,
+            )
+          }
+
           Text(
             text = "Rivia",
             style = MaterialTheme.typography.headlineMedium,
@@ -2919,7 +3306,8 @@ private fun ChatConversationPane(
               },
           )
           Text(
-            text = "Ask anything below, tap the mic to dictate, or start a hands-free Live voice session.",
+            text =
+              "Ask anything below, tap the mic to dictate, or start a hands-free Live voice session.",
             style = MaterialTheme.typography.bodyMedium,
             color = RiviaTextSecondary,
             modifier =
@@ -2931,12 +3319,13 @@ private fun ChatConversationPane(
         }
       }
 
-      // Foreground layer: messages list (over the dimmed background sphere), Live state + captions, and bottom controls
+      // Foreground layer: messages list (over the dimmed blurred sphere), Live state + captions, and bottom controls
       Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-          if (messages.isNotEmpty() && !isInLiveMode && liveProgress.value == 0f) {
+          if (messages.isNotEmpty() && !isInLiveMode && liveCaptionsAlpha.value == 0f) {
             val lastAssistantId =
               remember(messages) { messages.lastOrNull { it.role == "assistant" }?.id }
+            val oldestVisibleIndex = listState.firstVisibleItemIndex
 
             LazyColumn(
               state = listState,
@@ -2944,45 +3333,68 @@ private fun ChatConversationPane(
               contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
               verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-              itemsIndexed(messages, key = { _, m -> m.id }) { _, msg ->
-                if (msg.role == "user") {
-                  UserMessageBubble(
-                    message = msg,
-                    onEdit = { onEditUserMessage(msg) },
-                  )
-                } else {
-                  val isThisSpeaking = isSpeaking && speakingMessageId == msg.id
-                  val isThisStreaming =
-                    isStreaming && (msg.status == "streaming" || msg.status.startsWith("polling"))
-                  AssistantMessageBubble(
-                    message = msg,
-                    isLastAssistantReply = msg.id == lastAssistantId,
-                    isSpeaking = isThisSpeaking,
-                    isStreaming = isThisStreaming,
-                    onListen = { onListenMessage(msg) },
-                    onRegenerate = onRegenerateLast,
-                    onShowDetails = { onShowDetails(msg) },
-                  )
+              itemsIndexed(messages, key = { _, m -> m.id }) { idx, msg ->
+                val itemEntranceModifier =
+                  if (
+                    !removeAnimations &&
+                      msg.id in entranceMessageIds &&
+                      entranceElapsedMs < 2500f
+                  ) {
+                    val visibleOrder = (idx - oldestVisibleIndex).coerceAtLeast(0)
+                    val startMs = 450f + visibleOrder * 80f
+                    Modifier.graphicsLayer {
+                      val raw = ((entranceElapsedMs - startMs) / 240f).coerceIn(0f, 1f)
+                      val inv = 1f - raw
+                      val eased = 1f - inv * inv * inv
+                      alpha = eased
+                      translationY =
+                        (1f - eased) * (10f * viewportScale.heightScale).dp.toPx()
+                    }
+                  } else {
+                    Modifier
+                  }
+
+                Box(modifier = itemEntranceModifier.fillMaxWidth()) {
+                  if (msg.role == "user") {
+                    UserMessageBubble(
+                      message = msg,
+                      onEdit = { onEditUserMessage(msg) },
+                    )
+                  } else {
+                    val isThisSpeaking = isSpeaking && speakingMessageId == msg.id
+                    val isThisStreaming =
+                      isStreaming && (msg.status == "streaming" || msg.status.startsWith("polling"))
+                    AssistantMessageBubble(
+                      message = msg,
+                      isLastAssistantReply = msg.id == lastAssistantId,
+                      isSpeaking = isThisSpeaking,
+                      isStreaming = isThisStreaming,
+                      onListen = { onListenMessage(msg) },
+                      onRegenerate = onRegenerateLast,
+                      onShowDetails = { onShowDetails(msg) },
+                    )
+                  }
                 }
               }
             }
           }
 
-          if (liveUiAlpha.value > 0f || isInLiveMode) {
+          if (liveCaptionsAlpha.value > 0f || isInLiveMode) {
             val columnTopDp = with(density) { sphereColumnTopPx.toDp() }
-            val liveOverlayTopPadding = (columnTopDp + 288.dp).coerceAtLeast(260.dp)
+            val liveOverlayTopPadding =
+              (columnTopDp + (288f * viewportScale.heightScale).dp).coerceAtLeast(240.dp)
             Column(
               modifier =
                 Modifier.fillMaxWidth()
                   .padding(top = liveOverlayTopPadding, start = 20.dp, end = 20.dp)
                   .verticalScroll(androidx.compose.foundation.rememberScrollState())
                   .graphicsLayer {
-                    alpha = liveUiAlpha.value
+                    alpha = liveCaptionsAlpha.value
                   },
               horizontalAlignment = Alignment.CenterHorizontally,
               verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-              // Live state line
+              // Live state line (~500 ms fade-in)
               Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -3003,7 +3415,8 @@ private fun ChatConversationPane(
                     when {
                       micPermissionDeniedReason != null -> "Microphone needed"
                       liveState.pausedForPhoneCall -> "Paused for your call"
-                      liveState.stoppedAfterThreeErrors -> "Paused after errors. Tap the orb to try again."
+                      liveState.stoppedAfterThreeErrors ->
+                        "Paused after errors. Tap the orb to try again."
                       liveState.isPaused -> "Paused"
                       liveState.isMuted -> "Muted"
                       liveState.orbState == OrbState.SPEAKING -> "Rivia is speaking"
@@ -3036,7 +3449,7 @@ private fun ChatConversationPane(
                       textAlign = TextAlign.Center,
                     )
                     Button(
-                      enabled = isInLiveMode && liveUiAlpha.value > 0.5f,
+                      enabled = isInLiveMode && liveCaptionsAlpha.value > 0.01f,
                       onClick = {
                         livePermissionsLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
                       },
@@ -3181,13 +3594,16 @@ private fun ChatConversationPane(
                 !isInTypedChat &&
                   !isInLiveMode &&
                   !isInDictationPanel &&
-                  buttonsAlpha.value > 0.5f,
+                  buttonsAlpha.value > 0.01f,
               onChatClick = {
+                dictationExitedViaError = false
                 showComposerInEmptyChat = true
                 focusComposerOnReveal = true
               },
               onLiveClick = onOpenLiveMode,
               onDictateClick = {
+                dictationExitedViaError = false
+                priorComposerTextBeforeDictation = ""
                 dictationOpenedFromComposer = false
                 isInDictationPanel = true
               },
@@ -3195,11 +3611,24 @@ private fun ChatConversationPane(
           }
 
           if (composerAlpha.value > 0f || isInTypedChat) {
+            val drawFillInSharedCanvas =
+              particleController != null && !particleController.elevateAboveDrawerScrim
             ChatComposerBar(
               modifier =
                 Modifier.graphicsLayer {
                   alpha = composerAlpha.value
                 },
+              viewportScale = viewportScale,
+              drawFillInSharedCanvas = drawFillInSharedCanvas,
+              controlsEnabled = isInTypedChat && composerAlpha.value > 0.01f,
+              onBarBoundsChanged = { rect ->
+                particleController?.let { ctrl ->
+                  if (ctrl.chatBarWindowRect != rect) {
+                    ctrl.chatBarWindowRect = rect
+                    ctrl.requestRedraw()
+                  }
+                }
+              },
               text = composerText,
               onTextChange = { composerText = it },
               isStreaming = isStreaming,
@@ -3215,6 +3644,8 @@ private fun ChatConversationPane(
                 focusManager.clearFocus()
                 requestKeyboardFocusNow = false
                 focusComposerOnReveal = false
+                dictationExitedViaError = false
+                priorComposerTextBeforeDictation = composerText
                 dictationOpenedFromComposer = true
                 isInDictationPanel = true
               },
@@ -3223,24 +3654,63 @@ private fun ChatConversationPane(
             )
           }
 
-          if (dictationPanelProgress.value > 0f || isInDictationPanel) {
+          if (dictationContentAlpha.value > 0f || isInDictationPanel) {
+            val drawDictateFillInSharedCanvas =
+              particleController != null && !particleController.elevateAboveDrawerScrim
             SphereDictationPanel(
               modifier =
                 Modifier.graphicsLayer {
-                  val p = dictationPanelProgress.value
-                  translationY = (1f - p) * 200.dp.toPx()
-                  alpha = p
+                  alpha = dictationContentAlpha.value
                 },
+              viewportScale = viewportScale,
+              drawFillInSharedCanvas = drawDictateFillInSharedCanvas,
+              renderFallbackWaveformCanvas = particleController == null,
               isActive = isInDictationPanel,
-              buttonsEnabled = isInDictationPanel && dictationPanelProgress.value > 0.5f,
+              buttonsEnabled = isInDictationPanel && dictationContentAlpha.value > 0.01f,
               sttLanguage = sttLanguage,
               preferOnDeviceStt = preferOnDeviceStt,
+              onVoiceLevelChanged = { lvl -> currentDictationVoiceLevel = lvl },
+              onPanelBoundsChanged = { rect ->
+                particleController?.let { ctrl ->
+                  if (ctrl.dictationPanelWindowRect != rect) {
+                    ctrl.dictationPanelWindowRect = rect
+                    ctrl.requestRedraw()
+                  }
+                }
+              },
+              onWaveformBoundsChanged = { rect ->
+                particleController?.let { ctrl ->
+                  if (ctrl.dictationWaveformWindowRect != rect) {
+                    ctrl.dictationWaveformWindowRect = rect
+                    ctrl.requestRedraw()
+                  }
+                }
+              },
               onDictationError = onDictationError,
+              onFatalErrorExit = {
+                // Show error, release panel's particles back to the sphere, and land on Chat end state
+                requestKeyboardFocusNow = false
+                focusComposerOnReveal = false
+                startDictationOnReveal = false
+                currentDictationVoiceLevel = 0f
+                composerText = priorComposerTextBeforeDictation
+                dictationExitedViaError = true
+                showComposerInEmptyChat = true
+                dictationOpenedFromComposer = false
+                isInDictationPanel = false
+              },
               onCancel = {
                 requestKeyboardFocusNow = false
                 focusComposerOnReveal = false
                 startDictationOnReveal = false
-                if (dictationOpenedFromComposer || messages.isNotEmpty()) {
+                currentDictationVoiceLevel = 0f
+                dictationExitedViaError = false
+                if (
+                  dictationOpenedFromComposer ||
+                    messages.isNotEmpty() ||
+                    priorComposerTextBeforeDictation.isNotEmpty()
+                ) {
+                  composerText = priorComposerTextBeforeDictation
                   showComposerInEmptyChat = true
                 } else {
                   composerText = ""
@@ -3250,12 +3720,14 @@ private fun ChatConversationPane(
                 isInDictationPanel = false
               },
               onDone = { finalDictatedText ->
+                currentDictationVoiceLevel = 0f
+                dictationExitedViaError = false
                 composerText =
-                  if (dictationOpenedFromComposer && composerText.isNotBlank()) {
+                  if (dictationOpenedFromComposer && priorComposerTextBeforeDictation.isNotBlank()) {
                     if (finalDictatedText.isNotBlank()) {
-                      "${composerText.trimEnd()} $finalDictatedText"
+                      "${priorComposerTextBeforeDictation.trimEnd()} $finalDictatedText"
                     } else {
-                      composerText
+                      priorComposerTextBeforeDictation
                     }
                   } else {
                     finalDictatedText
@@ -3268,157 +3740,163 @@ private fun ChatConversationPane(
             )
           }
 
-          if (liveUiAlpha.value > 0f || isInLiveMode) {
-            val liveButtonsEnabled = isInLiveMode && liveUiAlpha.value > 0.5f
-            if (!liveTipSeen) {
-              Surface(
-                color = RiviaSurface1,
-                shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, RiviaBorder),
-                modifier =
-                  Modifier.fillMaxWidth()
-                    .padding(horizontal = 20.dp)
-                    .graphicsLayer { alpha = liveUiAlpha.value }
-                    .testTag("live_first_time_tip_card"),
-              ) {
-                Row(
+          if (liveControlsAlpha.value > 0f || isInLiveMode) {
+            val liveButtonsEnabled = isInLiveMode && liveControlsAlpha.value > 0.01f
+            Column(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+              if (!liveTipSeen) {
+                Surface(
+                  color = RiviaSurface1,
+                  shape = RoundedCornerShape(14.dp),
+                  border = BorderStroke(1.dp, RiviaBorder),
                   modifier =
                     Modifier.fillMaxWidth()
-                      .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.SpaceBetween,
+                      .padding(horizontal = 20.dp)
+                      .graphicsLayer { alpha = liveControlsAlpha.value }
+                      .testTag("live_first_time_tip_card"),
                 ) {
-                  Text(
-                    text =
-                      "Just talk. Speak over Rivia, or tap the orb, to cut in. Back keeps Live running; End stops it.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = RiviaTextSecondary,
-                    modifier = Modifier.weight(1f),
-                  )
-                  TextButton(
-                    enabled = liveButtonsEnabled,
-                    onClick = onDismissLiveTip,
-                    modifier = Modifier.testTag("live_first_time_tip_ok_button"),
+                  Row(
+                    modifier =
+                      Modifier.fillMaxWidth()
+                        .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                   ) {
                     Text(
-                      text = "OK",
-                      color = RiviaMint,
-                      fontWeight = FontWeight.SemiBold,
+                      text =
+                        "Just talk. Speak over Rivia, or tap the orb, to cut in. Back keeps Live running; End stops it.",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = RiviaTextSecondary,
+                      modifier = Modifier.weight(1f),
                     )
+                    TextButton(
+                      enabled = liveButtonsEnabled,
+                      onClick = onDismissLiveTip,
+                      modifier = Modifier.testTag("live_first_time_tip_ok_button"),
+                    ) {
+                      Text(
+                        text = "OK",
+                        color = RiviaMint,
+                        fontWeight = FontWeight.SemiBold,
+                      )
+                    }
                   }
                 }
               }
-            }
-            Row(
-              modifier =
-                Modifier.fillMaxWidth()
-                  .padding(horizontal = 20.dp, vertical = 18.dp)
-                  .graphicsLayer {
-                    alpha = liveUiAlpha.value
-                  },
-              horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              // Mute Button
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                IconButton(
-                  enabled = liveButtonsEnabled,
-                  onClick = {
-                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                    LiveSessionManager.toggleMute()
-                  },
-                  modifier =
-                    Modifier.size(60.dp)
-                      .clip(CircleShape)
-                      .background(if (liveState.isMuted) RiviaWarningAmber else RiviaSurface2)
-                      .border(1.dp, RiviaBorder, CircleShape)
-                      .testTag("live_mute_button"),
-                ) {
-                  Icon(
-                    imageVector =
-                      if (liveState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
-                    contentDescription =
-                      if (liveState.isMuted) "Unmute microphone" else "Mute microphone",
-                    tint = if (liveState.isMuted) RiviaOnAccent else RiviaIconDefault,
+              Row(
+                modifier =
+                  Modifier.fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp)
+                    .graphicsLayer {
+                      alpha = liveControlsAlpha.value
+                    },
+                horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                // Mute Button
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  IconButton(
+                    enabled = liveButtonsEnabled,
+                    onClick = {
+                      view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                      LiveSessionManager.toggleMute()
+                    },
+                    modifier =
+                      Modifier.size(60.dp)
+                        .clip(CircleShape)
+                        .background(if (liveState.isMuted) RiviaWarningAmber else RiviaSurface2)
+                        .border(1.dp, RiviaBorder, CircleShape)
+                        .testTag("live_mute_button"),
+                  ) {
+                    Icon(
+                      imageVector =
+                        if (liveState.isMuted) Icons.Default.MicOff else Icons.Default.Mic,
+                      contentDescription =
+                        if (liveState.isMuted) "Unmute microphone" else "Mute microphone",
+                      tint = if (liveState.isMuted) RiviaOnAccent else RiviaIconDefault,
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(6.dp))
+                  Text(
+                    text = if (liveState.isMuted) "Unmute mic" else "Mute mic",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = RiviaMutedText,
                   )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                  text = if (liveState.isMuted) "Unmute mic" else "Mute mic",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = RiviaMutedText,
-                )
-              }
 
-              // Pause Button
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                IconButton(
-                  enabled = liveButtonsEnabled,
-                  onClick = {
-                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                    LiveSessionManager.togglePause()
-                  },
-                  modifier =
-                    Modifier.size(60.dp)
-                      .clip(CircleShape)
-                      .background(if (liveState.isPaused) RiviaSurface3 else RiviaSurface2)
-                      .border(1.dp, RiviaBorder, CircleShape)
-                      .testTag("live_pause_button"),
-                ) {
-                  Icon(
-                    imageVector =
-                      if (liveState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                    contentDescription =
-                      if (liveState.isPaused) "Resume Live session" else "Pause Live session",
-                    tint = if (liveState.isPaused) RiviaIconActive else RiviaIconDefault,
+                // Pause Button
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  IconButton(
+                    enabled = liveButtonsEnabled,
+                    onClick = {
+                      view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                      LiveSessionManager.togglePause()
+                    },
+                    modifier =
+                      Modifier.size(60.dp)
+                        .clip(CircleShape)
+                        .background(if (liveState.isPaused) RiviaSurface3 else RiviaSurface2)
+                        .border(1.dp, RiviaBorder, CircleShape)
+                        .testTag("live_pause_button"),
+                  ) {
+                    Icon(
+                      imageVector =
+                        if (liveState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                      contentDescription =
+                        if (liveState.isPaused) "Resume Live session" else "Pause Live session",
+                      tint = if (liveState.isPaused) RiviaIconActive else RiviaIconDefault,
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(6.dp))
+                  Text(
+                    text = if (liveState.isPaused) "Resume Live" else "Pause Live",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = RiviaMutedText,
                   )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                  text = if (liveState.isPaused) "Resume Live" else "Pause Live",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = RiviaMutedText,
-                )
-              }
 
-              // End Button
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                IconButton(
-                  enabled = liveButtonsEnabled,
-                  onClick = {
-                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                    LiveVoiceService.stop(context)
-                    requestKeyboardFocusNow = false
-                    focusComposerOnReveal = false
-                    startDictationOnReveal = false
-                    dictationOpenedFromComposer = false
-                    isInDictationPanel = false
-                    onEndLiveMode()
-                  },
-                  modifier =
-                    Modifier.size(60.dp)
-                      .clip(CircleShape)
-                      .background(RiviaErrorRed)
-                      .testTag("live_end_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.CallEnd,
-                    contentDescription = "End Live",
-                    tint = RiviaOnAccent,
+                // End Button
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                  IconButton(
+                    enabled = liveButtonsEnabled,
+                    onClick = {
+                      view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                      LiveVoiceService.stop(context)
+                      requestKeyboardFocusNow = false
+                      focusComposerOnReveal = false
+                      startDictationOnReveal = false
+                      dictationOpenedFromComposer = false
+                      isInDictationPanel = false
+                      onEndLiveMode()
+                    },
+                    modifier =
+                      Modifier.size(60.dp)
+                        .clip(CircleShape)
+                        .background(RiviaErrorRed)
+                        .testTag("live_end_button"),
+                  ) {
+                    Icon(
+                      imageVector = Icons.Default.CallEnd,
+                      contentDescription = "End Live",
+                      tint = RiviaOnAccent,
+                    )
+                  }
+                  Spacer(modifier = Modifier.height(6.dp))
+                  Text(
+                    text = "End",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = RiviaErrorRed,
+                    fontWeight = FontWeight.SemiBold,
                   )
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                  text = "End",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = RiviaErrorRed,
-                  fontWeight = FontWeight.SemiBold,
-                )
               }
             }
           }
         }
       }
+    }
     }
   }
 }
@@ -3426,15 +3904,23 @@ private fun ChatConversationPane(
 @Composable
 private fun SphereDictationPanel(
   modifier: Modifier = Modifier,
+  viewportScale: ViewportScale = ViewportScale(1f, 1f, 1f),
+  drawFillInSharedCanvas: Boolean = false,
+  renderFallbackWaveformCanvas: Boolean = false,
   isActive: Boolean,
   buttonsEnabled: Boolean,
   sttLanguage: String,
   preferOnDeviceStt: Boolean,
+  onVoiceLevelChanged: (Float) -> Unit = {},
+  onPanelBoundsChanged: (SimpleRectPx) -> Unit = {},
+  onWaveformBoundsChanged: (SimpleRectPx) -> Unit = {},
   onDictationError: (String) -> Unit,
+  onFatalErrorExit: () -> Unit = {},
   onCancel: () -> Unit,
   onDone: (String) -> Unit,
 ) {
   val context = LocalContext.current
+  val density = LocalDensity.current
   val removeAnimations = isSystemRemoveAnimationsEnabled(context)
   var dictatedText by remember { mutableStateOf("") }
   var baseTextBeforeDictation by remember { mutableStateOf("") }
@@ -3443,11 +3929,28 @@ private fun SphereDictationPanel(
   var cursorVisible by remember { mutableStateOf(true) }
   var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
 
+  SideEffect {
+    onVoiceLevelChanged(if (isActive) voiceLevel else 0f)
+  }
+
   DisposableEffect(Unit) {
     onDispose {
+      onVoiceLevelChanged(0f)
       speechRecognizer?.destroy()
       speechRecognizer = null
     }
+  }
+
+  fun handleFatalError(message: String) {
+    voiceLevel = 0f
+    onVoiceLevelChanged(0f)
+    try {
+      speechRecognizer?.cancel()
+      speechRecognizer?.destroy()
+    } catch (_: Exception) {}
+    speechRecognizer = null
+    onDictationError(message)
+    onFatalErrorExit()
   }
 
   fun speechErrorDescription(code: Int): String =
@@ -3466,9 +3969,7 @@ private fun SphereDictationPanel(
 
   fun startDictation() {
     if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-      onDictationError(
-        "Speech recognition service is not available on this device."
-      )
+      handleFatalError("Speech recognition service is not available on this device.")
       return
     }
     try {
@@ -3502,10 +4003,8 @@ private fun SphereDictationPanel(
                   error == SpeechRecognizer.ERROR_NO_MATCH)
             ) {
               startDictation()
-            } else if (error != SpeechRecognizer.ERROR_CLIENT) {
-              onDictationError(
-                "${speechErrorDescription(error)}. Try again."
-              )
+            } else if (error != SpeechRecognizer.ERROR_CLIENT && isActive) {
+              handleFatalError("${speechErrorDescription(error)}. Try again.")
             }
           }
 
@@ -3552,11 +4051,8 @@ private fun SphereDictationPanel(
           }
         }
       recognizer.startListening(intent)
-    } catch (e: Exception) {
-      voiceLevel = 0f
-      onDictationError(
-        "Couldn't start listening. Try again."
-      )
+    } catch (_: Exception) {
+      handleFatalError("Couldn't start listening. Try again.")
     }
   }
 
@@ -3566,8 +4062,8 @@ private fun SphereDictationPanel(
         if (isActive) {
           startDictation()
         }
-      } else {
-        onDictationError("Rivia needs the microphone to take dictation.")
+      } else if (isActive) {
+        handleFatalError("Rivia needs the microphone to take dictation.")
       }
     }
 
@@ -3597,7 +4093,7 @@ private fun SphereDictationPanel(
     }
   }
 
-  // Elapsed time counter ("Listening · 0:06")
+  // Elapsed time counter ("Listening · 0:00")
   LaunchedEffect(isActive) {
     if (!isActive) return@LaunchedEffect
     while (true) {
@@ -3618,22 +4114,14 @@ private fun SphereDictationPanel(
     }
   }
 
-  // Continuous wave phase for voice-level dots
-  var wavePhase by remember { mutableFloatStateOf(0f) }
-  var smoothedLevel by remember { mutableFloatStateOf(0f) }
+  // Gentle RMS decay when onRmsChanged hasn't fired recently
   LaunchedEffect(isActive, removeAnimations) {
-    if (!isActive || removeAnimations) {
-      smoothedLevel = voiceLevel
-      return@LaunchedEffect
-    }
+    if (!isActive || removeAnimations) return@LaunchedEffect
     var lastNanos = -1L
     while (true) {
       withFrameNanos { nanos ->
         if (lastNanos >= 0L) {
           val dt = ((nanos - lastNanos).coerceAtLeast(0L)) / 1_000_000_000f
-          wavePhase += dt * 7.5f
-          smoothedLevel += (voiceLevel - smoothedLevel) * (dt * 12f).coerceIn(0f, 1f)
-          // Decay gently if onRmsChanged hasn't fired recently
           voiceLevel = (voiceLevel - dt * 0.9f).coerceAtLeast(0f)
         }
         lastNanos = nanos
@@ -3641,25 +4129,46 @@ private fun SphereDictationPanel(
     }
   }
 
+  // Scaled dictation panel geometry (full width - 16 dp margins, 180 dp tall, 26 dp corners on 390x844)
+  val horizMarginDp = (8f * viewportScale.widthScale).dp
+  val vertMarginDp = (8f * viewportScale.heightScale).dp
+  val panelHeightDp = (180f * viewportScale.heightScale).coerceAtLeast(156f).dp
+  val panelCornerDp = (26f * viewportScale.geomScale).dp
+  val panelCornerPx = with(density) { panelCornerDp.toPx() }
+
   Box(
     modifier =
       modifier
         .fillMaxWidth()
-        .padding(horizontal = 12.dp, vertical = 8.dp),
+        .padding(horizontal = horizMarginDp, vertical = vertMarginDp),
   ) {
     Surface(
-      shape = RoundedCornerShape(26.dp),
-      color = Color(0xFF121212),
-      border = BorderStroke(1.dp, RiviaBorder),
+      shape = RoundedCornerShape(panelCornerDp),
+      color = if (drawFillInSharedCanvas) Color.Transparent else Color(0xFF121212),
+      border = if (drawFillInSharedCanvas) null else BorderStroke(1.dp, RiviaBorder),
       modifier =
         Modifier.fillMaxWidth()
-          .heightIn(min = 180.dp)
+          .heightIn(min = panelHeightDp)
+          .onGloballyPositioned { coords ->
+            if (coords.size.width > 0 && coords.size.height > 0) {
+              val pos = coords.positionInWindow()
+              onPanelBoundsChanged(
+                SimpleRectPx(
+                  left = pos.x,
+                  top = pos.y,
+                  width = coords.size.width.toFloat(),
+                  height = coords.size.height.toFloat(),
+                  cornerRadius = panelCornerPx,
+                )
+              )
+            }
+          }
           .testTag("sphere_dictation_panel"),
     ) {
       Column(
         modifier =
           Modifier.fillMaxWidth()
-            .heightIn(min = 180.dp)
+            .heightIn(min = panelHeightDp)
             .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.SpaceBetween,
       ) {
@@ -3693,41 +4202,53 @@ private fun SphereDictationPanel(
           )
         }
 
-        // 2. Row of small white dots across the panel that move with voice level
-        Canvas(
-          modifier =
-            Modifier.fillMaxWidth()
-              .height(28.dp)
-              .testTag("dictation_voice_dots"),
-        ) {
-          val dotCount = 28
-          val horizontalPadding = 6.dp.toPx()
-          val usableWidth = (size.width - horizontalPadding * 2f).coerceAtLeast(1f)
-          val stepX = usableWidth / (dotCount - 1).coerceAtLeast(1)
-          val centerY = size.height / 2f
-          val baseRadius = 1.6.dp.toPx()
-          val maxDisplacementY = 8.5.dp.toPx()
-          val activeLevel = if (removeAnimations) voiceLevel else smoothedLevel
-
-          for (i in 0 until dotCount) {
-            val u = i.toFloat() / (dotCount - 1).toFloat()
-            val edgeEnvelope = sin(u * PI.toFloat()).coerceIn(0.15f, 1f)
-            val wave =
-              if (removeAnimations) 0f
-              else sin(wavePhase + i * 0.52f)
-            val dy = wave * maxDisplacementY * edgeEnvelope * activeLevel
-            val radius = baseRadius * (1f + 0.45f * edgeEnvelope * activeLevel)
-            val alpha = (0.45f + 0.55f * edgeEnvelope * (0.35f + 0.65f * activeLevel)).coerceIn(0.35f, 1f)
-
-            drawCircle(
-              color = Color.White.copy(alpha = alpha),
-              radius = radius,
-              center = Offset(horizontalPadding + i * stepX, centerY + dy),
-            )
+        // 2. Voice waveform band: 64 particles rendered in the single shared RiviaParticleFieldCanvas pass
+        val waveHeightDp = (28f * viewportScale.heightScale).coerceAtLeast(24f).dp
+        if (renderFallbackWaveformCanvas) {
+          Canvas(
+            modifier =
+              Modifier.fillMaxWidth()
+                .height(waveHeightDp)
+                .testTag("dictation_voice_dots"),
+          ) {
+            val dotCount = 64
+            val horizontalPadding = 6.dp.toPx()
+            val usableWidth = (size.width - horizontalPadding * 2f).coerceAtLeast(1f)
+            val stepX = usableWidth / (dotCount - 1)
+            val centerY = size.height / 2f
+            for (i in 0 until dotCount) {
+              val u = i.toFloat() / (dotCount - 1).toFloat()
+              val env = sin(u * PI.toFloat()).coerceIn(0f, 1f)
+              drawCircle(
+                color = Color.White.copy(alpha = 0.55f + 0.45f * env * voiceLevel),
+                radius = 1.4.dp.toPx(),
+                center = Offset(horizontalPadding + i * stepX, centerY),
+              )
+            }
           }
+        } else {
+          Box(
+            modifier =
+              Modifier.fillMaxWidth()
+                .height(waveHeightDp)
+                .onGloballyPositioned { coords ->
+                  if (coords.size.width > 0 && coords.size.height > 0) {
+                    val pos = coords.positionInWindow()
+                    onWaveformBoundsChanged(
+                      SimpleRectPx(
+                        left = pos.x,
+                        top = pos.y,
+                        width = coords.size.width.toFloat(),
+                        height = coords.size.height.toFloat(),
+                      )
+                    )
+                  }
+                }
+                .testTag("dictation_voice_dots"),
+          )
         }
 
-        // 3. Cancel (X) on the left, "Listening · 0:06" in 12sp #8F8F8F in the center, and Done on the right
+        // 3. Cancel (X) on the left, "Listening · 0:00" in 12sp #8F8F8F in the center, and Done on the right
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
@@ -4574,6 +5095,10 @@ private fun DetailMonoRow(label: String, value: String) {
 @Composable
 private fun ChatComposerBar(
   modifier: Modifier = Modifier,
+  viewportScale: ViewportScale = ViewportScale(1f, 1f, 1f),
+  drawFillInSharedCanvas: Boolean = false,
+  controlsEnabled: Boolean = true,
+  onBarBoundsChanged: (SimpleRectPx) -> Unit = {},
   text: String,
   onTextChange: (String) -> Unit,
   isStreaming: Boolean,
@@ -4584,6 +5109,7 @@ private fun ChatComposerBar(
   focusOnLaunch: Boolean = false,
   onFocusConsumed: () -> Unit = {},
 ) {
+  val density = LocalDensity.current
   val focusRequester = remember { FocusRequester() }
   val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -4595,70 +5121,102 @@ private fun ChatComposerBar(
     }
   }
 
-  // Single Unified Floating Pill Composer Bar
+  // Scaled message bar geometry (full width - 16 dp margins, 52 dp tall, 26 dp corners on 390x844)
+  val horizMarginDp = (8f * viewportScale.widthScale).dp
+  val vertMarginDp = (8f * viewportScale.heightScale).dp
+  val barMinHeightDp = (52f * viewportScale.heightScale).coerceAtLeast(48f).dp
+  val barCornerDp = (26f * viewportScale.geomScale).dp
+  val barCornerPx = with(density) { barCornerDp.toPx() }
+  val actionButtonSize = (44f * viewportScale.heightScale).coerceIn(40f, 48f).dp
+
   Box(
     modifier =
       modifier
         .fillMaxWidth()
-        .padding(horizontal = 12.dp, vertical = 8.dp),
+        .padding(horizontal = horizMarginDp, vertical = vertMarginDp),
   ) {
     Surface(
-      shape = RoundedCornerShape(28.dp),
-      color = RiviaSurface1,
-      border = BorderStroke(1.dp, RiviaBorder),
-      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(barCornerDp),
+      color = if (drawFillInSharedCanvas) Color.Transparent else RiviaSurface1,
+      border = if (drawFillInSharedCanvas) null else BorderStroke(1.dp, RiviaBorder),
+      modifier =
+        Modifier.fillMaxWidth()
+          .heightIn(min = barMinHeightDp)
+          .onGloballyPositioned { coords ->
+            if (coords.size.width > 0 && coords.size.height > 0) {
+              val pos = coords.positionInWindow()
+              onBarBoundsChanged(
+                SimpleRectPx(
+                  left = pos.x,
+                  top = pos.y,
+                  width = coords.size.width.toFloat(),
+                  height = coords.size.height.toFloat(),
+                  cornerRadius = barCornerPx,
+                )
+              )
+            }
+          },
     ) {
       Row(
         modifier =
           Modifier.fillMaxWidth()
-            .padding(start = 4.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+            .heightIn(min = barMinHeightDp)
+            .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
       ) {
-        OutlinedTextField(
+        IconButton(
+          enabled = controlsEnabled,
+          onClick = onOpenDictation,
+          modifier =
+            Modifier.size(actionButtonSize)
+              .minimumInteractiveComponentSize()
+              .testTag("dictate_mic_button"),
+        ) {
+          Icon(
+            imageVector = Icons.Default.Mic,
+            contentDescription = "Dictate",
+            tint = RiviaTextPrimary,
+          )
+        }
+
+        BasicTextField(
           value = text,
           onValueChange = onTextChange,
-          placeholder = { Text("Message Rivia...", color = RiviaTextTertiary) },
-          leadingIcon = {
-            IconButton(
-              onClick = onOpenDictation,
-              modifier =
-                Modifier.size(40.dp)
-                  .minimumInteractiveComponentSize()
-                  .testTag("dictate_mic_button"),
-            ) {
-              Icon(
-                imageVector = Icons.Default.Mic,
-                contentDescription = "Dictate",
-                tint = RiviaTextPrimary,
-              )
-            }
-          },
+          enabled = controlsEnabled,
+          textStyle =
+            MaterialTheme.typography.bodyLarge.copy(
+              color = RiviaTextPrimary,
+            ),
+          cursorBrush = SolidColor(RiviaMint),
+          maxLines = 5,
           modifier =
             Modifier.weight(1f)
+              .padding(horizontal = 4.dp, vertical = 8.dp)
               .focusRequester(focusRequester)
               .testTag("message_rivia_input"),
-          maxLines = 5,
-          shape = RoundedCornerShape(24.dp),
-          colors =
-            OutlinedTextFieldDefaults.colors(
-              focusedTextColor = RiviaTextPrimary,
-              unfocusedTextColor = RiviaTextPrimary,
-              focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
-              unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
-              focusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
-              unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
-              cursorColor = RiviaMint,
-            ),
+          decorationBox = { innerTextField ->
+            Box(contentAlignment = Alignment.CenterStart) {
+              if (text.isEmpty()) {
+                Text(
+                  text = "Message Rivia...",
+                  style = MaterialTheme.typography.bodyLarge,
+                  color = RiviaTextTertiary,
+                )
+              }
+              innerTextField()
+            }
+          },
         )
 
-        // Single 48.dp right button: Stop while streaming, Send when typed, Live when empty
+        // Single right button: Stop while streaming, Send when typed, Live when empty
         when {
           isStreaming -> {
             IconButton(
+              enabled = controlsEnabled,
               onClick = onStop,
               modifier =
-                Modifier.size(48.dp)
+                Modifier.size(actionButtonSize)
                   .minimumInteractiveComponentSize()
                   .clip(CircleShape)
                   .background(RiviaErrorRed)
@@ -4673,9 +5231,10 @@ private fun ChatComposerBar(
           }
           text.isNotBlank() -> {
             IconButton(
+              enabled = controlsEnabled,
               onClick = onSend,
               modifier =
-                Modifier.size(48.dp)
+                Modifier.size(actionButtonSize)
                   .minimumInteractiveComponentSize()
                   .clip(CircleShape)
                   .background(RiviaSurface2)
@@ -4691,9 +5250,10 @@ private fun ChatComposerBar(
           }
           else -> {
             IconButton(
+              enabled = controlsEnabled,
               onClick = onOpenLive,
               modifier =
-                Modifier.size(48.dp)
+                Modifier.size(actionButtonSize)
                   .minimumInteractiveComponentSize()
                   .clip(CircleShape)
                   .background(RiviaSurface2)
