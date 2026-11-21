@@ -403,6 +403,56 @@ fun LayersScreen(
   }
 }
 
+private data class VadSubStepSpec(
+  val testTag: String,
+  val title: String,
+  val description: String,
+)
+
+private val VAD_SUB_STEPS =
+  listOf(
+    VadSubStepSpec(
+      testTag = "vad_step_1_1",
+      title = "1.1 Mood storage",
+      description = "A place on the tablet to store her mood. It starts at calm.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_2",
+      title = "1.2 Mood limits",
+      description = "A guardrail so her mood can't go past the max or min.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_3",
+      title = "1.3 Emotion cheat sheet",
+      description = "A cheat sheet of what angry, happy, sad and scared look like as numbers.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_4",
+      title = "1.4 Mood label",
+      description = "Turns her numbers into a word, like \"mildly annoyed\".",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_5",
+      title = "1.5 Manual mood dial",
+      description = "A dial to set or bump her mood by hand.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_6",
+      title = "1.6 Mood line for Gemini",
+      description = "Writes the line that would tell Gemini her mood, but only saves it.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_7",
+      title = "1.7 Mood diary",
+      description = "A diary of every mood change: what, why and when.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_1_8",
+      title = "1.8 Self-check",
+      description = "Checks that the guardrails and labels work.",
+    ),
+  )
+
 @Composable
 private fun VadEngineLayerCard(
   expanded: Boolean,
@@ -464,11 +514,31 @@ private fun VadEngineLayerCard(
           modifier = Modifier.fillMaxWidth().testTag("vad_sublayers_container"),
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Text(
-            text = "Sub-layers coming soon.",
-            style = MaterialTheme.typography.labelSmall,
-            color = RiviaTextTertiary,
-          )
+          for (step in VAD_SUB_STEPS) {
+            Surface(
+              color = MaterialTheme.colorScheme.background,
+              shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+            ) {
+              Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = step.title,
+                  style = MaterialTheme.typography.labelLarge,
+                  color = RiviaTextPrimary,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = step.description,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = RiviaSecondaryText,
+                )
+              }
+            }
+          }
         }
       }
     }
