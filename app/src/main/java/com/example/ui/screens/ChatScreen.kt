@@ -85,12 +85,15 @@ import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -255,11 +258,12 @@ fun ChatScreen(
   val keyboardController = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
 
-  // Dialog states
+  // Dialog & selection states
   var messageForDetails by remember { mutableStateOf<MessageEntity?>(null) }
   var messageForEdit by remember { mutableStateOf<MessageEntity?>(null) }
   var editDraftText by remember { mutableStateOf("") }
-  var chatForContextMenu by remember { mutableStateOf<ChatEntity?>(null) }
+  var selectedChatIds by remember { mutableStateOf(emptySet<String>()) }
+  var showBulkDeleteConfirm by remember { mutableStateOf(false) }
   var chatToRename by remember { mutableStateOf<ChatEntity?>(null) }
   var renameDraftText by remember { mutableStateOf("") }
   var chatToDelete by remember { mutableStateOf<ChatEntity?>(null) }
@@ -270,6 +274,20 @@ fun ChatScreen(
   var newChatResetToken by rememberSaveable { mutableStateOf(0) }
   var isInLiveMode by rememberSaveable { mutableStateOf(false) }
   var didApplyOpenInLive by rememberSaveable { mutableStateOf(false) }
+
+  LaunchedEffect(chats) {
+    if (selectedChatIds.isNotEmpty()) {
+      val validIds = chats.map { it.id }.toSet()
+      val pruned = selectedChatIds.intersect(validIds)
+      if (pruned != selectedChatIds) {
+        selectedChatIds = pruned
+      }
+    }
+  }
+
+  BackHandler(enabled = selectedChatIds.isNotEmpty()) {
+    selectedChatIds = emptySet()
+  }
 
   LaunchedEffect(voicePrefs.openInLive, geminiKey, elevenKey) {
     if (!didApplyOpenInLive && geminiKey.isNotBlank() && elevenKey.isNotBlank()) {
@@ -288,8 +306,8 @@ fun ChatScreen(
     showRiviaChatInfoDialog,
     showCreatePresetDialog,
     presetToEdit,
-    chatForContextMenu,
     chatToDelete,
+    showBulkDeleteConfirm,
     messageForDetails,
   ) {
     if (
@@ -299,8 +317,8 @@ fun ChatScreen(
         showRiviaChatInfoDialog ||
         showCreatePresetDialog ||
         presetToEdit != null ||
-        chatForContextMenu != null ||
         chatToDelete != null ||
+        showBulkDeleteConfirm ||
         messageForDetails != null
     ) {
       keyboardController?.hide()
@@ -337,6 +355,39 @@ fun ChatScreen(
             activeChatId = activeChat?.id,
             searchQuery = searchQuery,
             onSearchQueryChange = viewModel::setDrawerSearchQuery,
+            selectedChatIds = selectedChatIds,
+            onToggleSelectChat = { chat ->
+              keyboardController?.hide()
+              focusManager.clearFocus()
+              selectedChatIds =
+                if (chat.id in selectedChatIds) selectedChatIds - chat.id
+                else selectedChatIds + chat.id
+            },
+            onSelectAllChats = {
+              selectedChatIds = chats.map { it.id }.toSet()
+            },
+            onClearSelection = {
+              selectedChatIds = emptySet()
+            },
+            onRenameSelectedChat = {
+              if (selectedChatIds.size == 1) {
+                val targetId = selectedChatIds.first()
+                val targetChat = chats.firstOrNull { it.id == targetId }
+                if (targetChat != null) {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  chatToRename = targetChat
+                  renameDraftText = targetChat.title
+                }
+              }
+            },
+            onDeleteSelectedChats = {
+              if (selectedChatIds.isNotEmpty()) {
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                showBulkDeleteConfirm = true
+              }
+            },
             onNewChat = {
               keyboardController?.hide()
               focusManager.clearFocus()
@@ -347,11 +398,6 @@ fun ChatScreen(
               keyboardController?.hide()
               focusManager.clearFocus()
               viewModel.selectChat(it.id)
-            },
-            onLongPressChat = {
-              keyboardController?.hide()
-              focusManager.clearFocus()
-              chatForContextMenu = it
             },
             onOpenTests = {
               keyboardController?.hide()
@@ -474,6 +520,12 @@ fun ChatScreen(
         }
       }
     } else {
+      LaunchedEffect(drawerState.isClosed) {
+        if (drawerState.isClosed && selectedChatIds.isNotEmpty()) {
+          selectedChatIds = emptySet()
+        }
+      }
+
       ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -489,6 +541,39 @@ fun ChatScreen(
               activeChatId = activeChat?.id,
               searchQuery = searchQuery,
               onSearchQueryChange = viewModel::setDrawerSearchQuery,
+              selectedChatIds = selectedChatIds,
+              onToggleSelectChat = { chat ->
+                keyboardController?.hide()
+                focusManager.clearFocus()
+                selectedChatIds =
+                  if (chat.id in selectedChatIds) selectedChatIds - chat.id
+                  else selectedChatIds + chat.id
+              },
+              onSelectAllChats = {
+                selectedChatIds = chats.map { it.id }.toSet()
+              },
+              onClearSelection = {
+                selectedChatIds = emptySet()
+              },
+              onRenameSelectedChat = {
+                if (selectedChatIds.size == 1) {
+                  val targetId = selectedChatIds.first()
+                  val targetChat = chats.firstOrNull { it.id == targetId }
+                  if (targetChat != null) {
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                    chatToRename = targetChat
+                    renameDraftText = targetChat.title
+                  }
+                }
+              },
+              onDeleteSelectedChats = {
+                if (selectedChatIds.isNotEmpty()) {
+                  keyboardController?.hide()
+                  focusManager.clearFocus()
+                  showBulkDeleteConfirm = true
+                }
+              },
               onNewChat = {
                 keyboardController?.hide()
                 focusManager.clearFocus()
@@ -501,11 +586,6 @@ fun ChatScreen(
                 focusManager.clearFocus()
                 viewModel.selectChat(chat.id)
                 scope.launch { drawerState.close() }
-              },
-              onLongPressChat = {
-                keyboardController?.hide()
-                focusManager.clearFocus()
-                chatForContextMenu = it
               },
               onOpenTests = {
                 keyboardController?.hide()
@@ -718,51 +798,40 @@ fun ChatScreen(
     )
   }
 
-  // Long-press Chat Context Menu (Rename or Delete)
-  chatForContextMenu?.let { chat ->
+  // Bulk Delete Chats Confirm Dialog
+  if (showBulkDeleteConfirm && selectedChatIds.isNotEmpty()) {
+    val count = selectedChatIds.size
+    val titleText = if (count == 1) "Delete 1 chat?" else "Delete $count chats?"
+    val bodyText =
+      if (count == 1) "Delete 1 chat and all its turns? This cannot be undone."
+      else "Delete $count chats and all their turns? This cannot be undone."
     AlertDialog(
-      onDismissRequest = { chatForContextMenu = null },
+      onDismissRequest = { showBulkDeleteConfirm = false },
       containerColor = RiviaSurface1,
       titleContentColor = RiviaTextPrimary,
-      title = { Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+      title = { Text(titleText) },
       text = {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-          TextButton(
-            onClick = {
-              chatForContextMenu = null
-              chatToRename = chat
-              renameDraftText = chat.title
-            },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.DriveFileRenameOutline,
-              contentDescription = "Rename chat",
-              tint = RiviaIconDefault,
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text("Rename chat", color = RiviaTextPrimary, modifier = Modifier.weight(1f))
-          }
-          TextButton(
-            onClick = {
-              chatForContextMenu = null
-              chatToDelete = chat
-            },
-            modifier = Modifier.fillMaxWidth(),
-          ) {
-            Icon(
-              imageVector = Icons.Outlined.DeleteOutline,
-              contentDescription = "Delete chat",
-              tint = RiviaErrorRed,
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text("Delete chat", color = RiviaErrorRed, modifier = Modifier.weight(1f))
-          }
-        }
+        Text(
+          bodyText,
+          color = RiviaTextSecondary,
+        )
       },
       confirmButton = {
-        TextButton(onClick = { chatForContextMenu = null }) {
-          Text("Close", color = RiviaTextSecondary)
+        Button(
+          onClick = {
+            val idsToDelete = selectedChatIds
+            viewModel.deleteChats(idsToDelete)
+            selectedChatIds = emptySet()
+            showBulkDeleteConfirm = false
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = RiviaErrorRed, contentColor = RiviaOnAccent),
+        ) {
+          Text("Delete", color = RiviaOnAccent, fontWeight = FontWeight.SemiBold)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showBulkDeleteConfirm = false }) {
+          Text("Cancel", color = RiviaTextSecondary)
         }
       },
     )
@@ -1026,9 +1095,14 @@ private fun ChatDrawerContent(
   activeChatId: String?,
   searchQuery: String,
   onSearchQueryChange: (String) -> Unit,
+  selectedChatIds: Set<String>,
+  onToggleSelectChat: (ChatEntity) -> Unit,
+  onSelectAllChats: () -> Unit,
+  onClearSelection: () -> Unit,
+  onRenameSelectedChat: () -> Unit,
+  onDeleteSelectedChats: () -> Unit,
   onNewChat: () -> Unit,
   onSelectChat: (ChatEntity) -> Unit,
-  onLongPressChat: (ChatEntity) -> Unit,
   onOpenTests: () -> Unit,
   onOpenBots: () -> Unit = {},
   onOpenLiveMode: () -> Unit,
@@ -1039,6 +1113,8 @@ private fun ChatDrawerContent(
   onOpenDevLabsSheet: () -> Unit = {},
 ) {
   val dateFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.US) }
+  val haptic = LocalHapticFeedback.current
+  val inSelectionMode = selectedChatIds.isNotEmpty()
 
   val modeHeaderTitle =
     when (appUiMode) {
@@ -1057,46 +1133,104 @@ private fun ChatDrawerContent(
     modifier = Modifier.fillMaxSize().padding(12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
-    // Header + "+ New chat" (scoped to current mode: Rivia chat in Rivia/Dev, Lab chat in Labs)
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
+    // Header + "+ New chat" (or selection action bar in selection mode)
+    if (inSelectionMode) {
       Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
       ) {
-        RiviaOrb(state = OrbState.IDLE, size = 24.dp)
+        IconButton(
+          onClick = onClearSelection,
+          modifier = Modifier.size(40.dp).testTag("chat_selection_cancel"),
+        ) {
+          Icon(
+            imageVector = Icons.Default.Close,
+            contentDescription = "Cancel selection",
+            tint = RiviaIconDefault,
+          )
+        }
         Text(
-          text = modeHeaderTitle,
+          text = "${selectedChatIds.size} selected",
           style = MaterialTheme.typography.titleMedium,
           color = RiviaText,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f).padding(horizontal = 4.dp).testTag("chat_selection_count"),
         )
+        IconButton(
+          onClick = onSelectAllChats,
+          modifier = Modifier.size(40.dp).testTag("chat_select_all"),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.SelectAll,
+            contentDescription = "Select all",
+            tint = RiviaIconDefault,
+          )
+        }
+        val canRename = selectedChatIds.size == 1
+        IconButton(
+          onClick = onRenameSelectedChat,
+          enabled = canRename,
+          modifier = Modifier.size(40.dp).testTag("chat_selection_rename"),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.DriveFileRenameOutline,
+            contentDescription = "Rename chat",
+            tint = if (canRename) RiviaIconDefault else RiviaTextTertiary,
+          )
+        }
+        IconButton(
+          onClick = onDeleteSelectedChats,
+          modifier = Modifier.size(40.dp).testTag("chat_selection_delete"),
+        ) {
+          Icon(
+            imageVector = Icons.Outlined.DeleteOutline,
+            contentDescription = "Delete selected chats",
+            tint = RiviaErrorRed,
+          )
+        }
       }
-      Button(
-        onClick = onNewChat,
-        colors =
-          ButtonDefaults.buttonColors(
-            containerColor = RiviaMint,
-            contentColor = RiviaOnAccent,
-          ),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-        modifier = Modifier.minimumInteractiveComponentSize().testTag("new_chat_button"),
+    } else {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
       ) {
-        Icon(
-          imageVector = Icons.Default.Add,
-          contentDescription = newChatButtonLabel,
-          tint = RiviaOnAccent,
-          modifier = Modifier.size(16.dp),
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(
-          newChatButtonLabel,
-          color = RiviaOnAccent,
-          fontSize = 12.sp,
-          fontWeight = FontWeight.SemiBold,
-        )
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          RiviaOrb(state = OrbState.IDLE, size = 24.dp)
+          Text(
+            text = modeHeaderTitle,
+            style = MaterialTheme.typography.titleMedium,
+            color = RiviaText,
+          )
+        }
+        Button(
+          onClick = onNewChat,
+          colors =
+            ButtonDefaults.buttonColors(
+              containerColor = RiviaMint,
+              contentColor = RiviaOnAccent,
+            ),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+          modifier = Modifier.minimumInteractiveComponentSize().testTag("new_chat_button"),
+        ) {
+          Icon(
+            imageVector = Icons.Default.Add,
+            contentDescription = newChatButtonLabel,
+            tint = RiviaOnAccent,
+            modifier = Modifier.size(16.dp),
+          )
+          Spacer(modifier = Modifier.width(4.dp))
+          Text(
+            newChatButtonLabel,
+            color = RiviaOnAccent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+          )
+        }
       }
     }
 
@@ -1159,7 +1293,8 @@ private fun ChatDrawerContent(
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         itemsIndexed(chats, key = { _, item -> item.id }) { _, chat ->
-          val isSelected = chat.id == activeChatId
+          val isChecked = chat.id in selectedChatIds
+          val isSelected = if (inSelectionMode) isChecked else (chat.id == activeChatId)
           Surface(
             shape = RoundedCornerShape(14.dp),
             color =
@@ -1172,52 +1307,123 @@ private fun ChatDrawerContent(
               Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
                 .combinedClickable(
-                  onClick = { onSelectChat(chat) },
-                  onLongClick = { onLongPressChat(chat) },
+                  onClick = {
+                    if (inSelectionMode) {
+                      onToggleSelectChat(chat)
+                    } else {
+                      onSelectChat(chat)
+                    }
+                  },
+                  onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onToggleSelectChat(chat)
+                  },
                 ),
           ) {
-            Column(
-              modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-              verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
+            if (inSelectionMode) {
               Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
               ) {
-                Text(
-                  text = chat.title,
-                  style = MaterialTheme.typography.bodyMedium,
-                  fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                  color = RiviaTextPrimary,
-                  maxLines = 1,
-                  overflow = TextOverflow.Ellipsis,
-                  modifier = Modifier.weight(1f),
+                Checkbox(
+                  checked = isChecked,
+                  onCheckedChange = { onToggleSelectChat(chat) },
+                  colors =
+                    CheckboxDefaults.colors(
+                      checkedColor = RiviaMint,
+                      checkmarkColor = RiviaOnAccent,
+                      uncheckedColor = RiviaBorder,
+                    ),
+                  modifier = Modifier.testTag("chat_select_checkbox_${chat.id}"),
                 )
-                if (chat.isLabChat) {
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Surface(
-                    shape = RoundedCornerShape(50),
-                    color = RiviaSurface2,
-                    border = BorderStroke(1.dp, RiviaBorder),
+                Column(
+                  modifier = Modifier.weight(1f),
+                  verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                   ) {
                     Text(
-                      text = "Labs",
-                      color = RiviaTextSecondary,
-                      fontFamily = ChivoMonoFontFamily,
-                      fontSize = 10.sp,
-                      fontWeight = FontWeight.SemiBold,
-                      modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                      text = chat.title,
+                      style = MaterialTheme.typography.bodyMedium,
+                      fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                      color = RiviaTextPrimary,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                      modifier = Modifier.weight(1f),
                     )
+                    if (chat.isLabChat) {
+                      Spacer(modifier = Modifier.width(6.dp))
+                      Surface(
+                        shape = RoundedCornerShape(50),
+                        color = RiviaSurface2,
+                        border = BorderStroke(1.dp, RiviaBorder),
+                      ) {
+                        Text(
+                          text = "Labs",
+                          color = RiviaTextSecondary,
+                          fontFamily = ChivoMonoFontFamily,
+                          fontSize = 10.sp,
+                          fontWeight = FontWeight.SemiBold,
+                          modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                        )
+                      }
+                    }
                   }
+                  Text(
+                    text = dateFormatter.format(Date(chat.updatedAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = ChivoMonoFontFamily,
+                    color = RiviaTextTertiary,
+                  )
                 }
               }
-              Text(
-                text = dateFormatter.format(Date(chat.updatedAt)),
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = ChivoMonoFontFamily,
-                color = RiviaTextTertiary,
-              )
+            } else {
+              Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+              ) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Text(
+                    text = chat.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = RiviaTextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                  )
+                  if (chat.isLabChat) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                      shape = RoundedCornerShape(50),
+                      color = RiviaSurface2,
+                      border = BorderStroke(1.dp, RiviaBorder),
+                    ) {
+                      Text(
+                        text = "Labs",
+                        color = RiviaTextSecondary,
+                        fontFamily = ChivoMonoFontFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                      )
+                    }
+                  }
+                }
+                Text(
+                  text = dateFormatter.format(Date(chat.updatedAt)),
+                  style = MaterialTheme.typography.labelSmall,
+                  fontFamily = ChivoMonoFontFamily,
+                  color = RiviaTextTertiary,
+                )
+              }
             }
           }
         }

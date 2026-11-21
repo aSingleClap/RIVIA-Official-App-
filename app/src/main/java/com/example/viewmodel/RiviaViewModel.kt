@@ -1462,7 +1462,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       },
     )
 
-    // 4. Restore persisted UI mode and auto-select latest matching chat on launch
+    // 4. Restore persisted UI mode and start on the home screen
     viewModelScope.launch {
       val persistedMode =
         runCatching { AppUiMode.fromKey(keyRepository.uiModeFlow.first()) }
@@ -1472,11 +1472,6 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       _pendingNewChatIsLab.value = wantLab
       if (wantLab) {
         _pendingNewChatSettings.value = defaultRunSettings.value
-      }
-
-      val existing = dao.getAllChats().filter { it.isLabChat == wantLab }
-      if (existing.isNotEmpty() && _activeChatId.value == null) {
-        _activeChatId.value = existing.first().id
       }
     }
 
@@ -2164,14 +2159,29 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
 
   fun deleteChat(chatId: String) {
     viewModelScope.launch {
-      if (_activeChatId.value == chatId) {
+      val deletedActive = _activeChatId.value == chatId
+      if (deletedActive) {
         stopStreaming()
       }
       dao.deleteChatById(chatId)
-      if (_activeChatId.value == chatId) {
-        val wantLab = _appUiMode.value == AppUiMode.LABS
-        val remaining = dao.getAllChats().filter { it.isLabChat == wantLab }
-        _activeChatId.value = remaining.firstOrNull()?.id
+      if (deletedActive) {
+        startNewChat()
+      }
+    }
+  }
+
+  fun deleteChats(chatIds: Set<String>) {
+    if (chatIds.isEmpty()) return
+    viewModelScope.launch {
+      val deletedActive = _activeChatId.value != null && _activeChatId.value in chatIds
+      if (deletedActive) {
+        stopStreaming()
+      }
+      for (id in chatIds) {
+        dao.deleteChatById(id)
+      }
+      if (deletedActive) {
+        startNewChat()
       }
     }
   }
