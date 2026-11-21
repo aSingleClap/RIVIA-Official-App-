@@ -1264,39 +1264,6 @@ private fun ChatDrawerContent(
         )
       }
 
-      // Layers row
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .height(44.dp)
-            .clickable(onClick = onOpenLayers)
-            .padding(horizontal = 8.dp)
-            .testTag("open_layers_button"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Start,
-      ) {
-        Icon(
-          imageVector = Icons.Outlined.Tune,
-          contentDescription = "Layers",
-          tint = Color(0xFFA3A3A3),
-          modifier = Modifier.size(17.dp),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-          text = if (appUiMode == AppUiMode.LABS) "Layers (Labs)" else "Layers",
-          fontSize = 14.sp,
-          color = Color(0xFFEDEDED),
-        )
-        if (appUiMode == AppUiMode.RIVIA) {
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = "Soon",
-            color = Color(0xFF8F8F8F),
-            fontSize = 11.sp,
-          )
-        }
-      }
-
       // Pipeline row
       Row(
         modifier =
@@ -2315,30 +2282,6 @@ private fun ChatConversationPane(
                     fontFamily = ChivoMonoFontFamily,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                  )
-                }
-              }
-              if (appUiMode != AppUiMode.RIVIA && hasAnyLayerDraft) {
-                // Dev and Labs modes show a "Draft" chip in the top bar when any layer in that mode has phone edits
-                Surface(
-                  shape = RoundedCornerShape(50),
-                  color = RiviaWarningAmber.copy(alpha = 0.16f),
-                  border = BorderStroke(1.dp, RiviaWarningAmber.copy(alpha = 0.6f)),
-                  modifier =
-                    Modifier.clickable {
-                        keyboardController?.hide()
-                        focusManager.clearFocus()
-                        onOpenLayers(null)
-                      }
-                      .testTag("top_bar_draft_chip"),
-                ) {
-                  Text(
-                    text = "Draft",
-                    color = RiviaWarningAmber,
-                    fontFamily = ChivoMonoFontFamily,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                   )
                 }
@@ -4137,26 +4080,6 @@ private fun RiviaChatInfoDialog(
           "${LayerConfigManager.displayProfileLabel(activeProfile)} ($normProfile)",
         )
         DetailMonoRow("Fingerprint", fp)
-
-        if (bundle != null) {
-          HorizontalDivider(color = RiviaBorder)
-          Text(
-            text = "Layer versions (* = phone draft)",
-            style = MaterialTheme.typography.labelSmall,
-            color = RiviaTextSecondary,
-          )
-          for (layerKey in listOf("persona", "style", "engine", "hard_rules")) {
-            val meta = cardMetas[layerKey]
-            val verText =
-              if (meta != null) {
-                "v${meta.version}${if (meta.hasDraft) "*" else ""} (${meta.status.label})"
-              } else {
-                "v1"
-              }
-            DetailMonoRow(layerKey, verText)
-          }
-          DetailMonoRow("tests", "v${bundle.tests.version}")
-        }
 
         HorizontalDivider(color = RiviaBorder)
 
