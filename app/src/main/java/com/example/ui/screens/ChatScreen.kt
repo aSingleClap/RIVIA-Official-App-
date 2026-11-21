@@ -1264,6 +1264,31 @@ private fun ChatDrawerContent(
         )
       }
 
+      // Layers row
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(44.dp)
+            .clickable(onClick = onOpenLayers)
+            .padding(horizontal = 8.dp)
+            .testTag("open_vad_layer_button"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start,
+      ) {
+        Icon(
+          imageVector = Icons.Outlined.Tune,
+          contentDescription = "Layers",
+          tint = Color(0xFFA3A3A3),
+          modifier = Modifier.size(17.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+          text = "Layers",
+          fontSize = 14.sp,
+          color = Color(0xFFEDEDED),
+        )
+      }
+
       // Pipeline row
       Row(
         modifier =

@@ -158,35 +158,7 @@ fun LayersScreen(
   val isErrorBanner by viewModel.isErrorBanner.collectAsStateWithLifecycle()
 
   val listState = rememberLazyListState()
-
-  val allLayerKeys =
-    remember(appUiMode) {
-      if (appUiMode == AppUiMode.DEV) {
-        listOf("persona", "style", "engine", "hard_rules", "tests")
-      } else {
-        listOf("persona", "style", "engine", "hard_rules")
-      }
-    }
-  val expandedSections = remember {
-    mutableStateMapOf(
-      "persona" to true,
-      "style" to true,
-      "engine" to true,
-      "hard_rules" to true,
-      "tests" to true,
-    )
-  }
-  val anyExpanded = allLayerKeys.any { expandedSections[it] == true }
-
-  // Scroll to focused card (e.g. "engine" when opened via mode chip pencil icon)
-  LaunchedEffect(initialFocusLayer, bundle) {
-    if (initialFocusLayer != null && bundle != null) {
-      expandedSections[initialFocusLayer] = true
-      if (initialFocusLayer == "engine") {
-        listState.animateScrollToItem(3) // 0=summary, 1=persona, 2=style, 3=engine
-      }
-    }
-  }
+  var vadExpanded by remember { mutableStateOf(true) }
 
   // Dialog & help sheet states
   var viewFileDialogLayer by remember { mutableStateOf<String?>(null) }
@@ -252,18 +224,13 @@ fun LayersScreen(
         },
         actions = {
           TextButton(
-            onClick = {
-              val targetState = !anyExpanded
-              for (k in allLayerKeys) {
-                expandedSections[k] = targetState
-              }
-            },
+            onClick = { vadExpanded = !vadExpanded },
             colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
           ) {
             Icon(
               imageVector =
-                if (anyExpanded) Icons.Default.KeyboardArrowUp
+                if (vadExpanded) Icons.Default.KeyboardArrowUp
                 else Icons.Default.KeyboardArrowDown,
               contentDescription = null,
               tint = RiviaIconDefault,
@@ -271,7 +238,7 @@ fun LayersScreen(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = if (anyExpanded) "Collapse all" else "Expand all",
+              text = if (vadExpanded) "Collapse all" else "Expand all",
               style = MaterialTheme.typography.labelMedium,
               color = RiviaTextPrimary,
             )
@@ -331,197 +298,17 @@ fun LayersScreen(
         }
       }
 
-      val loaded = bundle
-      if (loaded != null) {
-        LazyColumn(
-          state = listState,
-          modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(16.dp),
-          verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-          // 0. Top summary bar
-          item {
-            TopFingerprintSummaryBar(
-              appUiMode = appUiMode,
-              fingerprints = fingerprints,
-              testStates = testStates,
-            )
-          }
-
-          // 1. Persona Card
-          item {
-            val meta = cardMetas["persona"]
-            if (meta != null) {
-              PersonaLayerCard(
-                meta = meta,
-                bundle = loaded,
-                expanded = expandedSections["persona"] ?: true,
-                onToggleExpanded = {
-                  expandedSections["persona"] = !(expandedSections["persona"] ?: true)
-                },
-                onShowInfo = { activeHelpTopicId = "layer_persona" },
-                onToggleEnabled = { viewModel.setLayerEnabled("persona", it) },
-                onToggleLocked = { viewModel.setLayerLocked("persona", it) },
-                onSaveDraft = { newText ->
-                  viewModel
-                    .savePersonaDraft(newText)
-                    .onSuccess { viewModel.showNotice("Saved Persona layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Invalid persona") }
-                },
-                onClearLayer = {
-                  viewModel
-                    .clearLayer("persona")
-                    .onSuccess { viewModel.showNotice("Cleared Persona layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Persona") }
-                },
-                onRevertLayer = { viewModel.discardLayerDraft("persona") },
-                onViewFile = { viewFileDialogLayer = "persona" },
-              )
-            }
-          }
-
-          // 2. Style Card
-          item {
-            val meta = cardMetas["style"]
-            if (meta != null) {
-              StyleLayerCard(
-                meta = meta,
-                bundle = loaded,
-                expanded = expandedSections["style"] ?: true,
-                onToggleExpanded = {
-                  expandedSections["style"] = !(expandedSections["style"] ?: true)
-                },
-                onShowInfo = { activeHelpTopicId = "layer_style" },
-                onToggleEnabled = { viewModel.setLayerEnabled("style", it) },
-                onToggleLocked = { viewModel.setLayerLocked("style", it) },
-                onSaveDraft = { newText, newVoice ->
-                  viewModel
-                    .saveStyleDraft(newText, newVoice)
-                    .onSuccess { viewModel.showNotice("Saved Style layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Invalid style") }
-                },
-                onClearLayer = {
-                  viewModel
-                    .clearLayer("style")
-                    .onSuccess { viewModel.showNotice("Cleared Style layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Style") }
-                },
-                onRevertLayer = { viewModel.discardLayerDraft("style") },
-                onViewFile = { viewFileDialogLayer = "style" },
-              )
-            }
-          }
-
-          // 3. Engine Card
-          item {
-            val meta = cardMetas["engine"]
-            if (meta != null) {
-              EngineLayerCard(
-                appUiMode = appUiMode,
-                meta = meta,
-                bundle = loaded,
-                availableModels = availableModels,
-                expanded = expandedSections["engine"] ?: true,
-                onToggleExpanded = {
-                  expandedSections["engine"] = !(expandedSections["engine"] ?: true)
-                },
-                onShowInfo = { activeHelpTopicId = "layer_engine" },
-                onToggleEnabled = { viewModel.setLayerEnabled("engine", it) },
-                onToggleLocked = { viewModel.setLayerLocked("engine", it) },
-                onSaveDraft = { newEngine ->
-                  viewModel
-                    .saveEngineDraft(newEngine)
-                    .onSuccess { viewModel.showNotice("Saved Engine layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Invalid engine config") }
-                },
-                onClearLayer = {
-                  viewModel
-                    .clearLayer("engine")
-                    .onSuccess { viewModel.showNotice("Cleared Engine layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Engine") }
-                },
-                onRevertLayer = { viewModel.discardLayerDraft("engine") },
-                onViewFile = { viewFileDialogLayer = "engine" },
-                onValidationError = { msg -> viewModel.showError(msg) },
-              )
-            }
-          }
-
-          // 4. Hard Rules Card
-          item {
-            val meta = cardMetas["hard_rules"]
-            if (meta != null) {
-              HardRulesLayerCard(
-                meta = meta,
-                bundle = loaded,
-                spokenMaxSentences = spokenMaxSentences,
-                h11WatchWords = h11WatchWords,
-                recentRuleEvents = recentRuleEvents,
-                expanded = expandedSections["hard_rules"] ?: true,
-                onToggleExpanded = {
-                  expandedSections["hard_rules"] = !(expandedSections["hard_rules"] ?: true)
-                },
-                onShowInfo = { activeHelpTopicId = "layer_hard_rules" },
-                onToggleEnabled = { viewModel.setLayerEnabled("hard_rules", it) },
-                onToggleLocked = { viewModel.setLayerLocked("hard_rules", it) },
-                onSpokenMaxChange = { viewModel.setSpokenMaxSentences(it) },
-                onAddWatchWord = { viewModel.addH11WatchWord(it) },
-                onRemoveWatchWord = { viewModel.removeH11WatchWord(it) },
-                onSaveDraft = { updatedRules ->
-                  viewModel
-                    .saveHardRulesDraft(updatedRules)
-                    .onSuccess { viewModel.showNotice("Saved Hard rules layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Invalid hard rules") }
-                },
-                onClearLayer = {
-                  viewModel
-                    .clearLayer("hard_rules")
-                    .onSuccess { viewModel.showNotice("Cleared Hard rules layer.") }
-                    .onFailure { viewModel.showError(it.message ?: "Failed to clear Hard rules") }
-                },
-                onRevertLayer = { viewModel.discardLayerDraft("hard_rules") },
-                onViewFile = { viewFileDialogLayer = "hard_rules" },
-              )
-            }
-          }
-
-          // 5. Tests Card (H10 pushback, H7 spoken length stay in Dev only)
-          if (appUiMode == AppUiMode.DEV) {
-            item {
-              val testsMeta =
-                cardMetas["tests"]
-                  ?: LayerCardUiMeta(
-                    layerKey = "tests",
-                    fileName = "tests.json",
-                    version = loaded.tests.version,
-                    updated = loaded.tests.updated,
-                    status = LayerStatus.LOCKED,
-                    sourceSubtitle = "from build",
-                    hasDraft = false,
-                    bundledLocked = true,
-                    enabled = true,
-                    isLocked = true,
-                  )
-              TestsLayerCard(
-                meta = testsMeta,
-                bundle = loaded,
-                fingerprints = fingerprints,
-                testRuns = testRuns,
-                expanded = expandedSections["tests"] ?: true,
-                onToggleExpanded = {
-                  expandedSections["tests"] = !(expandedSections["tests"] ?: true)
-                },
-                onShowInfo = { activeHelpTopicId = "layer_tests" },
-                onToggleEnabled = { viewModel.setLayerEnabled("tests", it) },
-                onToggleLocked = { viewModel.setLayerLocked("tests", it) },
-                onClearLayer = { viewModel.clearLayer("tests") },
-                onSaveLayer = { viewModel.showNotice("Saved Tests layer.") },
-                onRevertLayer = { viewModel.discardLayerDraft("tests") },
-                onOpenLogRun = { testDef -> logRunTestDef = testDef },
-                onViewFile = { viewFileDialogLayer = "tests" },
-              )
-            }
-          }
+      LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+      ) {
+        item {
+          VadEngineLayerCard(
+            expanded = vadExpanded,
+            onToggleExpanded = { vadExpanded = !vadExpanded },
+          )
         }
       }
     }
@@ -612,6 +399,120 @@ fun LayersScreen(
         )
         logRunTestDef = null
       },
+    )
+  }
+}
+
+@Composable
+private fun VadEngineLayerCard(
+  expanded: Boolean,
+  onToggleExpanded: () -> Unit,
+) {
+  Surface(
+    color = RiviaPanelSurface,
+    shape = RoundedCornerShape(14.dp),
+    modifier = Modifier.fillMaxWidth().testTag("layer_card_vad_engine"),
+  ) {
+    Column(
+      modifier = Modifier.padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clickable(onClick = onToggleExpanded)
+            .testTag("layer_header_vad_engine"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = "Layer 1: VAD Engine",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.SemiBold,
+          color = RiviaTextPrimary,
+          modifier = Modifier.weight(1f),
+        )
+
+        IconButton(
+          onClick = onToggleExpanded,
+          modifier = Modifier.testTag("toggle_layer_vad_engine"),
+        ) {
+          Icon(
+            imageVector =
+              if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            contentDescription =
+              if (expanded) "Collapse Layer 1: VAD Engine" else "Expand Layer 1: VAD Engine",
+            tint = RiviaSecondaryText,
+          )
+        }
+      }
+
+      AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+      ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(
+            text = "Valence, Arousal, Dominance mood model (display only).",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaSecondaryText,
+          )
+
+          Surface(
+            color = MaterialTheme.colorScheme.background,
+            shape = RoundedCornerShape(10.dp),
+            border = BorderStroke(1.dp, RiviaBorder),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(
+              modifier = Modifier.padding(12.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              VadDimensionRow(
+                label = "Valence",
+                description = "Pleasantness (negative to positive)",
+              )
+              HorizontalDivider(color = RiviaBorder)
+              VadDimensionRow(
+                label = "Arousal",
+                description = "Activation level (calm to energized)",
+              )
+              HorizontalDivider(color = RiviaBorder)
+              VadDimensionRow(
+                label = "Dominance",
+                description = "Agency and control (yielding to in-control)",
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun VadDimensionRow(
+  label: String,
+  description: String,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelMedium,
+      fontFamily = MonoFontFamily,
+      fontWeight = FontWeight.SemiBold,
+      color = RiviaTextPrimary,
+    )
+    Spacer(modifier = Modifier.width(12.dp))
+    Text(
+      text = description,
+      style = MaterialTheme.typography.bodySmall,
+      color = RiviaSecondaryText,
     )
   }
 }

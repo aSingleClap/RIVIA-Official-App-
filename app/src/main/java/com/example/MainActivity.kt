@@ -91,12 +91,8 @@ fun RiviaAppRoot(viewModel: RiviaViewModel) {
             currentDestination = RiviaDestination.PIPELINE_COMING_SOON
           },
           onOpenLayers = { focusLayer ->
-            if (appUiMode == AppUiMode.RIVIA) {
-              currentDestination = RiviaDestination.LAYERS_COMING_SOON
-            } else {
-              layersFocusTarget = focusLayer
-              currentDestination = RiviaDestination.LAYERS
-            }
+            layersFocusTarget = focusLayer
+            currentDestination = RiviaDestination.LAYERS
           },
           onOpenTests = { currentDestination = RiviaDestination.TESTS },
           onOpenBots = { currentDestination = RiviaDestination.BOTS },
