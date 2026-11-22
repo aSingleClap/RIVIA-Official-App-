@@ -192,6 +192,7 @@ fun LayersScreen(
 
   val listState = rememberLazyListState()
   var vadExpanded by remember { mutableStateOf(true) }
+  var layer2Expanded by remember { mutableStateOf(true) }
 
   // Dialog & help sheet states
   var viewFileDialogLayer by remember { mutableStateOf<String?>(null) }
@@ -256,14 +257,19 @@ fun LayersScreen(
           }
         },
         actions = {
+          val anyExpanded = vadExpanded || layer2Expanded
           TextButton(
-            onClick = { vadExpanded = !vadExpanded },
+            onClick = {
+              val nextExpanded = !anyExpanded
+              vadExpanded = nextExpanded
+              layer2Expanded = nextExpanded
+            },
             colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
           ) {
             Icon(
               imageVector =
-                if (vadExpanded) Icons.Default.KeyboardArrowUp
+                if (anyExpanded) Icons.Default.KeyboardArrowUp
                 else Icons.Default.KeyboardArrowDown,
               contentDescription = null,
               tint = RiviaIconDefault,
@@ -271,7 +277,7 @@ fun LayersScreen(
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
-              text = if (vadExpanded) "Collapse all" else "Expand all",
+              text = if (anyExpanded) "Collapse all" else "Expand all",
               style = MaterialTheme.typography.labelMedium,
               color = RiviaTextPrimary,
             )
@@ -342,6 +348,12 @@ fun LayersScreen(
             expanded = vadExpanded,
             onToggleExpanded = { vadExpanded = !vadExpanded },
             viewModel = viewModel,
+          )
+        }
+        item {
+          MoodBaselineLayerCard(
+            expanded = layer2Expanded,
+            onToggleExpanded = { layer2Expanded = !layer2Expanded },
           )
         }
       }
@@ -575,6 +587,148 @@ private fun VadEngineLayerCard(
                     color = RiviaSecondaryText,
                   )
                 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+private val MOOD_BASELINE_SUB_STEPS =
+  listOf(
+    VadSubStepSpec(
+      testTag = "vad_step_2_1",
+      title = "2.1 Three layers",
+      description = "Splits her mood into emotion (fast), mood (slow) and baseline (her personality).",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_2",
+      title = "2.2 Fading",
+      description = "Emotion fades back toward mood over about 10 minutes, and mood fades toward baseline over hours.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_3",
+      title = "2.3 Her normal reads neutral",
+      description = "Her mood word is read against her baseline, so being her normal self reads as neutral.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_4",
+      title = "2.4 Mood & baseline controls",
+      description = "Locked controls to set or nudge her mood and baseline by hand, for testing.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_5",
+      title = "2.5 Fading in the diary",
+      description = "Fading isn't logged second by second. The next real change records how much she faded since the last one.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_6",
+      title = "2.6 Measuring her baseline",
+      description = "Runs fixed prompts on Gemini to measure where she naturally rests. Runs from a computer, not the app.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_7",
+      title = "2.7 Drift limits",
+      description = "Caps how far her baseline can drift: 0.20 from her anchor, 0.02 a day, 0.05 a week.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_8",
+      title = "2.8 Weekly update check",
+      description = "Checks weekly whether a Gemini update moved her personality, and only speaks up when something needs a decision. Off until it's switched on.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_2_9",
+      title = "2.9 Self-check",
+      description = "Tests that check all of Step 2 works together.",
+    ),
+  )
+
+@Composable
+private fun MoodBaselineLayerCard(
+  expanded: Boolean,
+  onToggleExpanded: () -> Unit,
+) {
+  Surface(
+    color = RiviaPanelSurface,
+    shape = RoundedCornerShape(14.dp),
+    modifier = Modifier.fillMaxWidth().testTag("layer_card_mood_baseline"),
+  ) {
+    Column(
+      modifier = Modifier.padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clickable(onClick = onToggleExpanded)
+            .testTag("layer_header_mood_baseline"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "Layer 2: Mood & Baseline",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = RiviaTextPrimary,
+          )
+          Text(
+            text =
+              "Her mood in three layers: a quick emotion, a slower mood, and her baseline, which is her normal. Emotion fades back to mood, and mood fades back to baseline. It doesn't change her replies yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaSecondaryText,
+            modifier = Modifier.testTag("mood_baseline_description"),
+          )
+        }
+
+        IconButton(
+          onClick = onToggleExpanded,
+          modifier = Modifier.testTag("toggle_layer_mood_baseline"),
+        ) {
+          Icon(
+            imageVector =
+              if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            contentDescription =
+              if (expanded) "Collapse Layer 2: Mood & Baseline"
+              else "Expand Layer 2: Mood & Baseline",
+            tint = RiviaSecondaryText,
+          )
+        }
+      }
+
+      AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxWidth().testTag("mood_baseline_sublayers_container"),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          for (step in MOOD_BASELINE_SUB_STEPS) {
+            Surface(
+              color = MaterialTheme.colorScheme.background,
+              shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+            ) {
+              Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = step.title,
+                  style = MaterialTheme.typography.labelLarge,
+                  color = RiviaTextPrimary,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = step.description,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = RiviaSecondaryText,
+                )
               }
             }
           }
