@@ -82,6 +82,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -156,6 +157,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
@@ -193,6 +195,12 @@ fun LayersScreen(
   val listState = rememberLazyListState()
   var vadExpanded by remember { mutableStateOf(true) }
   var layer2Expanded by remember { mutableStateOf(true) }
+  val emotionPanelState = remember {
+    EmotionPanelState(
+      viewModel = viewModel,
+      coroutineScope = coroutineScope,
+    )
+  }
 
   // Dialog & help sheet states
   var viewFileDialogLayer by remember { mutableStateOf<String?>(null) }
@@ -348,12 +356,14 @@ fun LayersScreen(
             expanded = vadExpanded,
             onToggleExpanded = { vadExpanded = !vadExpanded },
             viewModel = viewModel,
+            panelState = emotionPanelState,
           )
         }
         item {
           MoodBaselineLayerCard(
             expanded = layer2Expanded,
             onToggleExpanded = { layer2Expanded = !layer2Expanded },
+            panelState = emotionPanelState,
           )
         }
       }
@@ -504,6 +514,7 @@ private fun VadEngineLayerCard(
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
   viewModel: RiviaViewModel,
+  panelState: EmotionPanelState,
 ) {
   Surface(
     color = RiviaPanelSurface,
@@ -563,7 +574,11 @@ private fun VadEngineLayerCard(
         ) {
           for (step in VAD_SUB_STEPS) {
             if (step.testTag == "vad_step_1_5") {
-              ManualMoodDialPill(step = step, viewModel = viewModel)
+              ManualMoodDialPill(
+                step = step,
+                viewModel = viewModel,
+                panelState = panelState,
+              )
             } else {
               Surface(
                 color = MaterialTheme.colorScheme.background,
@@ -649,6 +664,7 @@ private val MOOD_BASELINE_SUB_STEPS =
 private fun MoodBaselineLayerCard(
   expanded: Boolean,
   onToggleExpanded: () -> Unit,
+  panelState: EmotionPanelState,
 ) {
   Surface(
     color = RiviaPanelSurface,
@@ -708,27 +724,34 @@ private fun MoodBaselineLayerCard(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           for (step in MOOD_BASELINE_SUB_STEPS) {
-            Surface(
-              color = MaterialTheme.colorScheme.background,
-              shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(1.dp, RiviaBorder),
-              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
-            ) {
-              Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+            if (step.testTag == "vad_step_2_4") {
+              MoodBaselineControlsPill(
+                step = step,
+                panelState = panelState,
+              )
+            } else {
+              Surface(
+                color = MaterialTheme.colorScheme.background,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, RiviaBorder),
+                modifier = Modifier.fillMaxWidth().testTag(step.testTag),
               ) {
-                Text(
-                  text = step.title,
-                  style = MaterialTheme.typography.labelLarge,
-                  color = RiviaTextPrimary,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = step.description,
-                  style = MaterialTheme.typography.bodySmall,
-                  color = RiviaSecondaryText,
-                )
+                Column(
+                  modifier = Modifier.padding(10.dp),
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  Text(
+                    text = step.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = RiviaTextPrimary,
+                    fontWeight = FontWeight.SemiBold,
+                  )
+                  Text(
+                    text = step.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = RiviaSecondaryText,
+                  )
+                }
               }
             }
           }
@@ -738,107 +761,30 @@ private fun MoodBaselineLayerCard(
   }
 }
 
-private data class PendingBaselineDraft(
-  val isSet: Boolean,
-  val v: Double,
-  val a: Double,
-  val d: Double,
-  val note: String,
-)
-
-private fun formatMoodLayerPhrase(label: String, intensity: String): String {
-  val cleanLabel = label.trim()
-  val cleanIntensity = intensity.trim()
-  if (cleanLabel.isEmpty() && cleanIntensity.isEmpty()) return "—"
-  if (cleanLabel.equals("neutral", ignoreCase = true)) return "neutral"
-  return listOf(cleanIntensity, cleanLabel).filter { it.isNotEmpty() }.joinToString(" ")
-}
-
-private fun formatIsoTimestampLocal(raw: String): String {
-  val trimmed = raw.trim()
-  if (trimmed.isEmpty()) return ""
-  val localZone = ZoneId.systemDefault()
-  val zoned: ZonedDateTime? =
-    runCatching { Instant.parse(trimmed).atZone(localZone) }.getOrNull()
-      ?: runCatching { OffsetDateTime.parse(trimmed).atZoneSameInstant(localZone) }.getOrNull()
-      ?: runCatching { ZonedDateTime.parse(trimmed).withZoneSameInstant(localZone) }.getOrNull()
-
-  if (zoned != null) {
-    val today = LocalDate.now(localZone)
-    val pattern = if (zoned.toLocalDate() == today) "HH:mm" else "MMM d HH:mm"
-    return zoned.format(DateTimeFormatter.ofPattern(pattern, Locale.getDefault()))
-  }
-  return trimmed
-}
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-@Composable
-private fun ManualMoodDialPill(
-  step: VadSubStepSpec,
-  viewModel: RiviaViewModel,
+private class EmotionPanelState(
+  private val viewModel: RiviaViewModel,
+  val coroutineScope: CoroutineScope,
 ) {
-  val coroutineScope = rememberCoroutineScope()
-  val moodClient = remember { TabletMoodClient() }
+  val moodClient = TabletMoodClient()
 
-  var pillExpanded by remember { mutableStateOf(false) }
-  var hasLoadedOnce by remember { mutableStateOf(false) }
-  // Shared single flight guard across every button, slider, hold gesture, and dialog in 1.5
-  var isLoading by remember { mutableStateOf(false) }
+  // Shared single-flight guard across every button, slider, hold gesture, and dialog in 1.5 and 2.4
+  var isLoading by mutableStateOf(false)
 
-  // Server snapshot state
-  var currentState by remember { mutableStateOf<MoodState?>(null) }
-  var layersSnapshot by remember { mutableStateOf<MoodLayersSnapshot?>(null) }
-  var dialMeta by remember { mutableStateOf<MoodDialMeta?>(null) }
-  var lockInfo by remember { mutableStateOf<MoodLockInfo?>(null) }
-  var isServerLocked by remember { mutableStateOf(true) }
-  var countdownSeconds by remember { mutableIntStateOf(0) }
-  var countdownEpoch by remember { mutableIntStateOf(0) }
-  var lastAutoZeroEpoch by remember { mutableIntStateOf(-1) }
-  var holdProgress by remember { mutableFloatStateOf(0f) }
+  // Shared server snapshot & lock state
+  var currentState by mutableStateOf<MoodState?>(null)
+  var layersSnapshot by mutableStateOf<MoodLayersSnapshot?>(null)
+  var dialMeta by mutableStateOf<MoodDialMeta?>(null)
+  var lockInfo by mutableStateOf<MoodLockInfo?>(null)
+  var isServerLocked by mutableStateOf(true)
+  var countdownSeconds by mutableIntStateOf(0)
+  var countdownEpoch by mutableIntStateOf(0)
+  var lastAutoZeroEpoch by mutableIntStateOf(-1)
+  var loadVersion by mutableIntStateOf(0)
 
-  // 1. Existing Emotion dial state (sends no layer and no tag)
-  var isSetMode by remember { mutableStateOf(false) } // default is Nudge
-  var sliderV by remember { mutableFloatStateOf(0f) }
-  var sliderA by remember { mutableFloatStateOf(0f) }
-  var sliderD by remember { mutableFloatStateOf(0f) }
-  var noteText by remember { mutableStateOf("") }
-
-  // 2. Mood layer dial state (tag is always "test")
-  var moodIsSetMode by remember { mutableStateOf(false) }
-  var moodSliderV by remember { mutableFloatStateOf(0f) }
-  var moodSliderA by remember { mutableFloatStateOf(0f) }
-  var moodSliderD by remember { mutableFloatStateOf(0f) }
-  var moodNoteText by remember { mutableStateOf("") }
-
-  // 3. Baseline layer dial state (asks "Test or Calibration?", Calibration has 2nd confirm)
-  var baselineIsSetMode by remember { mutableStateOf(false) }
-  var baselineSliderV by remember { mutableFloatStateOf(0f) }
-  var baselineSliderA by remember { mutableFloatStateOf(0f) }
-  var baselineSliderD by remember { mutableFloatStateOf(0f) }
-  var baselineNoteText by remember { mutableStateOf("") }
-  var pendingBaselineDraft by remember { mutableStateOf<PendingBaselineDraft?>(null) }
-  var showBaselineTagDialog by remember { mutableStateOf(false) }
-  var showBaselineCalibrationConfirmDialog by remember { mutableStateOf(false) }
-
-  var statusMessage by remember { mutableStateOf<String?>(null) }
-  var isStatusError by remember { mutableStateOf(false) }
-
-  fun snapSetValue(value: Double): Float {
-    val clamped = value.coerceIn(-1.0, 1.0)
-    val snapped = Math.round(clamped * 20.0) / 20.0
-    return if (snapped == 0.0) 0f else snapped.toFloat()
-  }
-
-  fun snapNudgeValue(value: Float): Float {
-    val clamped = value.toDouble().coerceIn(-0.5, 0.5)
-    val snapped = Math.round(clamped * 20.0) / 20.0
-    return if (snapped == 0.0) 0f else snapped.toFloat()
-  }
-
-  fun format2(value: Double): String {
-    val normalized = if (Math.abs(value) < 0.005) 0.0 else value
-    return String.format(Locale.US, "%.2f", normalized)
-  }
+  // Scoped status feedback ("1.5" or "2.4")
+  var statusMessage by mutableStateOf<String?>(null)
+  var isStatusError by mutableStateOf(false)
+  var statusOwner by mutableStateOf<String?>(null)
 
   fun applyLoadedSuccess(res: MoodResult.Success) {
     currentState = res.state
@@ -857,32 +803,13 @@ private fun ManualMoodDialPill(
       isServerLocked = true
       countdownSeconds = 0
     }
-
-    if (isSetMode) {
-      val emoV = res.layers?.emotion?.v ?: res.state.v
-      val emoA = res.layers?.emotion?.a ?: res.state.a
-      val emoD = res.layers?.emotion?.d ?: res.state.d
-      sliderV = snapSetValue(emoV)
-      sliderA = snapSetValue(emoA)
-      sliderD = snapSetValue(emoD)
-    }
-    if (moodIsSetMode) {
-      res.layers?.mood?.let { m ->
-        moodSliderV = snapSetValue(m.v)
-        moodSliderA = snapSetValue(m.a)
-        moodSliderD = snapSetValue(m.d)
-      }
-    }
-    if (baselineIsSetMode) {
-      res.layers?.baseline?.let { b ->
-        baselineSliderV = snapSetValue(b.v)
-        baselineSliderA = snapSetValue(b.a)
-        baselineSliderD = snapSetValue(b.d)
-      }
-    }
+    loadVersion++
   }
 
-  fun triggerLoad(preserveStatusOnSuccess: Boolean = false) {
+  fun triggerLoad(
+    owner: String,
+    preserveStatusOnSuccess: Boolean = false,
+  ) {
     if (isLoading) return
     isLoading = true
     coroutineScope.launch {
@@ -890,12 +817,13 @@ private fun ManualMoodDialPill(
         when (val res = viewModel.loadMoodDial()) {
           is MoodResult.Success -> {
             applyLoadedSuccess(res)
-            if (!preserveStatusOnSuccess) {
+            if (!preserveStatusOnSuccess && statusOwner == owner) {
               statusMessage = null
               isStatusError = false
             }
           }
           is MoodResult.Failure -> {
+            statusOwner = owner
             statusMessage = res.message
             isStatusError = true
           }
@@ -907,6 +835,7 @@ private fun ManualMoodDialPill(
   }
 
   fun triggerGeneralCommand(
+    owner: String,
     command: MoodPostCommand,
     successNotice: (clamped: List<String>) -> String,
     onPostSucceeded: () -> Unit = {},
@@ -946,6 +875,7 @@ private fun ManualMoodDialPill(
           }
         }
 
+        statusOwner = owner
         when (postRes) {
           is MoodCommandResult.Failure -> {
             statusMessage = postRes.message
@@ -966,17 +896,91 @@ private fun ManualMoodDialPill(
       }
     }
   }
+}
 
-  // Local ticking countdown while unlocked; when it hits 0, GET /app/emotion immediately
-  LaunchedEffect(isServerLocked, countdownEpoch, pillExpanded) {
-    if (!isServerLocked && pillExpanded) {
-      while (countdownSeconds > 0) {
-        delay(1000L)
-        countdownSeconds = (countdownSeconds - 1).coerceAtLeast(0)
-      }
-      if (!isServerLocked && lastAutoZeroEpoch != countdownEpoch) {
-        lastAutoZeroEpoch = countdownEpoch
-        triggerLoad(preserveStatusOnSuccess = true)
+private data class PendingBaselineDraft(
+  val isSet: Boolean,
+  val v: Double,
+  val a: Double,
+  val d: Double,
+  val note: String,
+)
+
+private fun snapVadSetValue(value: Double): Float {
+  val clamped = value.coerceIn(-1.0, 1.0)
+  val snapped = Math.round(clamped * 20.0) / 20.0
+  return if (snapped == 0.0) 0f else snapped.toFloat()
+}
+
+private fun snapVadNudgeValue(value: Float): Float {
+  val clamped = value.toDouble().coerceIn(-0.5, 0.5)
+  val snapped = Math.round(clamped * 20.0) / 20.0
+  return if (snapped == 0.0) 0f else snapped.toFloat()
+}
+
+private fun formatVad2(value: Double): String {
+  val normalized = if (Math.abs(value) < 0.005) 0.0 else value
+  return String.format(Locale.US, "%.2f", normalized)
+}
+
+private fun formatMoodLayerPhrase(label: String, intensity: String): String {
+  val cleanLabel = label.trim()
+  val cleanIntensity = intensity.trim()
+  if (cleanLabel.isEmpty() && cleanIntensity.isEmpty()) return "—"
+  if (cleanLabel.equals("neutral", ignoreCase = true)) return "neutral"
+  return listOf(cleanIntensity, cleanLabel).filter { it.isNotEmpty() }.joinToString(" ")
+}
+
+private fun formatIsoTimestampLocal(raw: String): String {
+  val trimmed = raw.trim()
+  if (trimmed.isEmpty()) return ""
+  val localZone = ZoneId.systemDefault()
+  val zoned: ZonedDateTime? =
+    runCatching { Instant.parse(trimmed).atZone(localZone) }.getOrNull()
+      ?: runCatching { OffsetDateTime.parse(trimmed).atZoneSameInstant(localZone) }.getOrNull()
+      ?: runCatching { ZonedDateTime.parse(trimmed).withZoneSameInstant(localZone) }.getOrNull()
+
+  if (zoned != null) {
+    val today = LocalDate.now(localZone)
+    val pattern = if (zoned.toLocalDate() == today) "HH:mm" else "MMM d HH:mm"
+    return zoned.format(DateTimeFormatter.ofPattern(pattern, Locale.getDefault()))
+  }
+  return trimmed
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManualMoodDialPill(
+  step: VadSubStepSpec,
+  viewModel: RiviaViewModel,
+  panelState: EmotionPanelState,
+) {
+  var pillExpanded by rememberSaveable { mutableStateOf(false) }
+  var hasLoadedOnce by rememberSaveable { mutableStateOf(false) }
+  var seenLoadVersion by rememberSaveable { mutableIntStateOf(0) }
+
+  // Existing Emotion dial state (sends no layer and no tag)
+  var isSetMode by rememberSaveable { mutableStateOf(false) } // default is Nudge
+  var sliderV by rememberSaveable { mutableFloatStateOf(0f) }
+  var sliderA by rememberSaveable { mutableFloatStateOf(0f) }
+  var sliderD by rememberSaveable { mutableFloatStateOf(0f) }
+  var noteText by rememberSaveable { mutableStateOf("") }
+
+  // While in Set mode, snap sliders to freshly loaded values whenever loadVersion advances
+  LaunchedEffect(panelState.loadVersion) {
+    if (panelState.loadVersion != seenLoadVersion) {
+      seenLoadVersion = panelState.loadVersion
+      if (isSetMode) {
+        val emo = panelState.layersSnapshot?.emotion
+        val st = panelState.currentState
+        if (emo != null || st != null) {
+          val emoV = emo?.v ?: st!!.v
+          val emoA = emo?.a ?: st!!.a
+          val emoD = emo?.d ?: st!!.d
+          sliderV = snapVadSetValue(emoV)
+          sliderA = snapVadSetValue(emoA)
+          sliderD = snapVadSetValue(emoD)
+        }
       }
     }
   }
@@ -987,32 +991,7 @@ private fun ManualMoodDialPill(
       Math.abs(sliderA) < 0.005f &&
       Math.abs(sliderD) < 0.005f
 
-  val moodEntry = layersSnapshot?.mood
-  val baselineEntry = layersSnapshot?.baseline
-  val emotionEntry = layersSnapshot?.emotion
-
-  val moodNeedsLock = dialMeta?.requiresLock("mood") ?: true
-  val baselineNeedsLock = dialMeta?.requiresLock("baseline") ?: true
-  val moodMovable = dialMeta?.isMovable("mood") ?: true
-  val baselineMovable = dialMeta?.isMovable("baseline") ?: true
-
-  val isMoodLockedOut = (moodNeedsLock && isServerLocked) || !moodMovable
-  val isBaselineLockedOut = (baselineNeedsLock && isServerLocked) || !baselineMovable
-
-  val isMoodAllZeroNudge =
-    !moodIsSetMode &&
-      Math.abs(moodSliderV) < 0.005f &&
-      Math.abs(moodSliderA) < 0.005f &&
-      Math.abs(moodSliderD) < 0.005f
-
-  val isBaselineAllZeroNudge =
-    !baselineIsSetMode &&
-      Math.abs(baselineSliderV) < 0.005f &&
-      Math.abs(baselineSliderA) < 0.005f &&
-      Math.abs(baselineSliderD) < 0.005f
-
-  val latestIsLoading by rememberUpdatedState(isLoading)
-  val latestIsServerLocked by rememberUpdatedState(isServerLocked)
+  val emotionEntry = panelState.layersSnapshot?.emotion
 
   Surface(
     color = MaterialTheme.colorScheme.background,
@@ -1032,7 +1011,7 @@ private fun ManualMoodDialPill(
               pillExpanded = nextExpanded
               if (nextExpanded && !hasLoadedOnce) {
                 hasLoadedOnce = true
-                triggerLoad()
+                panelState.triggerLoad(owner = "1.5")
               }
             }
             .testTag("vad_step_1_5_header"),
@@ -1077,10 +1056,10 @@ private fun ManualMoodDialPill(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
           ) {
-            val state = currentState
+            val state = panelState.currentState
             val currentMoodText =
               if (state == null && emotionEntry == null) {
-                if (isLoading) "Loading..." else "No mood loaded"
+                if (panelState.isLoading) "Loading..." else "No mood loaded"
               } else {
                 val phrase =
                   if (emotionEntry != null) {
@@ -1093,7 +1072,7 @@ private fun ManualMoodDialPill(
                 val dNum = emotionEntry?.d ?: state!!.d
                 val updatedPart =
                   if (!state?.updated.isNullOrBlank()) " · ${state!!.updated}" else ""
-                "$phrase · V ${format2(vNum)} A ${format2(aNum)} D ${format2(dNum)}$updatedPart"
+                "$phrase · V ${formatVad2(vNum)} A ${formatVad2(aNum)} D ${formatVad2(dNum)}$updatedPart"
               }
 
             Text(
@@ -1104,8 +1083,8 @@ private fun ManualMoodDialPill(
             )
 
             IconButton(
-              onClick = { triggerLoad() },
-              enabled = !isLoading,
+              onClick = { panelState.triggerLoad(owner = "1.5") },
+              enabled = !panelState.isLoading,
               modifier =
                 Modifier.size(36.dp)
                   .minimumInteractiveComponentSize()
@@ -1114,6 +1093,313 @@ private fun ManualMoodDialPill(
               Icon(
                 imageVector = Icons.Default.Refresh,
                 contentDescription = "Refresh mood",
+                tint = RiviaSecondaryText,
+                modifier = Modifier.size(18.dp),
+              )
+            }
+          }
+
+          // Status line for 1.5 only when statusOwner == "1.5"
+          if (panelState.statusOwner == "1.5") {
+            panelState.statusMessage?.let { msg ->
+              Text(
+                text = msg,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (panelState.isStatusError) RiviaDestructive else RiviaSecondaryText,
+                modifier = Modifier.testTag("mood_dial_message"),
+              )
+            }
+          }
+
+          // Emotion dial (no layer, no tag)
+          Text(
+            text = "Emotion dial",
+            style = MaterialTheme.typography.labelLarge,
+            color = RiviaTextPrimary,
+            fontWeight = FontWeight.SemiBold,
+          )
+
+          VadLayerDialControls(
+            tagPrefix = "mood_dial",
+            isSetMode = isSetMode,
+            onModeChange = { targetSet ->
+              isSetMode = targetSet
+              if (targetSet) {
+                val st = panelState.currentState
+                sliderV = (emotionEntry?.v ?: st?.v)?.let { snapVadSetValue(it) } ?: 0f
+                sliderA = (emotionEntry?.a ?: st?.a)?.let { snapVadSetValue(it) } ?: 0f
+                sliderD = (emotionEntry?.d ?: st?.d)?.let { snapVadSetValue(it) } ?: 0f
+              } else {
+                sliderV = 0f
+                sliderA = 0f
+                sliderD = 0f
+              }
+            },
+            sliderV = sliderV,
+            onSliderVChange = { raw ->
+              sliderV = if (isSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
+            },
+            sliderA = sliderA,
+            onSliderAChange = { raw ->
+              sliderA = if (isSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
+            },
+            sliderD = sliderD,
+            onSliderDChange = { raw ->
+              sliderD = if (isSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
+            },
+            noteText = noteText,
+            onNoteChange = { noteText = it.take(200) },
+            controlsEnabled = !panelState.isLoading,
+            hasLoadedLayerValues = panelState.currentState != null,
+            isAllZeroNudge = isAllZeroNudge,
+            isLoading = panelState.isLoading,
+            unloadedSetHint = "Load the current mood first (tap Refresh)",
+            unloadedHintTag = "mood_dial_set_hint",
+            applyLabel = "Apply",
+            format2 = ::formatVad2,
+            onApply = {
+              if (panelState.isLoading) return@VadLayerDialControls
+              if (isSetMode && panelState.currentState == null) return@VadLayerDialControls
+              panelState.isLoading = true
+              panelState.coroutineScope.launch {
+                try {
+                  val vVal = Math.round(sliderV.toDouble() * 100.0) / 100.0
+                  val aVal = Math.round(sliderA.toDouble() * 100.0) / 100.0
+                  val dVal = Math.round(sliderD.toDouble() * 100.0) / 100.0
+                  val postRes =
+                    viewModel.applyMoodDial(
+                      isSet = isSetMode,
+                      v = vVal,
+                      a = aVal,
+                      d = dVal,
+                      note = noteText,
+                    )
+
+                  if (postRes is MoodResult.Success) {
+                    panelState.currentState = postRes.state
+                    if (!isSetMode) {
+                      sliderV = 0f
+                      sliderA = 0f
+                      sliderD = 0f
+                    } else {
+                      sliderV = snapVadSetValue(postRes.state.v)
+                      sliderA = snapVadSetValue(postRes.state.a)
+                      sliderD = snapVadSetValue(postRes.state.d)
+                    }
+                    noteText = ""
+                  }
+
+                  // Always GET /app/emotion after every press (success or error) to redraw all rows, badges & lock
+                  val getRes = viewModel.loadMoodDial()
+                  if (getRes is MoodResult.Success) {
+                    panelState.applyLoadedSuccess(getRes)
+                  }
+
+                  panelState.statusOwner = "1.5"
+                  when (postRes) {
+                    is MoodResult.Failure -> {
+                      panelState.statusMessage = postRes.message
+                      panelState.isStatusError = true
+                    }
+                    is MoodResult.Success -> {
+                      if (getRes is MoodResult.Failure) {
+                        panelState.statusMessage = getRes.message
+                        panelState.isStatusError = true
+                      } else {
+                        panelState.statusMessage =
+                          if (postRes.clamped.isNotEmpty()) {
+                            "Mood updated (hit a limit)"
+                          } else {
+                            "Mood updated"
+                          }
+                        panelState.isStatusError = false
+                      }
+                    }
+                  }
+                } finally {
+                  panelState.isLoading = false
+                }
+              }
+            },
+          )
+        }
+      }
+    }
+  }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun MoodBaselineControlsPill(
+  step: VadSubStepSpec,
+  panelState: EmotionPanelState,
+) {
+  val localScope = rememberCoroutineScope()
+
+  var pillExpanded by rememberSaveable { mutableStateOf(false) }
+  var hasLoadedOnce by rememberSaveable { mutableStateOf(false) }
+  var seenLoadVersion by rememberSaveable { mutableIntStateOf(0) }
+  var holdProgress by remember { mutableFloatStateOf(0f) }
+
+  // Mood layer dial state (tag is always "test")
+  var moodIsSetMode by rememberSaveable { mutableStateOf(false) }
+  var moodSliderV by rememberSaveable { mutableFloatStateOf(0f) }
+  var moodSliderA by rememberSaveable { mutableFloatStateOf(0f) }
+  var moodSliderD by rememberSaveable { mutableFloatStateOf(0f) }
+  var moodNoteText by rememberSaveable { mutableStateOf("") }
+
+  // Baseline layer dial state (asks "Test or Calibration?", Calibration has 2nd confirm)
+  var baselineIsSetMode by rememberSaveable { mutableStateOf(false) }
+  var baselineSliderV by rememberSaveable { mutableFloatStateOf(0f) }
+  var baselineSliderA by rememberSaveable { mutableFloatStateOf(0f) }
+  var baselineSliderD by rememberSaveable { mutableFloatStateOf(0f) }
+  var baselineNoteText by rememberSaveable { mutableStateOf("") }
+  var pendingBaselineDraft by remember { mutableStateOf<PendingBaselineDraft?>(null) }
+  var showBaselineTagDialog by remember { mutableStateOf(false) }
+  var showBaselineCalibrationConfirmDialog by remember { mutableStateOf(false) }
+
+  // While in Set mode, snap sliders to freshly loaded values whenever loadVersion advances
+  LaunchedEffect(panelState.loadVersion) {
+    if (panelState.loadVersion != seenLoadVersion) {
+      seenLoadVersion = panelState.loadVersion
+      if (moodIsSetMode) {
+        panelState.layersSnapshot?.mood?.let { m ->
+          moodSliderV = snapVadSetValue(m.v)
+          moodSliderA = snapVadSetValue(m.a)
+          moodSliderD = snapVadSetValue(m.d)
+        }
+      }
+      if (baselineIsSetMode) {
+        panelState.layersSnapshot?.baseline?.let { b ->
+          baselineSliderV = snapVadSetValue(b.v)
+          baselineSliderA = snapVadSetValue(b.a)
+          baselineSliderD = snapVadSetValue(b.d)
+        }
+      }
+    }
+  }
+
+  // Local ticking countdown while unlocked and 2.4 is expanded; when it hits 0, GET /app/emotion right away
+  LaunchedEffect(panelState.isServerLocked, panelState.countdownEpoch, pillExpanded) {
+    if (!panelState.isServerLocked && pillExpanded) {
+      while (panelState.countdownSeconds > 0) {
+        delay(1000L)
+        panelState.countdownSeconds = (panelState.countdownSeconds - 1).coerceAtLeast(0)
+      }
+      if (!panelState.isServerLocked && panelState.lastAutoZeroEpoch != panelState.countdownEpoch) {
+        panelState.lastAutoZeroEpoch = panelState.countdownEpoch
+        panelState.triggerLoad(owner = "2.4", preserveStatusOnSuccess = true)
+      }
+    }
+  }
+
+  val moodEntry = panelState.layersSnapshot?.mood
+  val baselineEntry = panelState.layersSnapshot?.baseline
+  val emotionEntry = panelState.layersSnapshot?.emotion
+
+  val moodNeedsLock = panelState.dialMeta?.requiresLock("mood") ?: true
+  val baselineNeedsLock = panelState.dialMeta?.requiresLock("baseline") ?: true
+  val moodMovable = panelState.dialMeta?.isMovable("mood") ?: true
+  val baselineMovable = panelState.dialMeta?.isMovable("baseline") ?: true
+
+  val isMoodLockedOut = (moodNeedsLock && panelState.isServerLocked) || !moodMovable
+  val isBaselineLockedOut = (baselineNeedsLock && panelState.isServerLocked) || !baselineMovable
+
+  val isMoodAllZeroNudge =
+    !moodIsSetMode &&
+      Math.abs(moodSliderV) < 0.005f &&
+      Math.abs(moodSliderA) < 0.005f &&
+      Math.abs(moodSliderD) < 0.005f
+
+  val isBaselineAllZeroNudge =
+    !baselineIsSetMode &&
+      Math.abs(baselineSliderV) < 0.005f &&
+      Math.abs(baselineSliderA) < 0.005f &&
+      Math.abs(baselineSliderD) < 0.005f
+
+  val latestIsLoading by rememberUpdatedState(panelState.isLoading)
+  val latestIsServerLocked by rememberUpdatedState(panelState.isServerLocked)
+
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    shape = RoundedCornerShape(10.dp),
+    border = BorderStroke(1.dp, RiviaBorder),
+    modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+  ) {
+    Column(
+      modifier = Modifier.padding(10.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clickable {
+              val nextExpanded = !pillExpanded
+              pillExpanded = nextExpanded
+              if (nextExpanded && !hasLoadedOnce) {
+                hasLoadedOnce = true
+                panelState.triggerLoad(owner = "2.4")
+              }
+            }
+            .testTag("vad_step_2_4_header"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Text(
+          text = step.title,
+          style = MaterialTheme.typography.labelLarge,
+          color = RiviaTextPrimary,
+          fontWeight = FontWeight.SemiBold,
+          modifier = Modifier.weight(1f),
+        )
+        Icon(
+          imageVector =
+            if (pillExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+          contentDescription =
+            if (pillExpanded) "Collapse ${step.title}" else "Expand ${step.title}",
+          tint = RiviaSecondaryText,
+          modifier = Modifier.size(18.dp),
+        )
+      }
+
+      Text(
+        text = step.description,
+        style = MaterialTheme.typography.bodySmall,
+        color = RiviaSecondaryText,
+      )
+
+      AnimatedVisibility(
+        visible = pillExpanded,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+          // Top Refresh row in 2.4
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Text(
+              text = "Current layers",
+              style = MaterialTheme.typography.labelMedium,
+              color = RiviaSecondaryText,
+            )
+
+            IconButton(
+              onClick = { panelState.triggerLoad(owner = "2.4") },
+              enabled = !panelState.isLoading,
+              modifier =
+                Modifier.size(36.dp)
+                  .minimumInteractiveComponentSize()
+                  .testTag("mood_baseline_refresh"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "Refresh mood and baseline",
                 tint = RiviaSecondaryText,
                 modifier = Modifier.size(18.dp),
               )
@@ -1133,7 +1419,7 @@ private fun ManualMoodDialPill(
             ) {
               val fallbackEmotionEntry =
                 emotionEntry
-                  ?: currentState?.let {
+                  ?: panelState.currentState?.let {
                     MoodLayerEntry(
                       v = it.v,
                       a = it.a,
@@ -1148,8 +1434,8 @@ private fun ManualMoodDialPill(
                 rowTitle = "Emotion",
                 layerKey = "emotion",
                 entry = fallbackEmotionEntry,
-                isLoading = isLoading,
-                format2 = ::format2,
+                isLoading = panelState.isLoading,
+                format2 = ::formatVad2,
                 showBadges = false,
                 onEndTest = null,
               )
@@ -1160,11 +1446,12 @@ private fun ManualMoodDialPill(
                 rowTitle = "Mood",
                 layerKey = "mood",
                 entry = moodEntry,
-                isLoading = isLoading,
-                format2 = ::format2,
+                isLoading = panelState.isLoading,
+                format2 = ::formatVad2,
                 showBadges = true,
                 onEndTest = {
-                  triggerGeneralCommand(
+                  panelState.triggerGeneralCommand(
+                    owner = "2.4",
                     command = MoodPostCommand.EndTest("mood"),
                     successNotice = { "Mood test ended" },
                   )
@@ -1177,11 +1464,12 @@ private fun ManualMoodDialPill(
                 rowTitle = "Baseline",
                 layerKey = "baseline",
                 entry = baselineEntry,
-                isLoading = isLoading,
-                format2 = ::format2,
+                isLoading = panelState.isLoading,
+                format2 = ::formatVad2,
                 showBadges = true,
                 onEndTest = {
-                  triggerGeneralCommand(
+                  panelState.triggerGeneralCommand(
+                    owner = "2.4",
                     command = MoodPostCommand.EndTest("baseline"),
                     successNotice = { "Baseline test ended" },
                   )
@@ -1190,131 +1478,20 @@ private fun ManualMoodDialPill(
             }
           }
 
-          // Status line (visible right above controls and echoed clearly on server errors/updates)
-          statusMessage?.let { msg ->
-            Text(
-              text = msg,
-              style = MaterialTheme.typography.bodySmall,
-              color = if (isStatusError) RiviaDestructive else RiviaSecondaryText,
-              modifier = Modifier.testTag("mood_dial_message"),
-            )
+          // Status line for 2.4 only when statusOwner == "2.4"
+          if (panelState.statusOwner == "2.4") {
+            panelState.statusMessage?.let { msg ->
+              Text(
+                text = msg,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (panelState.isStatusError) RiviaDestructive else RiviaSecondaryText,
+                modifier = Modifier.testTag("mood_baseline_message"),
+              )
+            }
           }
 
-          // ==================== 1. EXISTING EMOTION DIAL (no layer, no tag) ====================
-          Text(
-            text = "Emotion dial",
-            style = MaterialTheme.typography.labelLarge,
-            color = RiviaTextPrimary,
-            fontWeight = FontWeight.SemiBold,
-          )
-
-          VadLayerDialControls(
-            tagPrefix = "mood_dial",
-            isSetMode = isSetMode,
-            onModeChange = { targetSet ->
-              isSetMode = targetSet
-              if (targetSet) {
-                val st = currentState
-                sliderV = st?.let { snapSetValue(it.v) } ?: 0f
-                sliderA = st?.let { snapSetValue(it.a) } ?: 0f
-                sliderD = st?.let { snapSetValue(it.d) } ?: 0f
-              } else {
-                sliderV = 0f
-                sliderA = 0f
-                sliderD = 0f
-              }
-            },
-            sliderV = sliderV,
-            onSliderVChange = { raw ->
-              sliderV = if (isSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
-            },
-            sliderA = sliderA,
-            onSliderAChange = { raw ->
-              sliderA = if (isSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
-            },
-            sliderD = sliderD,
-            onSliderDChange = { raw ->
-              sliderD = if (isSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
-            },
-            noteText = noteText,
-            onNoteChange = { noteText = it.take(200) },
-            controlsEnabled = !isLoading,
-            hasLoadedLayerValues = currentState != null,
-            isAllZeroNudge = isAllZeroNudge,
-            isLoading = isLoading,
-            unloadedSetHint = "Load the current mood first (tap Refresh)",
-            unloadedHintTag = "mood_dial_set_hint",
-            applyLabel = "Apply",
-            format2 = ::format2,
-            onApply = {
-              if (isLoading) return@VadLayerDialControls
-              if (isSetMode && currentState == null) return@VadLayerDialControls
-              isLoading = true
-              coroutineScope.launch {
-                try {
-                  val vVal = Math.round(sliderV.toDouble() * 100.0) / 100.0
-                  val aVal = Math.round(sliderA.toDouble() * 100.0) / 100.0
-                  val dVal = Math.round(sliderD.toDouble() * 100.0) / 100.0
-                  val postRes =
-                    viewModel.applyMoodDial(
-                      isSet = isSetMode,
-                      v = vVal,
-                      a = aVal,
-                      d = dVal,
-                      note = noteText,
-                    )
-
-                  if (postRes is MoodResult.Success) {
-                    currentState = postRes.state
-                    if (!isSetMode) {
-                      sliderV = 0f
-                      sliderA = 0f
-                      sliderD = 0f
-                    } else {
-                      sliderV = snapSetValue(postRes.state.v)
-                      sliderA = snapSetValue(postRes.state.a)
-                      sliderD = snapSetValue(postRes.state.d)
-                    }
-                    noteText = ""
-                  }
-
-                  // Always GET /app/emotion after every press (success or error) to redraw all rows, badges & lock
-                  val getRes = viewModel.loadMoodDial()
-                  if (getRes is MoodResult.Success) {
-                    applyLoadedSuccess(getRes)
-                  }
-
-                  when (postRes) {
-                    is MoodResult.Failure -> {
-                      statusMessage = postRes.message
-                      isStatusError = true
-                    }
-                    is MoodResult.Success -> {
-                      if (getRes is MoodResult.Failure) {
-                        statusMessage = getRes.message
-                        isStatusError = true
-                      } else {
-                        statusMessage =
-                          if (postRes.clamped.isNotEmpty()) {
-                            "Mood updated (hit a limit)"
-                          } else {
-                            "Mood updated"
-                          }
-                        isStatusError = false
-                      }
-                    }
-                  }
-                } finally {
-                  isLoading = false
-                }
-              }
-            },
-          )
-
-          HorizontalDivider(color = RiviaBorder)
-
-          // ==================== 2. PADLOCK ABOVE MOOD & BASELINE ====================
-          if (isServerLocked) {
+          // Padlock above Mood & Baseline
+          if (panelState.isServerLocked) {
             Surface(
               color = RiviaPanelSurface,
               shape = RoundedCornerShape(10.dp),
@@ -1326,22 +1503,27 @@ private fun ManualMoodDialPill(
               modifier =
                 Modifier.fillMaxWidth()
                   .minimumInteractiveComponentSize()
-                  .alpha(if (isLoading) 0.5f else 1f)
+                  .alpha(if (panelState.isLoading) 0.5f else 1f)
                   .pointerInput(Unit) {
                     detectTapGestures(
                       onPress = {
                         if (latestIsLoading || !latestIsServerLocked) return@detectTapGestures
                         val holdJob =
-                          coroutineScope.launch {
+                          localScope.launch {
                             val startMs = android.os.SystemClock.uptimeMillis()
                             val requiredHoldMs = 1000L
                             while (true) {
+                              if (latestIsLoading || !latestIsServerLocked) {
+                                holdProgress = 0f
+                                break
+                              }
                               val elapsed = android.os.SystemClock.uptimeMillis() - startMs
                               holdProgress =
                                 (elapsed.toFloat() / requiredHoldMs.toFloat()).coerceIn(0f, 1f)
                               if (elapsed >= requiredHoldMs) {
                                 holdProgress = 0f
-                                triggerGeneralCommand(
+                                panelState.triggerGeneralCommand(
+                                  owner = "2.4",
                                   command = MoodPostCommand.Unlock,
                                   successNotice = { "Mood & baseline unlocked" },
                                 )
@@ -1429,11 +1611,11 @@ private fun ManualMoodDialPill(
                       color = RiviaTextPrimary,
                       fontWeight = FontWeight.SemiBold,
                     )
-                    val mins = countdownSeconds / 60
-                    val secs = countdownSeconds % 60
+                    val mins = panelState.countdownSeconds / 60
+                    val secs = panelState.countdownSeconds % 60
                     val formattedLeft =
                       if (mins > 0) String.format(Locale.US, "%d:%02d left", mins, secs)
-                      else "${countdownSeconds}s left"
+                      else "${panelState.countdownSeconds}s left"
                     Text(
                       text = formattedLeft,
                       style = MaterialTheme.typography.bodySmall,
@@ -1446,12 +1628,13 @@ private fun ManualMoodDialPill(
 
                 OutlinedButton(
                   onClick = {
-                    triggerGeneralCommand(
+                    panelState.triggerGeneralCommand(
+                      owner = "2.4",
                       command = MoodPostCommand.Lock,
                       successNotice = { "Mood & baseline locked" },
                     )
                   },
-                  enabled = !isLoading,
+                  enabled = !panelState.isLoading,
                   border = BorderStroke(1.dp, RiviaBorder),
                   modifier =
                     Modifier.minimumInteractiveComponentSize().testTag("mood_dial_lock_button"),
@@ -1469,7 +1652,7 @@ private fun ManualMoodDialPill(
             }
           }
 
-          // ==================== 3. MOOD CONTROLS (tag = "test") ====================
+          // Mood controls card (tag = "test")
           Surface(
             color = RiviaPanelSurface,
             shape = RoundedCornerShape(10.dp),
@@ -1509,9 +1692,9 @@ private fun ManualMoodDialPill(
                   moodIsSetMode = targetSet
                   if (targetSet) {
                     val m = moodEntry
-                    moodSliderV = m?.let { snapSetValue(it.v) } ?: 0f
-                    moodSliderA = m?.let { snapSetValue(it.a) } ?: 0f
-                    moodSliderD = m?.let { snapSetValue(it.d) } ?: 0f
+                    moodSliderV = m?.let { snapVadSetValue(it.v) } ?: 0f
+                    moodSliderA = m?.let { snapVadSetValue(it.a) } ?: 0f
+                    moodSliderD = m?.let { snapVadSetValue(it.d) } ?: 0f
                   } else {
                     moodSliderV = 0f
                     moodSliderA = 0f
@@ -1521,30 +1704,30 @@ private fun ManualMoodDialPill(
                 sliderV = moodSliderV,
                 onSliderVChange = { raw ->
                   moodSliderV =
-                    if (moodIsSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+                    if (moodIsSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
                 },
                 sliderA = moodSliderA,
                 onSliderAChange = { raw ->
                   moodSliderA =
-                    if (moodIsSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+                    if (moodIsSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
                 },
                 sliderD = moodSliderD,
                 onSliderDChange = { raw ->
                   moodSliderD =
-                    if (moodIsSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+                    if (moodIsSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
                 },
                 noteText = moodNoteText,
                 onNoteChange = { moodNoteText = it.take(200) },
-                controlsEnabled = !isLoading && !isMoodLockedOut,
+                controlsEnabled = !panelState.isLoading && !isMoodLockedOut,
                 hasLoadedLayerValues = moodEntry != null,
                 isAllZeroNudge = isMoodAllZeroNudge,
-                isLoading = isLoading,
+                isLoading = panelState.isLoading,
                 unloadedSetHint = "Load the current mood layers first (tap Refresh)",
                 unloadedHintTag = "mood_layer_dial_set_hint",
                 applyLabel = "Apply Mood (Test)",
-                format2 = ::format2,
+                format2 = ::formatVad2,
                 onApply = {
-                  if (isLoading || isMoodLockedOut) return@VadLayerDialControls
+                  if (panelState.isLoading || isMoodLockedOut) return@VadLayerDialControls
                   if (moodIsSetMode && moodEntry == null) return@VadLayerDialControls
                   val vVal = Math.round(moodSliderV.toDouble() * 100.0) / 100.0
                   val aVal = Math.round(moodSliderA.toDouble() * 100.0) / 100.0
@@ -1569,7 +1752,8 @@ private fun ManualMoodDialPill(
                         note = moodNoteText,
                       )
                     }
-                  triggerGeneralCommand(
+                  panelState.triggerGeneralCommand(
+                    owner = "2.4",
                     command = cmd,
                     successNotice = { clamped ->
                       if (clamped.isNotEmpty()) "Mood layer updated (hit a limit)"
@@ -1589,7 +1773,7 @@ private fun ManualMoodDialPill(
             }
           }
 
-          // ==================== 4. BASELINE CONTROLS (Test or Calibration) ====================
+          // Baseline controls card (Test or Calibration)
           Surface(
             color = RiviaPanelSurface,
             shape = RoundedCornerShape(10.dp),
@@ -1629,9 +1813,9 @@ private fun ManualMoodDialPill(
                   baselineIsSetMode = targetSet
                   if (targetSet) {
                     val b = baselineEntry
-                    baselineSliderV = b?.let { snapSetValue(it.v) } ?: 0f
-                    baselineSliderA = b?.let { snapSetValue(it.a) } ?: 0f
-                    baselineSliderD = b?.let { snapSetValue(it.d) } ?: 0f
+                    baselineSliderV = b?.let { snapVadSetValue(it.v) } ?: 0f
+                    baselineSliderA = b?.let { snapVadSetValue(it.a) } ?: 0f
+                    baselineSliderD = b?.let { snapVadSetValue(it.d) } ?: 0f
                   } else {
                     baselineSliderV = 0f
                     baselineSliderA = 0f
@@ -1641,30 +1825,30 @@ private fun ManualMoodDialPill(
                 sliderV = baselineSliderV,
                 onSliderVChange = { raw ->
                   baselineSliderV =
-                    if (baselineIsSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+                    if (baselineIsSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
                 },
                 sliderA = baselineSliderA,
                 onSliderAChange = { raw ->
                   baselineSliderA =
-                    if (baselineIsSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+                    if (baselineIsSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
                 },
                 sliderD = baselineSliderD,
                 onSliderDChange = { raw ->
                   baselineSliderD =
-                    if (baselineIsSetMode) snapSetValue(raw.toDouble()) else snapNudgeValue(raw)
+                    if (baselineIsSetMode) snapVadSetValue(raw.toDouble()) else snapVadNudgeValue(raw)
                 },
                 noteText = baselineNoteText,
                 onNoteChange = { baselineNoteText = it.take(200) },
-                controlsEnabled = !isLoading && !isBaselineLockedOut,
+                controlsEnabled = !panelState.isLoading && !isBaselineLockedOut,
                 hasLoadedLayerValues = baselineEntry != null,
                 isAllZeroNudge = isBaselineAllZeroNudge,
-                isLoading = isLoading,
+                isLoading = panelState.isLoading,
                 unloadedSetHint = "Load the current baseline first (tap Refresh)",
                 unloadedHintTag = "baseline_layer_dial_set_hint",
                 applyLabel = "Apply Baseline…",
-                format2 = ::format2,
+                format2 = ::formatVad2,
                 onApply = {
-                  if (isLoading || isBaselineLockedOut) return@VadLayerDialControls
+                  if (panelState.isLoading || isBaselineLockedOut) return@VadLayerDialControls
                   if (baselineIsSetMode && baselineEntry == null) return@VadLayerDialControls
                   val vVal = Math.round(baselineSliderV.toDouble() * 100.0) / 100.0
                   val aVal = Math.round(baselineSliderA.toDouble() * 100.0) / 100.0
@@ -1692,7 +1876,7 @@ private fun ManualMoodDialPill(
     val draft = pendingBaselineDraft!!
     AlertDialog(
       onDismissRequest = {
-        if (!isLoading) {
+        if (!panelState.isLoading) {
           showBaselineTagDialog = false
           pendingBaselineDraft = null
         }
@@ -1717,11 +1901,11 @@ private fun ManualMoodDialPill(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           OutlinedButton(
             onClick = {
-              if (isLoading) return@OutlinedButton
+              if (panelState.isLoading) return@OutlinedButton
               showBaselineTagDialog = false
               showBaselineCalibrationConfirmDialog = true
             },
-            enabled = !isLoading,
+            enabled = !panelState.isLoading,
             border = BorderStroke(1.dp, RiviaModeBlue.copy(alpha = 0.7f)),
             modifier =
               Modifier.minimumInteractiveComponentSize().testTag("baseline_choice_calibration"),
@@ -1730,7 +1914,7 @@ private fun ManualMoodDialPill(
           }
           Button(
             onClick = {
-              if (isLoading) return@Button
+              if (panelState.isLoading) return@Button
               showBaselineTagDialog = false
               pendingBaselineDraft = null
               val cmd =
@@ -1753,7 +1937,8 @@ private fun ManualMoodDialPill(
                     note = draft.note,
                   )
                 }
-              triggerGeneralCommand(
+              panelState.triggerGeneralCommand(
+                owner = "2.4",
                 command = cmd,
                 successNotice = { clamped ->
                   if (clamped.isNotEmpty()) "Baseline test updated (hit a limit)"
@@ -1769,7 +1954,7 @@ private fun ManualMoodDialPill(
                 },
               )
             },
-            enabled = !isLoading,
+            enabled = !panelState.isLoading,
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = RiviaTeal,
@@ -1787,7 +1972,7 @@ private fun ManualMoodDialPill(
             showBaselineTagDialog = false
             pendingBaselineDraft = null
           },
-          enabled = !isLoading,
+          enabled = !panelState.isLoading,
           modifier = Modifier.minimumInteractiveComponentSize().testTag("baseline_choice_cancel"),
         ) {
           Text("Cancel", color = RiviaSecondaryText)
@@ -1801,7 +1986,7 @@ private fun ManualMoodDialPill(
     val draft = pendingBaselineDraft!!
     AlertDialog(
       onDismissRequest = {
-        if (!isLoading) {
+        if (!panelState.isLoading) {
           showBaselineCalibrationConfirmDialog = false
           pendingBaselineDraft = null
         }
@@ -1825,7 +2010,7 @@ private fun ManualMoodDialPill(
       confirmButton = {
         Button(
           onClick = {
-            if (isLoading) return@Button
+            if (panelState.isLoading) return@Button
             showBaselineCalibrationConfirmDialog = false
             pendingBaselineDraft = null
             val cmd =
@@ -1848,7 +2033,8 @@ private fun ManualMoodDialPill(
                   note = draft.note,
                 )
               }
-            triggerGeneralCommand(
+            panelState.triggerGeneralCommand(
+              owner = "2.4",
               command = cmd,
               successNotice = { clamped ->
                 if (clamped.isNotEmpty()) "Baseline calibrated (hit a limit)"
@@ -1864,7 +2050,7 @@ private fun ManualMoodDialPill(
               },
             )
           },
-          enabled = !isLoading,
+          enabled = !panelState.isLoading,
           colors =
             ButtonDefaults.buttonColors(
               containerColor = RiviaModeBlue,
@@ -1882,7 +2068,7 @@ private fun ManualMoodDialPill(
             showBaselineCalibrationConfirmDialog = false
             pendingBaselineDraft = null
           },
-          enabled = !isLoading,
+          enabled = !panelState.isLoading,
           modifier =
             Modifier.minimumInteractiveComponentSize().testTag("baseline_calibration_cancel"),
         ) {
