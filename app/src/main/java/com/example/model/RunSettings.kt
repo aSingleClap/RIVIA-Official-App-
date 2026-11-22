@@ -167,7 +167,10 @@ data class RunSettings(
     fun allowedThinkingLevels(modelId: String): List<String> {
       val clean = modelId.removePrefix("models/").lowercase()
       return when {
-        clean == "gemini-4-argon" || clean == "gemini-3.8-flash" ->
+        clean == "gemini-4-argon" ||
+          clean == "gemini-4-hydrogen" ||
+          clean == "gemini-4-neon" ||
+          clean == "gemini-3.8-flash" ->
           listOf("model_default", "low", "medium", "high")
         clean == "gemini-3.6-flash" ||
           clean == "gemini-3.5-flash-lite" ||

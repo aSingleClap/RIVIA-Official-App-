@@ -63,16 +63,21 @@ class ExampleUnitTest {
 
   @Test
   fun thinkingLevelsAndSampling_followModelRules() {
-    assertEquals(
-      listOf("model_default", "low", "medium", "high"),
-      RunSettings.allowedThinkingLevels("gemini-4-argon"),
-    )
+    val nonMinimalLevels = listOf("model_default", "low", "medium", "high")
+    assertEquals(nonMinimalLevels, RunSettings.allowedThinkingLevels("gemini-4-argon"))
+    assertEquals(nonMinimalLevels, RunSettings.allowedThinkingLevels("gemini-4-hydrogen"))
+    assertEquals(nonMinimalLevels, RunSettings.allowedThinkingLevels("gemini-4-neon"))
+    assertEquals(nonMinimalLevels, RunSettings.allowedThinkingLevels("gemini-3.8-flash"))
+    assertFalse(RunSettings.allowedThinkingLevels("gemini-4-hydrogen").contains("minimal"))
+    assertFalse(RunSettings.allowedThinkingLevels("gemini-4-neon").contains("minimal"))
     assertEquals(
       listOf("model_default", "minimal", "low", "medium", "high"),
       RunSettings.allowedThinkingLevels("gemini-3.5-flash-lite"),
     )
     assertFalse(RunSettings.isSamplingSupported("gemini-3.8-flash"))
     assertFalse(RunSettings.isSamplingSupported("gemini-4-argon"))
+    assertFalse(RunSettings.isSamplingSupported("gemini-4-hydrogen"))
+    assertFalse(RunSettings.isSamplingSupported("gemini-4-neon"))
     assertTrue(RunSettings.isSamplingSupported("gemini-3.5-flash-lite"))
   }
 
@@ -81,10 +86,10 @@ class ExampleUnitTest {
     val client = GeminiInteractionsClient()
     val settings =
       RunSettings(
-        model = "gemini-3.8-flash",
-        liveModel = "gemini-3.5-flash-lite",
+        model = "gemini-4-hydrogen",
+        liveModel = "gemini-3.8-flash",
         thinkingLevel = "medium",
-        liveThinkingLevel = "minimal",
+        liveThinkingLevel = "low",
         googleSearchEnabled = true,
         googleSearchMode = "image",
         fileSearchEnabled = true,
@@ -106,6 +111,7 @@ class ExampleUnitTest {
         stream = true,
       )
     assertFalse("standard service_tier must be omitted", typedBody.has("service_tier"))
+    assertEquals("gemini-4-hydrogen", typedBody.getString("model"))
     assertEquals(
       "medium",
       typedBody.getJSONObject("generation_config").getString("thinking_level"),
@@ -142,27 +148,30 @@ class ExampleUnitTest {
         previousInteractionId = null,
         stream = true,
       )
+    assertEquals("gemini-3.8-flash", liveBody.getString("model"))
     assertEquals("flex", liveBody.getString("service_tier"))
     assertEquals(true, liveBody.getBoolean("stream"))
     assertFalse(liveBody.has("background"))
     assertEquals(
-      "minimal",
+      "low",
       liveBody.getJSONObject("generation_config").getString("thinking_level"),
     )
 
-    // When gemini-3.8-flash is used with minimal thinking, it clamps to low instead of dropping thinking_level
-    val flash38MinimalBody =
-      client.buildRequestBodyJson(
-        settings = settings.copy(liveModel = "gemini-3.8-flash", liveThinkingLevel = "minimal"),
-        channel = RiviaChannel.LIVE_VOICE,
-        inputSteps = client.buildSingleTurnInput("Hello"),
-        previousInteractionId = null,
-        stream = true,
+    // Minimal thinking clamps to low on gemini-3.8-flash, gemini-4-hydrogen, and gemini-4-neon
+    for (nonMinModel in listOf("gemini-3.8-flash", "gemini-4-hydrogen", "gemini-4-neon")) {
+      val clampedBody =
+        client.buildRequestBodyJson(
+          settings = settings.copy(liveModel = nonMinModel, liveThinkingLevel = "minimal"),
+          channel = RiviaChannel.LIVE_VOICE,
+          inputSteps = client.buildSingleTurnInput("Hello"),
+          previousInteractionId = null,
+          stream = true,
+        )
+      assertEquals(
+        "low",
+        clampedBody.getJSONObject("generation_config").getString("thinking_level"),
       )
-    assertEquals(
-      "low",
-      flash38MinimalBody.getJSONObject("generation_config").getString("thinking_level"),
-    )
+    }
   }
 
   @Test

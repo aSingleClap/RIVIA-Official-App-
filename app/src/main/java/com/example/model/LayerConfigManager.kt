@@ -236,19 +236,22 @@ object LayerConfigManager {
 
       val config = jsonParser.decodeFromString<EngineLayerConfig>(rawJson)
 
-      // Validate required profiles: fast, balanced, deep, live
+      // Validate required profiles exist: fast, balanced, deep, live
       for (reqProfile in REQUIRED_PROFILES) {
-        val prof =
-          config.profiles[reqProfile]
-            ?: return failFile("engine.json", "Missing required profile \"$reqProfile\"")
-        if (prof.model.isBlank()) {
-          return failFile("engine.json", "Profile \"$reqProfile\" has an empty model")
+        if (reqProfile !in config.profiles) {
+          return failFile("engine.json", "Missing required profile \"$reqProfile\"")
         }
-        val allowedLevels = RunSettings.allowedThinkingLevels(prof.model)
-        if (prof.thinking_level !in allowedLevels) {
+      }
+
+      // Validate model and thinking_level for every profile
+      for ((name, prof) in config.profiles) {
+        if (prof.model.isBlank()) {
+          return failFile("engine.json", "Profile \"$name\" has an empty model")
+        }
+        if (prof.thinking_level !in RunSettings.allowedThinkingLevels(prof.model)) {
           return failFile(
             "engine.json",
-            "Profile \"$reqProfile\" thinking_level \"${prof.thinking_level}\" is not allowed for model \"${prof.model}\" (allowed: ${allowedLevels.joinToString(", ")})",
+            "Profile \"$name\" uses thinking level \"${prof.thinking_level}\" which ${prof.model} does not support",
           )
         }
       }

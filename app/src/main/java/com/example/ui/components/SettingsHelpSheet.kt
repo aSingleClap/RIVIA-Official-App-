@@ -75,9 +75,9 @@ object RiviaSettingsGuide {
           "Use Fast for quick everyday questions, Balanced for general coding and writing, and Deep when tackling hard math, architecture, or multi-step analysis.",
         examples =
           listOf(
-            "Fast → gemini-3.5-flash-lite with 'minimal' thinking for instant replies",
-            "Balanced → gemini-3.8-flash with 'medium' thinking for daily tasks",
-            "Deep → gemini-4-argon with 'high' thinking for complex problem solving",
+            "Fast → gemini-3.8-flash with 'low' thinking for instant replies",
+            "Balanced → gemini-4-hydrogen with 'medium' thinking for daily tasks",
+            "Deep → gemini-4-neon with 'high' thinking for complex problem solving",
           ),
       ),
       SettingHelpTopic(
@@ -89,7 +89,7 @@ object RiviaSettingsGuide {
           "Pick a fast Flash model for Live voice so spoken replies start with minimal delay, and a larger or reasoning-heavy model for typed chat when depth matters.",
         examples =
           listOf(
-            "Typed Chat: gemini-3.8-flash or gemini-4-argon",
+            "Typed Chat: gemini-4-hydrogen or gemini-4-neon",
             "Live Mode: gemini-3.8-flash for low-latency spoken back-and-forth",
           ),
       ),
@@ -350,12 +350,12 @@ object RiviaSettingsGuide {
         summary =
           "Defines the Gemini model, reasoning effort (thinking_level), thought summaries, max output token ceiling, API service tier, server interaction storage (store), and safety filtering across Rivia's profiles (fast, balanced, deep, and live). Every profile's settings are hashed into its 8-character SHA-256 fingerprint.",
         whenToUse =
-          "Unlock Engine when switching models (e.g., gemini-3.8-flash vs. gemini-4-argon), tuning thinking depth per profile, lowering Live voice latency with minimal thinking, or adjusting safety thresholds.",
+          "Unlock Engine when switching models (e.g., gemini-3.8-flash, gemini-4-hydrogen, or gemini-4-neon), tuning thinking depth per profile, lowering Live voice latency with low thinking, or adjusting safety thresholds.",
         examples =
           listOf(
-            "live profile → model: gemini-3.8-flash, thinking_level: minimal (lowest time-to-first-audio for spoken turns)",
-            "balanced profile → model: gemini-3.8-flash, thinking_level: medium (balanced speed and reasoning)",
-            "deep profile → model: gemini-4-argon, thinking_level: high (multi-step architecture & debugging)",
+            "fast / live profiles → model: gemini-3.8-flash, thinking_level: low (low-latency fast and spoken turns)",
+            "balanced profile → model: gemini-4-hydrogen, thinking_level: medium (balanced speed and reasoning)",
+            "deep profile → model: gemini-4-neon, thinking_level: high (multi-step architecture & debugging)",
             "max_output_tokens = null (no cap) or 4096; store = true (chains turns via previous_interaction_id)",
           ),
       ),

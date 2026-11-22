@@ -32,6 +32,7 @@ import com.example.data.RiviaDatabase
 import com.example.model.LayerConfigManager
 import com.example.model.LayerStatus
 import com.example.model.ProfileTestState
+import com.example.model.RunSettings
 import com.example.ui.screens.AssistantMessageBubble
 import com.example.ui.screens.STEP_0_AND_1_TEST_SPECS
 import com.example.ui.screens.StepTestCard
@@ -111,7 +112,14 @@ class Pass1LayersTest {
     assertTrue(bundle.style.voice.contains("ElevenLabs"))
 
     assertEquals("balanced", bundle.engine.default_profile)
-    assertEquals("gemini-3.8-flash", bundle.engine.profiles["balanced"]?.model)
+    assertEquals("gemini-3.8-flash", bundle.engine.profiles["fast"]?.model)
+    assertEquals("low", bundle.engine.profiles["fast"]?.thinking_level)
+    assertEquals("gemini-4-hydrogen", bundle.engine.profiles["balanced"]?.model)
+    assertEquals("medium", bundle.engine.profiles["balanced"]?.thinking_level)
+    assertEquals("gemini-4-neon", bundle.engine.profiles["deep"]?.model)
+    assertEquals("high", bundle.engine.profiles["deep"]?.thinking_level)
+    assertEquals("gemini-3.8-flash", bundle.engine.profiles["live"]?.model)
+    assertEquals("low", bundle.engine.profiles["live"]?.thinking_level)
     assertEquals(null, bundle.engine.max_output_tokens)
 
     assertEquals(11, bundle.hardRules.rules.size)
@@ -129,20 +137,23 @@ class Pass1LayersTest {
     assertTrue(resPersona.isFailure)
     assertTrue(resPersona.exceptionOrNull()!!.message!!.startsWith("persona.json:"))
 
-    // Invalid engine: unsupported thinking level for gemini-4-argon
+    // Invalid engine: unsupported thinking level minimal for gemini-4-neon
     val badEngine =
       validFiles.toMutableMap().apply {
         put(
           "engine",
           validFiles["engine"]!!.replace(
-            Regex(""""deep"\s*:\s*\{\s*"model"\s*:\s*"gemini-4-argon"\s*,\s*"thinking_level"\s*:\s*"low"\s*\}"""),
-            """"deep": { "model": "gemini-4-argon", "thinking_level": "minimal" }""",
+            Regex(""""deep"\s*:\s*\{\s*"model"\s*:\s*"gemini-4-neon"\s*,\s*"thinking_level"\s*:\s*"high"\s*\}"""),
+            """"deep": { "model": "gemini-4-neon", "thinking_level": "minimal" }""",
           ),
         )
       }
     val resEngine = LayerConfigManager.loadAndValidateBundle(badEngine, emptyList())
     assertTrue(resEngine.isFailure)
-    assertTrue(resEngine.exceptionOrNull()!!.message!!.startsWith("engine.json:"))
+    assertEquals(
+      "engine.json: Profile \"deep\" uses thinking level \"minimal\" which gemini-4-neon does not support",
+      resEngine.exceptionOrNull()!!.message,
+    )
 
     // Invalid hard_rules: active code-enforced rule without a handler (only H7 and H9 have handlers)
     val badRules =
@@ -158,6 +169,46 @@ class Pass1LayersTest {
     val resRules = LayerConfigManager.loadAndValidateBundle(badRules, emptyList())
     assertTrue(resRules.isFailure)
     assertTrue(resRules.exceptionOrNull()!!.message!!.contains("hard_rules.json: Active code rule \"H2\" has no code handler"))
+  }
+
+  @Test
+  fun hydrogenAndNeonThinkingLevels_excludeMinimal_andEngineWithHydrogenMinimalFailsValidation() {
+    assertFalse(RunSettings.allowedThinkingLevels("gemini-4-hydrogen").contains("minimal"))
+    assertFalse(RunSettings.allowedThinkingLevels("gemini-4-neon").contains("minimal"))
+    assertEquals(
+      listOf("model_default", "low", "medium", "high"),
+      RunSettings.allowedThinkingLevels("gemini-4-hydrogen"),
+    )
+    assertEquals(
+      listOf("model_default", "low", "medium", "high"),
+      RunSettings.allowedThinkingLevels("gemini-4-neon"),
+    )
+
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val validFiles = LayerConfigManager.readBundledAssetFiles(context).getOrThrow()
+    val hydrogenMinimalEngineJson =
+      validFiles["engine"]!!.replace(
+        Regex(""""balanced"\s*:\s*\{\s*"model"\s*:\s*"gemini-4-hydrogen"\s*,\s*"thinking_level"\s*:\s*"medium"\s*\}"""),
+        """"balanced": { "model": "gemini-4-hydrogen", "thinking_level": "minimal" }""",
+      )
+
+    val parseRes = LayerConfigManager.validateAndParseEngine(hydrogenMinimalEngineJson)
+    assertTrue(parseRes.isFailure)
+    assertEquals(
+      "engine.json: Profile \"balanced\" uses thinking level \"minimal\" which gemini-4-hydrogen does not support",
+      parseRes.exceptionOrNull()!!.message,
+    )
+
+    val bundleRes =
+      LayerConfigManager.loadAndValidateBundle(
+        validFiles.toMutableMap().apply { put("engine", hydrogenMinimalEngineJson) },
+        emptyList(),
+      )
+    assertTrue(bundleRes.isFailure)
+    assertEquals(
+      "engine.json: Profile \"balanced\" uses thinking level \"minimal\" which gemini-4-hydrogen does not support",
+      bundleRes.exceptionOrNull()!!.message,
+    )
   }
 
   // 3. Fingerprint & Clarification #1/#3 Tests
