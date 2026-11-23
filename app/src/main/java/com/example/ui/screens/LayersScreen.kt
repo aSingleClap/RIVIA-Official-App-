@@ -103,13 +103,9 @@ import com.example.model.EngineLayerConfig
 import com.example.model.EngineProfileConfig
 import com.example.model.HardRuleConfig
 import com.example.model.HardRulesLayerConfig
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.minimumInteractiveComponentSize
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.input.pointer.pointerInput
 import com.example.model.LayerCardUiMeta
 import com.example.model.LayerConfigManager
 import com.example.model.LayerStatus
@@ -193,8 +189,9 @@ fun LayersScreen(
   val isErrorBanner by viewModel.isErrorBanner.collectAsStateWithLifecycle()
 
   val listState = rememberLazyListState()
-  var vadExpanded by remember { mutableStateOf(true) }
-  var layer2Expanded by remember { mutableStateOf(true) }
+  var vadExpanded by rememberSaveable { mutableStateOf(true) }
+  var layer2Expanded by rememberSaveable { mutableStateOf(true) }
+  var layer3Expanded by rememberSaveable { mutableStateOf(true) }
   val emotionPanelState = remember {
     EmotionPanelState(
       viewModel = viewModel,
@@ -265,12 +262,13 @@ fun LayersScreen(
           }
         },
         actions = {
-          val anyExpanded = vadExpanded || layer2Expanded
+          val anyExpanded = vadExpanded || layer2Expanded || layer3Expanded
           TextButton(
             onClick = {
               val nextExpanded = !anyExpanded
               vadExpanded = nextExpanded
               layer2Expanded = nextExpanded
+              layer3Expanded = nextExpanded
             },
             colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
@@ -364,6 +362,12 @@ fun LayersScreen(
             expanded = layer2Expanded,
             onToggleExpanded = { layer2Expanded = !layer2Expanded },
             panelState = emotionPanelState,
+          )
+        }
+        item {
+          ReactionsLayerCard(
+            expanded = layer3Expanded,
+            onToggleExpanded = { layer3Expanded = !layer3Expanded },
           )
         }
       }
@@ -761,14 +765,169 @@ private fun MoodBaselineLayerCard(
   }
 }
 
+private val REACTIONS_SUB_STEPS =
+  listOf(
+    VadSubStepSpec(
+      testTag = "vad_step_3_1",
+      title = "3.1 Event menu",
+      description =
+        "A fixed list of things that can happen, like you thanked her or a tool failed. Annoyed replaces disgust, and she never reacts with fear.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_2",
+      title = "3.2 Preset nudges",
+      description =
+        "Each event moves her mood by a set, hand-tuned amount, scaled by how strong it was, from 1 to 3.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_3",
+      title = "3.3 Caps and mood pull",
+      description =
+        "One message can move her emotion about 0.3 at most on each mood number. Her slower mood takes in about 10% of each spike.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_4",
+      title = "3.4 Reading the message",
+      description =
+        "A quick Flash call reads each message and returns only the event and how strong it was. It never picks mood numbers itself.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_5",
+      title = "3.5 Caution flags",
+      description =
+        "Code turns her state into caution for the main model: double-check, ask, retry less or stop sooner. Never riskier, and no mood or style.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_6",
+      title = "3.6 Rewording the reply",
+      description =
+        "A second Flash call rewrites the reply's wording to fit her mood. Skipped for short or tool-only replies.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_7",
+      title = "3.7 Tone rules",
+      description =
+        "Limits on how negative she can sound. Anger aims at the problem, never at you. Cursing only with a banter setting on. Her core rules sit above emotion.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_8",
+      title = "3.8 Fact check",
+      description =
+        "Code checks the rewrite kept every number, name, date and action. If anything changed, she sends the plain answer.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_3_9",
+      title = "3.9 Log, test quietly, measure",
+      description =
+        "Logs everything without changing her replies at first, measures the extra delay, and spot-checks rewrites for changed meaning.",
+    ),
+  )
+
+@Composable
+private fun ReactionsLayerCard(
+  expanded: Boolean,
+  onToggleExpanded: () -> Unit,
+) {
+  Surface(
+    color = RiviaPanelSurface,
+    shape = RoundedCornerShape(14.dp),
+    modifier = Modifier.fillMaxWidth().testTag("layer_card_reactions"),
+  ) {
+    Column(
+      modifier = Modifier.padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clickable(onClick = onToggleExpanded)
+            .testTag("layer_header_reactions"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "Layer 3: Reactions",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = RiviaTextPrimary,
+          )
+          Text(
+            text =
+              "How she'll react to each message: a quick model names what just happened and how strongly, and plain code moves her mood a set amount. Planned only: Step 3 isn't built yet, so nothing here runs.",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaSecondaryText,
+            modifier = Modifier.testTag("reactions_description"),
+          )
+        }
+
+        IconButton(
+          onClick = onToggleExpanded,
+          modifier = Modifier.testTag("toggle_layer_reactions"),
+        ) {
+          Icon(
+            imageVector =
+              if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            contentDescription =
+              if (expanded) "Collapse Layer 3: Reactions"
+              else "Expand Layer 3: Reactions",
+            tint = RiviaSecondaryText,
+          )
+        }
+      }
+
+      AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxWidth().testTag("reactions_sublayers_container"),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          for (step in REACTIONS_SUB_STEPS) {
+            Surface(
+              color = MaterialTheme.colorScheme.background,
+              shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+            ) {
+              Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = step.title,
+                  style = MaterialTheme.typography.labelLarge,
+                  color = RiviaTextPrimary,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = step.description,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = RiviaSecondaryText,
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 private class EmotionPanelState(
   private val viewModel: RiviaViewModel,
   val coroutineScope: CoroutineScope,
 ) {
   val moodClient = TabletMoodClient()
 
-  // Shared single-flight guard across every button, slider, hold gesture, and dialog in 1.5 and 2.4
+  // Shared single-flight guard across every button, slider, switch, and dialog in 1.5 and 2.4
   var isLoading by mutableStateOf(false)
+
+  // Per-instance first-load flags (reset when EmotionPanelState recreates on rotation so open pills reload)
+  var hasLoaded15Once by mutableStateOf(false)
+  var hasLoaded24Once by mutableStateOf(false)
 
   // Shared server snapshot & lock state
   var currentState by mutableStateOf<MoodState?>(null)
@@ -956,8 +1115,7 @@ private fun ManualMoodDialPill(
   panelState: EmotionPanelState,
 ) {
   var pillExpanded by rememberSaveable { mutableStateOf(false) }
-  var hasLoadedOnce by rememberSaveable { mutableStateOf(false) }
-  var seenLoadVersion by rememberSaveable { mutableIntStateOf(0) }
+  var seenLoadVersion by remember(panelState) { mutableIntStateOf(panelState.loadVersion) }
 
   // Existing Emotion dial state (sends no layer and no tag)
   var isSetMode by rememberSaveable { mutableStateOf(false) } // default is Nudge
@@ -965,6 +1123,14 @@ private fun ManualMoodDialPill(
   var sliderA by rememberSaveable { mutableFloatStateOf(0f) }
   var sliderD by rememberSaveable { mutableFloatStateOf(0f) }
   var noteText by rememberSaveable { mutableStateOf("") }
+
+  // Reload automatically if 1.5 reopens expanded after a screen rotation / configuration recreation
+  LaunchedEffect(pillExpanded, panelState) {
+    if (pillExpanded && !panelState.hasLoaded15Once) {
+      panelState.hasLoaded15Once = true
+      panelState.triggerLoad(owner = "1.5")
+    }
+  }
 
   // While in Set mode, snap sliders to freshly loaded values whenever loadVersion advances
   LaunchedEffect(panelState.loadVersion) {
@@ -1009,8 +1175,8 @@ private fun ManualMoodDialPill(
             .clickable {
               val nextExpanded = !pillExpanded
               pillExpanded = nextExpanded
-              if (nextExpanded && !hasLoadedOnce) {
-                hasLoadedOnce = true
+              if (nextExpanded && !panelState.hasLoaded15Once) {
+                panelState.hasLoaded15Once = true
                 panelState.triggerLoad(owner = "1.5")
               }
             }
@@ -1234,12 +1400,8 @@ private fun MoodBaselineControlsPill(
   step: VadSubStepSpec,
   panelState: EmotionPanelState,
 ) {
-  val localScope = rememberCoroutineScope()
-
   var pillExpanded by rememberSaveable { mutableStateOf(false) }
-  var hasLoadedOnce by rememberSaveable { mutableStateOf(false) }
-  var seenLoadVersion by rememberSaveable { mutableIntStateOf(0) }
-  var holdProgress by remember { mutableFloatStateOf(0f) }
+  var seenLoadVersion by remember(panelState) { mutableIntStateOf(panelState.loadVersion) }
 
   // Mood layer dial state (tag is always "test")
   var moodIsSetMode by rememberSaveable { mutableStateOf(false) }
@@ -1257,6 +1419,14 @@ private fun MoodBaselineControlsPill(
   var pendingBaselineDraft by remember { mutableStateOf<PendingBaselineDraft?>(null) }
   var showBaselineTagDialog by remember { mutableStateOf(false) }
   var showBaselineCalibrationConfirmDialog by remember { mutableStateOf(false) }
+
+  // Reload automatically if 2.4 reopens expanded after a screen rotation / configuration recreation
+  LaunchedEffect(pillExpanded, panelState) {
+    if (pillExpanded && !panelState.hasLoaded24Once) {
+      panelState.hasLoaded24Once = true
+      panelState.triggerLoad(owner = "2.4")
+    }
+  }
 
   // While in Set mode, snap sliders to freshly loaded values whenever loadVersion advances
   LaunchedEffect(panelState.loadVersion) {
@@ -1317,9 +1487,6 @@ private fun MoodBaselineControlsPill(
       Math.abs(baselineSliderA) < 0.005f &&
       Math.abs(baselineSliderD) < 0.005f
 
-  val latestIsLoading by rememberUpdatedState(panelState.isLoading)
-  val latestIsServerLocked by rememberUpdatedState(panelState.isServerLocked)
-
   Surface(
     color = MaterialTheme.colorScheme.background,
     shape = RoundedCornerShape(10.dp),
@@ -1336,8 +1503,8 @@ private fun MoodBaselineControlsPill(
             .clickable {
               val nextExpanded = !pillExpanded
               pillExpanded = nextExpanded
-              if (nextExpanded && !hasLoadedOnce) {
-                hasLoadedOnce = true
+              if (nextExpanded && !panelState.hasLoaded24Once) {
+                panelState.hasLoaded24Once = true
                 panelState.triggerLoad(owner = "2.4")
               }
             }
@@ -1490,127 +1657,44 @@ private fun MoodBaselineControlsPill(
             }
           }
 
-          // Padlock above Mood & Baseline
-          if (panelState.isServerLocked) {
-            Surface(
-              color = RiviaPanelSurface,
-              shape = RoundedCornerShape(10.dp),
-              border =
-                BorderStroke(
-                  1.dp,
-                  if (holdProgress > 0.01f) RiviaAmber else RiviaBorder,
-                ),
-              modifier =
-                Modifier.fillMaxWidth()
-                  .minimumInteractiveComponentSize()
-                  .alpha(if (panelState.isLoading) 0.5f else 1f)
-                  .pointerInput(Unit) {
-                    detectTapGestures(
-                      onPress = {
-                        if (latestIsLoading || !latestIsServerLocked) return@detectTapGestures
-                        val holdJob =
-                          localScope.launch {
-                            val startMs = android.os.SystemClock.uptimeMillis()
-                            val requiredHoldMs = 1000L
-                            while (true) {
-                              if (latestIsLoading || !latestIsServerLocked) {
-                                holdProgress = 0f
-                                break
-                              }
-                              val elapsed = android.os.SystemClock.uptimeMillis() - startMs
-                              holdProgress =
-                                (elapsed.toFloat() / requiredHoldMs.toFloat()).coerceIn(0f, 1f)
-                              if (elapsed >= requiredHoldMs) {
-                                holdProgress = 0f
-                                panelState.triggerGeneralCommand(
-                                  owner = "2.4",
-                                  command = MoodPostCommand.Unlock,
-                                  successNotice = { "Mood & baseline unlocked" },
-                                )
-                                break
-                              }
-                              delay(25L)
-                            }
-                          }
-                        try {
-                          tryAwaitRelease()
-                        } finally {
-                          holdJob.cancel()
-                          holdProgress = 0f
-                        }
-                      }
-                    )
-                  }
-                  .testTag("mood_dial_padlock"),
-            ) {
-              Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                  modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = "Locked. Hold 1 second to unlock Mood and Baseline",
-                    tint = if (holdProgress > 0.01f) RiviaAmber else RiviaSecondaryText,
-                    modifier = Modifier.size(18.dp),
-                  )
-                  Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                      text = "Mood & Baseline locked",
-                      style = MaterialTheme.typography.labelLarge,
-                      color = RiviaTextPrimary,
-                      fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                      text =
-                        if (holdProgress > 0.01f) "Keep holding to unlock…"
-                        else "Press and hold ~1 second to unlock",
-                      style = MaterialTheme.typography.bodySmall,
-                      color = RiviaSecondaryText,
-                    )
-                  }
-                }
-                if (holdProgress > 0.01f) {
-                  LinearProgressIndicator(
-                    progress = { holdProgress },
-                    color = RiviaAmber,
-                    trackColor = RiviaBorder,
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                  )
-                }
-              }
-            }
-          } else {
-            Surface(
-              color = RiviaPanelSurface,
-              shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(1.dp, RiviaAmber.copy(alpha = 0.65f)),
-              modifier = Modifier.fillMaxWidth().testTag("mood_dial_padlock_unlocked"),
+          // Lock / Unlock toggle switch above Mood & Baseline
+          val isUnlocked = !panelState.isServerLocked
+          Surface(
+            color = RiviaPanelSurface,
+            shape = RoundedCornerShape(10.dp),
+            border =
+              BorderStroke(
+                1.dp,
+                if (isUnlocked) RiviaAmber.copy(alpha = 0.65f) else RiviaBorder,
+              ),
+            modifier =
+              Modifier.fillMaxWidth()
+                .testTag(if (isUnlocked) "mood_dial_padlock_unlocked" else "mood_dial_padlock"),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.SpaceBetween,
             ) {
               Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f),
               ) {
-                Row(
-                  verticalAlignment = Alignment.CenterVertically,
-                  horizontalArrangement = Arrangement.spacedBy(8.dp),
-                  modifier = Modifier.weight(1f),
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.LockOpen,
-                    contentDescription = "Unlocked",
-                    tint = RiviaAmber,
-                    modifier = Modifier.size(18.dp),
+                Icon(
+                  imageVector = if (isUnlocked) Icons.Default.LockOpen else Icons.Default.Lock,
+                  contentDescription = if (isUnlocked) "Unlocked" else "Locked",
+                  tint = if (isUnlocked) RiviaAmber else RiviaSecondaryText,
+                  modifier = Modifier.size(18.dp),
+                )
+                Column {
+                  Text(
+                    text = if (isUnlocked) "Unlocked" else "Mood & Baseline locked",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = RiviaTextPrimary,
+                    fontWeight = FontWeight.SemiBold,
                   )
-                  Column {
-                    Text(
-                      text = "Unlocked",
-                      style = MaterialTheme.typography.labelLarge,
-                      color = RiviaTextPrimary,
-                      fontWeight = FontWeight.SemiBold,
-                    )
+                  if (isUnlocked) {
                     val mins = panelState.countdownSeconds / 60
                     val secs = panelState.countdownSeconds % 60
                     val formattedLeft =
@@ -1623,32 +1707,39 @@ private fun MoodBaselineControlsPill(
                       color = RiviaAmber,
                       modifier = Modifier.testTag("mood_dial_countdown"),
                     )
+                  } else {
+                    Text(
+                      text = "Toggle switch to unlock",
+                      style = MaterialTheme.typography.bodySmall,
+                      color = RiviaSecondaryText,
+                    )
                   }
                 }
-
-                OutlinedButton(
-                  onClick = {
-                    panelState.triggerGeneralCommand(
-                      owner = "2.4",
-                      command = MoodPostCommand.Lock,
-                      successNotice = { "Mood & baseline locked" },
-                    )
-                  },
-                  enabled = !panelState.isLoading,
-                  border = BorderStroke(1.dp, RiviaBorder),
-                  modifier =
-                    Modifier.minimumInteractiveComponentSize().testTag("mood_dial_lock_button"),
-                ) {
-                  Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = RiviaTextPrimary,
-                    modifier = Modifier.size(15.dp),
-                  )
-                  Spacer(modifier = Modifier.width(6.dp))
-                  Text("Lock", color = RiviaTextPrimary, style = MaterialTheme.typography.labelMedium)
-                }
               }
+
+              Switch(
+                checked = isUnlocked,
+                onCheckedChange = { shouldUnlock ->
+                  if (!panelState.isLoading) {
+                    if (shouldUnlock && panelState.isServerLocked) {
+                      panelState.triggerGeneralCommand(
+                        owner = "2.4",
+                        command = MoodPostCommand.Unlock,
+                        successNotice = { "Mood & baseline unlocked" },
+                      )
+                    } else if (!shouldUnlock && !panelState.isServerLocked) {
+                      panelState.triggerGeneralCommand(
+                        owner = "2.4",
+                        command = MoodPostCommand.Lock,
+                        successNotice = { "Mood & baseline locked" },
+                      )
+                    }
+                  }
+                },
+                enabled = !panelState.isLoading,
+                colors = riviaSwitchColors(),
+                modifier = Modifier.testTag("mood_dial_lock_switch"),
+              )
             }
           }
 
