@@ -192,6 +192,7 @@ fun LayersScreen(
   var vadExpanded by rememberSaveable { mutableStateOf(true) }
   var layer2Expanded by rememberSaveable { mutableStateOf(true) }
   var layer3Expanded by rememberSaveable { mutableStateOf(true) }
+  var layer4Expanded by rememberSaveable { mutableStateOf(true) }
   val emotionPanelState = remember {
     EmotionPanelState(
       viewModel = viewModel,
@@ -262,13 +263,14 @@ fun LayersScreen(
           }
         },
         actions = {
-          val anyExpanded = vadExpanded || layer2Expanded || layer3Expanded
+          val anyExpanded = vadExpanded || layer2Expanded || layer3Expanded || layer4Expanded
           TextButton(
             onClick = {
               val nextExpanded = !anyExpanded
               vadExpanded = nextExpanded
               layer2Expanded = nextExpanded
               layer3Expanded = nextExpanded
+              layer4Expanded = nextExpanded
             },
             colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
@@ -368,6 +370,12 @@ fun LayersScreen(
           ReactionsLayerCard(
             expanded = layer3Expanded,
             onToggleExpanded = { layer3Expanded = !layer3Expanded },
+          )
+        }
+        item {
+          BodyHealthLayerCard(
+            expanded = layer4Expanded,
+            onToggleExpanded = { layer4Expanded = !layer4Expanded },
           )
         }
       }
@@ -886,6 +894,157 @@ private fun ReactionsLayerCard(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           for (step in REACTIONS_SUB_STEPS) {
+            Surface(
+              color = MaterialTheme.colorScheme.background,
+              shape = RoundedCornerShape(10.dp),
+              border = BorderStroke(1.dp, RiviaBorder),
+              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+            ) {
+              Column(
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+              ) {
+                Text(
+                  text = step.title,
+                  style = MaterialTheme.typography.labelLarge,
+                  color = RiviaTextPrimary,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                  text = step.description,
+                  style = MaterialTheme.typography.bodySmall,
+                  color = RiviaSecondaryText,
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+private val BODY_HEALTH_SUB_STEPS =
+  listOf(
+    VadSubStepSpec(
+      testTag = "vad_step_4_1",
+      title = "4.1 Health signals",
+      description =
+        "The things she can feel about herself, like errors, slow replies, battery and whether the tunnel is up.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_2",
+      title = "4.2 Collector",
+      description =
+        "Reads those signals once a minute and saves them. Ignores errors from while it was switched off.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_3",
+      title = "4.3 Her own normal",
+      description =
+        "Learns what normal looks like over a 15-minute window, with a floor per signal. A slow slide that makes her run worse never counts as normal.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_4",
+      title = "4.4 Stress dial",
+      description =
+        "Rises when things go wrong. She can feel annoyed, or worried when things run slow and she doesn't know why. One problem only counts once.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_5",
+      title = "4.5 Confidence dial",
+      description =
+        "Drops for errors she causes, like a bad tool setting. Small errors make her more careful, not annoyed.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_6",
+      title = "4.6 Caps and moods",
+      description =
+        "Limits how far the dials can move. Irritable means drier, more focused humor, never silly. She can be distressed or annoyed, never scared.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_7",
+      title = "4.7 Never push harder",
+      description =
+        "Stress never makes her take bigger risks. Read-only checks keep running; anything that changes things asks you first and repeats your words back.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_8",
+      title = "4.8 Health check tool",
+      description =
+        "A read-only health_status tool, so you can ask her how things are running. It stays internal.",
+    ),
+    VadSubStepSpec(
+      testTag = "vad_step_4_9",
+      title = "4.9 Shadow mode",
+      description =
+        "Everything is logged without changing her replies yet, so the dials can be checked before they go live.",
+    ),
+  )
+
+@Composable
+private fun BodyHealthLayerCard(
+  expanded: Boolean,
+  onToggleExpanded: () -> Unit,
+) {
+  Surface(
+    color = RiviaPanelSurface,
+    shape = RoundedCornerShape(14.dp),
+    modifier = Modifier.fillMaxWidth().testTag("layer_card_body_health"),
+  ) {
+    Column(
+      modifier = Modifier.padding(16.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+      Row(
+        modifier =
+          Modifier.fillMaxWidth()
+            .clickable(onClick = onToggleExpanded)
+            .testTag("layer_header_body_health"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "Layer 4: Body & Health",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = RiviaTextPrimary,
+          )
+          Text(
+            text =
+              "How she feels about how she's running: the tablet tracks its own health, learns what normal looks like, and turns problems into stress and confidence dials. Shadow mode: the dials are logged but don't change her replies yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = RiviaSecondaryText,
+            modifier = Modifier.testTag("body_health_description"),
+          )
+        }
+
+        IconButton(
+          onClick = onToggleExpanded,
+          modifier = Modifier.testTag("toggle_layer_body_health"),
+        ) {
+          Icon(
+            imageVector =
+              if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+            contentDescription =
+              if (expanded) "Collapse Layer 4: Body & Health"
+              else "Expand Layer 4: Body & Health",
+            tint = RiviaSecondaryText,
+          )
+        }
+      }
+
+      AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+      ) {
+        Column(
+          modifier = Modifier.fillMaxWidth().testTag("body_health_sublayers_container"),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          for (step in BODY_HEALTH_SUB_STEPS) {
             Surface(
               color = MaterialTheme.colorScheme.background,
               shape = RoundedCornerShape(10.dp),
