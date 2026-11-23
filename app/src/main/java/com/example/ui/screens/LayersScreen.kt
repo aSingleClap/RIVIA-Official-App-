@@ -501,7 +501,7 @@ private val VAD_SUB_STEPS =
     VadSubStepSpec(
       testTag = "vad_step_1_3",
       title = "1.3 Emotion cheat sheet",
-      description = "A cheat sheet of what angry, happy, sad and scared look like as numbers.",
+      description = "A cheat sheet of what angry, happy, sad and distressed look like as numbers.",
     ),
     VadSubStepSpec(
       testTag = "vad_step_1_4",
