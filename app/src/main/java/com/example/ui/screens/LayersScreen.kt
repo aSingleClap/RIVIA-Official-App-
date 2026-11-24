@@ -194,6 +194,7 @@ fun LayersScreen(
   var layer3Expanded by rememberSaveable { mutableStateOf(true) }
   var layer4Expanded by rememberSaveable { mutableStateOf(true) }
   var layer5Expanded by rememberSaveable { mutableStateOf(true) }
+  var layer6Expanded by rememberSaveable { mutableStateOf(true) }
   val emotionPanelState = remember {
     EmotionPanelState(
       viewModel = viewModel,
@@ -264,7 +265,7 @@ fun LayersScreen(
           }
         },
         actions = {
-          val anyExpanded = vadExpanded || layer2Expanded || layer3Expanded || layer4Expanded || layer5Expanded
+          val anyExpanded = vadExpanded || layer2Expanded || layer3Expanded || layer4Expanded || layer5Expanded || layer6Expanded
           TextButton(
             onClick = {
               val nextExpanded = !anyExpanded
@@ -273,6 +274,7 @@ fun LayersScreen(
               layer3Expanded = nextExpanded
               layer4Expanded = nextExpanded
               layer5Expanded = nextExpanded
+              layer6Expanded = nextExpanded
             },
             colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
@@ -384,6 +386,13 @@ fun LayersScreen(
           ProgressTrendLayerCard(
             expanded = layer5Expanded,
             onToggleExpanded = { layer5Expanded = !layer5Expanded },
+            viewModel = viewModel,
+          )
+        }
+        item {
+          TrustLayerCard(
+            expanded = layer6Expanded,
+            onToggleExpanded = { layer6Expanded = !layer6Expanded },
             viewModel = viewModel,
           )
         }

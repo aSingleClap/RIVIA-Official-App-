@@ -73,8 +73,10 @@ import kotlinx.coroutines.launch
 internal class AdjustableValuesState(
   private val viewModel: RiviaViewModel,
   private val scope: CoroutineScope,
+  /** "/app/progress" (Layer 5) or "/app/trust" (Layer 6). */
+  path: String = "/app/progress",
 ) {
-  private val client = TabletProgressClient()
+  private val client = TabletProgressClient(path)
   var snapshot by mutableStateOf<AdjustableSnapshot?>(null)
   var isLoading by mutableStateOf(false)
   var loadError by mutableStateOf<String?>(null)

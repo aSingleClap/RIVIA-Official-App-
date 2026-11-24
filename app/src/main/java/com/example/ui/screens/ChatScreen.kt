@@ -278,6 +278,7 @@ fun ChatScreen(
   val particleController = LocalRiviaParticleFieldController.current
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val scope = rememberCoroutineScope()
+  val trustThumbs = remember { TrustThumbsState(viewModel, scope) }
   val keyboardController = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
 
@@ -475,6 +476,7 @@ fun ChatScreen(
         // Right conversation pane
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
           ChatConversationPane(
+            thumbs = trustThumbs,
             activeChatId = activeChat?.id,
             newChatResetToken = newChatResetToken,
             showDrawerButton = false,
@@ -530,7 +532,13 @@ fun ChatScreen(
             speakingMessageId = speakingMsgId,
             sttLanguage = voicePrefs.sttLanguage,
             preferOnDeviceStt = voicePrefs.preferOnDeviceRecognition,
-            onSendMessage = viewModel::sendUserMessage,
+            onSendMessage = { text ->
+              // Step 6.3: a copy of your words to the tablet, Rivia chats only, only when it really sends.
+              val sends = text.isNotBlank() && !isStreaming && !isActiveChatLab && layersLoadError == null
+              val lastReply = messages.lastOrNull { it.role == "assistant" && it.status == "completed" }?.content
+              viewModel.sendUserMessage(text)
+              if (sends) trustThumbs.sendWords(text.trim(), lastReply)
+            },
             onStopStreaming = viewModel::stopStreaming,
             onDictationError = viewModel::showError,
             onListenMessage = { msg ->
@@ -849,6 +857,7 @@ fun ChatScreen(
           },
         ) {
           ChatConversationPane(
+            thumbs = trustThumbs,
             activeChatId = activeChat?.id,
             newChatResetToken = newChatResetToken,
             showDrawerButton = true,
@@ -904,7 +913,13 @@ fun ChatScreen(
           speakingMessageId = speakingMsgId,
           sttLanguage = voicePrefs.sttLanguage,
           preferOnDeviceStt = voicePrefs.preferOnDeviceRecognition,
-          onSendMessage = viewModel::sendUserMessage,
+          onSendMessage = { text ->
+            // Step 6.3: a copy of your words to the tablet, Rivia chats only, only when it really sends.
+            val sends = text.isNotBlank() && !isStreaming && !isActiveChatLab && layersLoadError == null
+            val lastReply = messages.lastOrNull { it.role == "assistant" && it.status == "completed" }?.content
+            viewModel.sendUserMessage(text)
+            if (sends) trustThumbs.sendWords(text.trim(), lastReply)
+          },
           onStopStreaming = viewModel::stopStreaming,
           onDictationError = viewModel::showError,
           onListenMessage = { msg ->
@@ -2227,9 +2242,11 @@ private fun ChatConversationPane(
   onRegenerateLast: () -> Unit,
   onShowDetails: (MessageEntity) -> Unit,
   onEditUserMessage: (MessageEntity) -> Unit,
+  thumbs: TrustThumbsState? = null,
 ) {
   val context = LocalContext.current
   val view = LocalView.current
+  LaunchedEffect(thumbs) { thumbs?.loadIfNeeded() }
   val density = LocalDensity.current
   val keyboardController = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
@@ -3372,6 +3389,7 @@ private fun ChatConversationPane(
                       onListen = { onListenMessage(msg) },
                       onRegenerate = onRegenerateLast,
                       onShowDetails = { onShowDetails(msg) },
+                      thumbs = thumbs,
                     )
                   }
                 }
@@ -4528,6 +4546,8 @@ internal fun AssistantMessageBubble(
   onListen: () -> Unit,
   onRegenerate: () -> Unit,
   onShowDetails: () -> Unit,
+  /** Step 6.3: thumbs on her replies. Null hides them. */
+  thumbs: TrustThumbsState? = null,
 ) {
   val context = LocalContext.current
   var thinkingExpanded by rememberSaveable(message.id) { mutableStateOf(false) }
@@ -4748,6 +4768,8 @@ internal fun AssistantMessageBubble(
             )
           }
         }
+
+        if (thumbs != null) TrustThumbButtons(message, thumbs)
 
         IconButton(
           onClick = onShowDetails,

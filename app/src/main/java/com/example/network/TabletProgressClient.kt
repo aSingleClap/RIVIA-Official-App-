@@ -107,15 +107,16 @@ data class AdjustableDraft(
   val texts: Map<String, String> = emptyMap(),
 )
 
-class TabletProgressClient {
+/** path: "/app/progress" for Layer 5, "/app/trust" for Layer 6 (Step 6.9). Both answer in the same shape. */
+class TabletProgressClient(private val path: String = "/app/progress") {
   companion object {
     private val JSON_MEDIA_TYPE = "application/json".toMediaType()
-    private const val NOT_INSTALLED_MESSAGE = "The layer 5 settings aren't installed on the tablet yet"
+    private const val NOT_INSTALLED_MESSAGE = "These settings aren't installed on the tablet yet"
     private const val WRONG_DOOR_FALLBACK = "This token isn't for the app door."
 
-    fun buildProgressUrl(rawServerUrl: String): Result<String> {
+    fun buildProgressUrl(rawServerUrl: String, path: String = "/app/progress"): Result<String> {
       return TabletMcpClient.validateServerUrl(rawServerUrl).map { cleanMcpUrl ->
-        cleanMcpUrl.removeSuffix("/app/mcp") + "/app/progress"
+        cleanMcpUrl.removeSuffix("/app/mcp") + path
       }
     }
 
@@ -334,7 +335,7 @@ class TabletProgressClient {
   suspend fun getProgress(serverUrl: String, appToken: String): ProgressResult =
     withContext(Dispatchers.IO) {
       val url =
-        buildProgressUrl(serverUrl).getOrElse { err ->
+        buildProgressUrl(serverUrl, path).getOrElse { err ->
           return@withContext ProgressResult.Failure(
             message = err.message ?: "Server URL must start with https:// and end in /app/mcp"
           )
@@ -348,7 +349,7 @@ class TabletProgressClient {
   suspend fun post(serverUrl: String, appToken: String, payload: JSONObject): ProgressResult =
     withContext(Dispatchers.IO) {
       val url =
-        buildProgressUrl(serverUrl).getOrElse { err ->
+        buildProgressUrl(serverUrl, path).getOrElse { err ->
           return@withContext ProgressResult.Failure(
             message = err.message ?: "Server URL must start with https:// and end in /app/mcp"
           )
