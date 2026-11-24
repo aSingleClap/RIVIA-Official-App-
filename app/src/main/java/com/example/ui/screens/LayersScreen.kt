@@ -196,6 +196,7 @@ fun LayersScreen(
   var layer5Expanded by rememberSaveable { mutableStateOf(true) }
   var layer6Expanded by rememberSaveable { mutableStateOf(true) }
   var layer7Expanded by rememberSaveable { mutableStateOf(true) }
+  var layer8Expanded by rememberSaveable { mutableStateOf(true) }
   val emotionPanelState = remember {
     EmotionPanelState(
       viewModel = viewModel,
@@ -267,7 +268,7 @@ fun LayersScreen(
         },
         actions = {
           val anyExpanded = vadExpanded || layer2Expanded || layer3Expanded || layer4Expanded || layer5Expanded || layer6Expanded ||
-            layer7Expanded
+            layer7Expanded || layer8Expanded
           TextButton(
             onClick = {
               val nextExpanded = !anyExpanded
@@ -278,6 +279,7 @@ fun LayersScreen(
               layer5Expanded = nextExpanded
               layer6Expanded = nextExpanded
               layer7Expanded = nextExpanded
+              layer8Expanded = nextExpanded
             },
             colors = ButtonDefaults.textButtonColors(contentColor = RiviaTextPrimary),
             modifier = Modifier.testTag("layers_toggle_all_button"),
@@ -403,6 +405,13 @@ fun LayersScreen(
           ReadingLayerCard(
             expanded = layer7Expanded,
             onToggleExpanded = { layer7Expanded = !layer7Expanded },
+            viewModel = viewModel,
+          )
+        }
+        item {
+          HowSheSoundsLayerCard(
+            expanded = layer8Expanded,
+            onToggleExpanded = { layer8Expanded = !layer8Expanded },
             viewModel = viewModel,
           )
         }
