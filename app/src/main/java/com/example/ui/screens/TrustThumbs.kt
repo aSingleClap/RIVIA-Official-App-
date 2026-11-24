@@ -33,6 +33,8 @@ import kotlinx.coroutines.launch
 // Your words: a copy of each message you type in a Rivia chat goes to /app/trust/words, because your chats go from
 // the phone straight to Google and never pass the tablet. Tablet code, not Rivia, decides whether it was praise
 // ("good plan"), a correction ("that's wrong") or neither, and keeps only what it heard, not your message.
+// Step 7.1 (Nov 24): the same copy also carries when you sent it and when her reply before it finished, so Step 7
+// can see your reply speed. Step 7 reads your text on the tablet and drops it; only numbers are kept.
 
 internal class TrustThumbsState(private val viewModel: RiviaViewModel, private val scope: CoroutineScope) {
   private val client = TabletTrustClient()
@@ -77,9 +79,13 @@ internal class TrustThumbsState(private val viewModel: RiviaViewModel, private v
    * A copy of a message you just typed in a Rivia chat, so your words count (6.3). Quiet: if the tablet can't be
    * reached, the message still goes to Rivia as always and only this copy is lost.
    */
-  fun sendWords(text: String, previousReply: String?) {
+  fun sendWords(text: String, previousReply: String?, previousReplyAtMs: Long? = null) {
     if (text.isBlank()) return
-    scope.launch { client.sendWords(url(), token(), UUID.randomUUID().toString(), text, previousReply) }
+    // Step 7.1: the send time is taken here, before the network call, so a slow tablet doesn't skew it.
+    val sentAt = System.currentTimeMillis()
+    scope.launch {
+      client.sendWords(url(), token(), UUID.randomUUID().toString(), text, previousReply, sentAt, previousReplyAtMs)
+    }
   }
 
   private suspend fun url() = viewModel.keyRepository.getTabletServerUrl()

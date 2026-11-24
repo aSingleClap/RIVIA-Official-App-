@@ -535,9 +535,12 @@ fun ChatScreen(
             onSendMessage = { text ->
               // Step 6.3: a copy of your words to the tablet, Rivia chats only, only when it really sends.
               val sends = text.isNotBlank() && !isStreaming && !isActiveChatLab && layersLoadError == null
-              val lastReply = messages.lastOrNull { it.role == "assistant" && it.status == "completed" }?.content
+              val last = messages.lastOrNull { it.role == "assistant" && it.status == "completed" }
+              val lastReply = last?.content
+              // Step 7.1: when her reply finished (start plus how long it took), for your reply speed.
+              val lastReplyAt = last?.let { it.createdAt + it.totalTimeMs.coerceAtLeast(0L) }
               viewModel.sendUserMessage(text)
-              if (sends) trustThumbs.sendWords(text.trim(), lastReply)
+              if (sends) trustThumbs.sendWords(text.trim(), lastReply, lastReplyAt)
             },
             onStopStreaming = viewModel::stopStreaming,
             onDictationError = viewModel::showError,
@@ -916,9 +919,12 @@ fun ChatScreen(
           onSendMessage = { text ->
             // Step 6.3: a copy of your words to the tablet, Rivia chats only, only when it really sends.
             val sends = text.isNotBlank() && !isStreaming && !isActiveChatLab && layersLoadError == null
-            val lastReply = messages.lastOrNull { it.role == "assistant" && it.status == "completed" }?.content
+            val last = messages.lastOrNull { it.role == "assistant" && it.status == "completed" }
+            val lastReply = last?.content
+            // Step 7.1: when her reply finished (start plus how long it took), for your reply speed.
+            val lastReplyAt = last?.let { it.createdAt + it.totalTimeMs.coerceAtLeast(0L) }
             viewModel.sendUserMessage(text)
-            if (sends) trustThumbs.sendWords(text.trim(), lastReply)
+            if (sends) trustThumbs.sendWords(text.trim(), lastReply, lastReplyAt)
           },
           onStopStreaming = viewModel::stopStreaming,
           onDictationError = viewModel::showError,

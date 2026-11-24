@@ -189,9 +189,19 @@ class TabletTrustClient {
      * A copy of a message you typed. Only your text goes, never a verdict: tablet code decides praise, correction or
      * neither, and keeps only what it heard. Her reply before it only picks the area for a correction.
      */
-    fun wordsBody(messageId: String, text: String, replyText: String?): JSONObject =
+    fun wordsBody(
+      messageId: String,
+      text: String,
+      replyText: String?,
+      sentAtMs: Long? = null,
+      replyAtMs: Long? = null,
+    ): JSONObject =
       JSONObject().put("message_id", messageId.take(80)).put("text", text.take(4000)).also { b ->
         if (!replyText.isNullOrBlank()) b.put("reply_text", replyText.take(1500))
+        // Step 7.1: when you sent it and when her reply before it finished, so the tablet can see how quickly you
+        // answered. Times only; Step 7 keeps numbers, never your text.
+        if (sentAtMs != null && sentAtMs > 0) b.put("sent_at", sentAtMs)
+        if (replyAtMs != null && replyAtMs > 0) b.put("reply_at", replyAtMs)
       }
   }
 
@@ -216,7 +226,9 @@ class TabletTrustClient {
     messageId: String,
     text: String,
     replyText: String?,
-  ): TrustResult = call(serverUrl, appToken, "/words", wordsBody(messageId, text, replyText))
+    sentAtMs: Long? = null,
+    replyAtMs: Long? = null,
+  ): TrustResult = call(serverUrl, appToken, "/words", wordsBody(messageId, text, replyText, sentAtMs, replyAtMs))
 
   /** You switch one unlock on or off. Hard limits are refused by the tablet (403). */
   suspend fun setUnlock(serverUrl: String, appToken: String, id: String, on: Boolean): TrustResult =
