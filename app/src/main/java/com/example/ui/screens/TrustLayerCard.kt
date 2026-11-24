@@ -222,6 +222,7 @@ internal fun TrustLayerCard(expanded: Boolean, onToggleExpanded: () -> Unit, vie
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(6)
           Text(
             text =
               "Whether her plans have earned more freedom: her accuracy, your satisfaction, and what you've unlocked by hand. Shadow mode: worked out and logged, but it doesn't change what she does yet.",
@@ -271,6 +272,7 @@ internal fun TrustLayerCard(expanded: Boolean, onToggleExpanded: () -> Unit, vie
                   fontWeight = FontWeight.SemiBold,
                 )
                 Text(step.description, style = MaterialTheme.typography.bodySmall, color = RiviaSecondaryText)
+                PieceSwitches(step.testTag)
                 if (snap != null) {
                   TrustStepReadout(step.shows, snap, onUnlock = { u, on ->
                     confirm =

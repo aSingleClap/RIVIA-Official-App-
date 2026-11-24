@@ -256,6 +256,7 @@ internal fun HowSheSoundsLayerCard(expanded: Boolean, onToggleExpanded: () -> Un
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(8)
           Text(
             text =
               "The tone she would use with you right now. Shadow mode: worked out and logged, her replies don't change yet.",
@@ -305,6 +306,7 @@ internal fun HowSheSoundsLayerCard(expanded: Boolean, onToggleExpanded: () -> Un
                   fontWeight = FontWeight.SemiBold,
                 )
                 Text(step.description, style = MaterialTheme.typography.bodySmall, color = RiviaSecondaryText)
+                PieceSwitches(step.testTag)
                 if (snap != null && step.shows.isNotEmpty()) StyleReadout(step.shows, snap)
                 if (step.pieces.isNotEmpty()) {
                   val isOpen = open[step.testTag] == true

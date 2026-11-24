@@ -348,6 +348,7 @@ internal fun ReadingLayerCard(expanded: Boolean, onToggleExpanded: () -> Unit, v
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(7)
           Text(
             text =
               "How your messages compare with what's normal for you at that time of day. Shadow mode: worked out and logged, she never asks or changes how she talks yet.",
@@ -397,6 +398,7 @@ internal fun ReadingLayerCard(expanded: Boolean, onToggleExpanded: () -> Unit, v
                   fontWeight = FontWeight.SemiBold,
                 )
                 Text(step.description, style = MaterialTheme.typography.bodySmall, color = RiviaSecondaryText)
+                PieceSwitches(step.testTag)
                 if (snap != null && step.shows.isNotEmpty()) {
                   ReadingReadout(step.shows, snap, onDecide = { id, yes -> card.decide(id, yes) })
                 }

@@ -279,6 +279,11 @@ fun ChatScreen(
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
   val scope = rememberCoroutineScope()
   val trustThumbs = remember { TrustThumbsState(viewModel, scope) }
+  LaunchedEffect(trustThumbs) { trustThumbs.loadSwitches() }
+  // Step 3.6: a copy of each finished typed reply of hers to the tablet, for the shadow rewording. Rivia text only.
+  // Sent only while Layer 3 is on (layer switches).
+  val replyCopy = remember { ReplyCopyState(viewModel, scope) }
+  LaunchedEffect(messages, isActiveChatLab) { replyCopy.onMessages(messages, isActiveChatLab) }
   val keyboardController = LocalSoftwareKeyboardController.current
   val focusManager = LocalFocusManager.current
 

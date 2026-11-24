@@ -15,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.data.MessageEntity
+import android.app.Application
+import com.example.network.LayerSwitches
 import com.example.network.TabletTrustClient
 import com.example.network.TrustResult
 import com.example.ui.theme.RiviaIconActive
@@ -53,7 +55,14 @@ internal class TrustThumbsState(private val viewModel: RiviaViewModel, private v
     }
   }
 
+  /** Layer switches: reads them when the chat opens, so the words copy, the thumbs and health_status follow them. */
+  fun loadSwitches() {
+    LayerSwitches.loadPhone(viewModel.getApplication<Application>())
+    scope.launch { LayerSwitches.refresh(url(), token()) }
+  }
+
   fun press(message: MessageEntity, value: Int) {
+    if (!LayerSwitches.phoneOn(LayerSwitches.PHONE_THUMBS)) return
     if (sending[message.id] == true || pressed[message.id] == value) return
     sending[message.id] = true
     scope.launch {
@@ -81,6 +90,8 @@ internal class TrustThumbsState(private val viewModel: RiviaViewModel, private v
    */
   fun sendWords(text: String, previousReply: String?, previousReplyAtMs: Long? = null) {
     if (text.isBlank()) return
+    // Layer switches: no copy at all while both 6.3 words and Layer 7 are off on the tablet.
+    if (!LayerSwitches.wordsCopyOn()) return
     // Step 7.1: the send time is taken here, before the network call, so a slow tablet doesn't skew it.
     val sentAt = System.currentTimeMillis()
     scope.launch {
@@ -97,6 +108,7 @@ internal class TrustThumbsState(private val viewModel: RiviaViewModel, private v
 @Composable
 internal fun TrustThumbButtons(message: MessageEntity, state: TrustThumbsState) {
   if (!message.chatKind.equals("Rivia", ignoreCase = true) || message.status != "completed") return
+  if (!LayerSwitches.phoneOn(LayerSwitches.PHONE_THUMBS)) return
   val now = state.pressed[message.id]
   IconButton(
     onClick = { state.press(message, 1) },

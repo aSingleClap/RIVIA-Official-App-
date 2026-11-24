@@ -128,6 +128,7 @@ internal fun ProgressTrendLayerCard(
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(5)
           Text(
             text =
               "How she feels about how well her plans match your real day: is the gap shrinking or growing? Shadow mode: worked out and logged, but it doesn't change her replies yet.",
@@ -170,6 +171,7 @@ internal fun ProgressTrendLayerCard(
                   fontWeight = FontWeight.SemiBold,
                 )
                 Text(text = step.description, style = MaterialTheme.typography.bodySmall, color = RiviaSecondaryText)
+                PieceSwitches(step.testTag)
                 if (step.pieces.isNotEmpty()) {
                   val isOpen = open[step.testTag] == true
                   TextButton(

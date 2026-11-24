@@ -387,6 +387,7 @@ class GeminiInteractionsClient {
               toolDef.name != "check_reply" &&
               toolDef.name != "post_reply" &&
               !toolDef.name.startsWith("app_") &&
+              !LayerSwitches.toolHidden(toolDef.name) &&
               toolDef.description.isNotBlank() &&
               toolDef.inputSchemaJson.isNotBlank()
           ) {
@@ -592,6 +593,7 @@ class GeminiInteractionsClient {
             toolDef.name != "check_reply" &&
             toolDef.name != "post_reply" &&
             !toolDef.name.startsWith("app_") &&
+            !LayerSwitches.toolHidden(toolDef.name) &&
             toolDef.description.isNotBlank() &&
             toolDef.inputSchemaJson.isNotBlank()
         ) {

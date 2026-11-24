@@ -122,6 +122,7 @@ import com.example.network.MoodManualInfo
 import com.example.network.MoodPostCommand
 import com.example.network.MoodResult
 import com.example.network.MoodState
+import com.example.network.LayerSwitches
 import com.example.network.TabletMoodClient
 import androidx.compose.material3.TabRowDefaults
 import com.example.ui.components.InfoHelpIconButton
@@ -197,6 +198,7 @@ fun LayersScreen(
   var layer6Expanded by rememberSaveable { mutableStateOf(true) }
   var layer7Expanded by rememberSaveable { mutableStateOf(true) }
   var layer8Expanded by rememberSaveable { mutableStateOf(true) }
+  LayerSwitchesHost(viewModel)
   val emotionPanelState = remember {
     EmotionPanelState(
       viewModel = viewModel,
@@ -376,9 +378,10 @@ fun LayersScreen(
           )
         }
         item {
-          ReactionsLayerCard(
+          AppraisalLayerCard(
             expanded = layer3Expanded,
             onToggleExpanded = { layer3Expanded = !layer3Expanded },
+            viewModel = viewModel,
           )
         }
         item {
@@ -589,6 +592,7 @@ private fun VadEngineLayerCard(
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(1)
           Text(
             text =
               "Rivia's behind-the-scenes mood, kept as three numbers: how good she feels, how wound up she is, and how in control she feels. Right now it only keeps track of her mood. It doesn't change her replies yet.",
@@ -622,7 +626,7 @@ private fun VadEngineLayerCard(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           for (step in VAD_SUB_STEPS) {
-            if (step.testTag == "vad_step_1_5") {
+            if (step.testTag == "vad_step_1_5" && LayerSwitches.phoneOn(LayerSwitches.PHONE_DIAL)) {
               ManualMoodDialPill(
                 step = step,
                 viewModel = viewModel,
@@ -650,6 +654,7 @@ private fun VadEngineLayerCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = RiviaSecondaryText,
                   )
+                  PieceSwitches(step.testTag)
                 }
               }
             }
@@ -739,6 +744,7 @@ private fun MoodBaselineLayerCard(
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(2)
           Text(
             text =
               "Her mood in three layers: a quick emotion, a slower mood, and her baseline, which is her normal. Emotion fades back to mood, and mood fades back to baseline. It doesn't change her replies yet.",
@@ -773,7 +779,7 @@ private fun MoodBaselineLayerCard(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           for (step in MOOD_BASELINE_SUB_STEPS) {
-            if (step.testTag == "vad_step_2_4") {
+            if (step.testTag == "vad_step_2_4" && LayerSwitches.phoneOn(LayerSwitches.PHONE_CONTROLS)) {
               MoodBaselineControlsPill(
                 step = step,
                 panelState = panelState,
@@ -800,158 +806,8 @@ private fun MoodBaselineLayerCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = RiviaSecondaryText,
                   )
+                  PieceSwitches(step.testTag)
                 }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-private val REACTIONS_SUB_STEPS =
-  listOf(
-    VadSubStepSpec(
-      testTag = "vad_step_3_1",
-      title = "3.1 Event menu",
-      description =
-        "A fixed list of things that can happen, like you thanked her or a tool failed. Annoyed replaces disgust, and she never reacts with fear.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_2",
-      title = "3.2 Preset nudges",
-      description =
-        "Each event moves her mood by a set, hand-tuned amount, scaled by how strong it was, from 1 to 3.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_3",
-      title = "3.3 Caps and mood pull",
-      description =
-        "One message can move her emotion about 0.3 at most on each mood number. Her slower mood takes in about 10% of each spike.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_4",
-      title = "3.4 Reading the message",
-      description =
-        "A quick Flash call reads each message and returns only the event and how strong it was. It never picks mood numbers itself.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_5",
-      title = "3.5 Caution flags",
-      description =
-        "Code turns her state into caution for the main model: double-check, ask, retry less or stop sooner. Never riskier, and no mood or style.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_6",
-      title = "3.6 Rewording the reply",
-      description =
-        "A second Flash call rewrites the reply's wording to fit her mood. Skipped for short or tool-only replies.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_7",
-      title = "3.7 Tone rules",
-      description =
-        "Limits on how negative she can sound. Anger aims at the problem, never at you. Cursing only with a banter setting on. Her core rules sit above emotion.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_8",
-      title = "3.8 Fact check",
-      description =
-        "Code checks the rewrite kept every number, name, date and action. If anything changed, she sends the plain answer.",
-    ),
-    VadSubStepSpec(
-      testTag = "vad_step_3_9",
-      title = "3.9 Log, test quietly, measure",
-      description =
-        "Logs everything without changing her replies at first, measures the extra delay, and spot-checks rewrites for changed meaning.",
-    ),
-  )
-
-@Composable
-private fun ReactionsLayerCard(
-  expanded: Boolean,
-  onToggleExpanded: () -> Unit,
-) {
-  Surface(
-    color = RiviaPanelSurface,
-    shape = RoundedCornerShape(14.dp),
-    modifier = Modifier.fillMaxWidth().testTag("layer_card_reactions"),
-  ) {
-    Column(
-      modifier = Modifier.padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-      Row(
-        modifier =
-          Modifier.fillMaxWidth()
-            .clickable(onClick = onToggleExpanded)
-            .testTag("layer_header_reactions"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = "Layer 3: Reactions",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = RiviaTextPrimary,
-          )
-          Text(
-            text =
-              "How she'll react to each message: a quick model names what just happened and how strongly, and plain code moves her mood a set amount. Planned only: Step 3 isn't built yet, so nothing here runs.",
-            style = MaterialTheme.typography.bodySmall,
-            color = RiviaSecondaryText,
-            modifier = Modifier.testTag("reactions_description"),
-          )
-        }
-
-        IconButton(
-          onClick = onToggleExpanded,
-          modifier = Modifier.testTag("toggle_layer_reactions"),
-        ) {
-          Icon(
-            imageVector =
-              if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-            contentDescription =
-              if (expanded) "Collapse Layer 3: Reactions"
-              else "Expand Layer 3: Reactions",
-            tint = RiviaSecondaryText,
-          )
-        }
-      }
-
-      AnimatedVisibility(
-        visible = expanded,
-        enter = expandVertically() + fadeIn(),
-        exit = shrinkVertically() + fadeOut(),
-      ) {
-        Column(
-          modifier = Modifier.fillMaxWidth().testTag("reactions_sublayers_container"),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          for (step in REACTIONS_SUB_STEPS) {
-            Surface(
-              color = MaterialTheme.colorScheme.background,
-              shape = RoundedCornerShape(10.dp),
-              border = BorderStroke(1.dp, RiviaBorder),
-              modifier = Modifier.fillMaxWidth().testTag(step.testTag),
-            ) {
-              Column(
-                modifier = Modifier.padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-              ) {
-                Text(
-                  text = step.title,
-                  style = MaterialTheme.typography.labelLarge,
-                  color = RiviaTextPrimary,
-                  fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                  text = step.description,
-                  style = MaterialTheme.typography.bodySmall,
-                  color = RiviaSecondaryText,
-                )
               }
             }
           }
@@ -1048,6 +904,7 @@ private fun BodyHealthLayerCard(
             fontWeight = FontWeight.SemiBold,
             color = RiviaTextPrimary,
           )
+          LayerSwitchLine(4)
           Text(
             text =
               "How she feels about how she's running: the tablet tracks its own health, learns what normal looks like, and turns problems into stress and confidence dials. Shadow mode: the dials are logged but don't change her replies yet.",
@@ -1103,6 +960,7 @@ private fun BodyHealthLayerCard(
                   style = MaterialTheme.typography.bodySmall,
                   color = RiviaSecondaryText,
                 )
+                PieceSwitches(step.testTag)
               }
             }
           }
@@ -1402,6 +1260,7 @@ private fun ManualMoodDialPill(
         style = MaterialTheme.typography.bodySmall,
         color = RiviaSecondaryText,
       )
+      PieceSwitches(step.testTag)
 
       AnimatedVisibility(
         visible = pillExpanded,
@@ -1730,6 +1589,7 @@ private fun MoodBaselineControlsPill(
         style = MaterialTheme.typography.bodySmall,
         color = RiviaSecondaryText,
       )
+      PieceSwitches(step.testTag)
 
       AnimatedVisibility(
         visible = pillExpanded,
