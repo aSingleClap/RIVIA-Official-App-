@@ -55,7 +55,7 @@ object TextAudioTagProcessor {
   }
 
   fun removeAudioTagsFromPlainSegment(segment: String): String {
-    return segment.replace(Regex("""\[[a-z ]{3,30}\](?![(\[:]) ?"""), "")
+    return segment.replace(Regex("""\[[A-Za-z][A-Za-z' -]{2,29}\](?![(\[:]) ?"""), "")
   }
 
   /**

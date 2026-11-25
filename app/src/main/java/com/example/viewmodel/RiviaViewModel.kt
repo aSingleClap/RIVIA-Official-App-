@@ -2634,8 +2634,10 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         chat.riviaProfile
       }
     val normalizedProfile = LayerConfigManager.normalizeProfileKey(rawSelectedProfile)
+    // Typed Rivia chat always uses the text settings, even though Rivia mode uses the "live" model profile.
+    // Only real Live voice, and the Labs "Live (typed)" test profile, use the voice settings.
     val layerChannel =
-      if (channel == RiviaChannel.LIVE_VOICE || rawSelectedProfile == "live_typed" || normalizedProfile == "live") {
+      if (channel == RiviaChannel.LIVE_VOICE || rawSelectedProfile == "live_typed") {
         "voice"
       } else {
         "text"

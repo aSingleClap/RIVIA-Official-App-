@@ -25,6 +25,14 @@ class ExampleUnitTest {
       "Hello [docs](https://example.com) and `[softly]` with [x] and [1, 2]!",
       stripped,
     )
+    assertEquals(
+      "Okay.",
+      TextAudioTagProcessor.removeAudioTagsFromPlainSegment("[matter-of-fact] Okay."),
+    )
+    assertEquals(
+      "See [the docs](https://x.y)",
+      TextAudioTagProcessor.removeAudioTagsFromPlainSegment("See [the docs](https://x.y)"),
+    )
   }
 
   @Test
