@@ -48,6 +48,7 @@ import com.example.network.GeminiInteractionsClient
 import com.example.network.GeminiStreamEvent
 import com.example.network.GoogleRiviaAuthHelper
 import com.example.network.MoodResult
+import com.example.network.PhoneUsageReporter
 import com.example.network.TabletCallOutcome
 import com.example.network.TabletMcpClient
 import com.example.network.TabletMoodClient
@@ -863,6 +864,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   private val db = RiviaDatabase.getInstance(application)
   private val dao = db.riviaDao()
   val keyRepository = SecureKeyRepository(application)
+  private val phoneUsageReporter = PhoneUsageReporter(application, dao, keyRepository)
   val geminiClient = GeminiInteractionsClient()
   val elevenLabsClient = ElevenLabsClient()
   val audioPlayerManager = AudioPlayerManager.getInstance(application, keyRepository, elevenLabsClient)
@@ -1349,6 +1351,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
   val isLoadingVoices: StateFlow<Boolean> = _isLoadingVoices.asStateFlow()
 
   init {
+    viewModelScope.launch { phoneUsageReporter.sendPending() }
     viewModelScope.launch {
       ZoneLocationCoordinator.unauthorized401Events.collect {
         handleTabletHttp401IfNeeded("http_401")
@@ -2980,7 +2983,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   )
                 }
 
-                dao.logRequestAndPrune(
+                logRequest(
                   RequestLogEntity(
                     timestamp = System.currentTimeMillis(),
                     requestId = requestId,
@@ -3196,7 +3199,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   )
                 }
 
-                dao.logRequestAndPrune(
+                logRequest(
                   RequestLogEntity(
                     timestamp = System.currentTimeMillis(),
                     requestId = requestId,
@@ -3287,7 +3290,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                   )
                 }
 
-                dao.logRequestAndPrune(
+                logRequest(
                   RequestLogEntity(
                     timestamp = System.currentTimeMillis(),
                     requestId = requestId,
@@ -3426,7 +3429,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
               }
 
               // Log request to Request Log
-              dao.logRequestAndPrune(
+              logRequest(
                 RequestLogEntity(
                   timestamp = System.currentTimeMillis(),
                   requestId = requestId,
@@ -3499,7 +3502,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
                 )
               }
 
-              dao.logRequestAndPrune(
+              logRequest(
                 RequestLogEntity(
                   timestamp = System.currentTimeMillis(),
                   requestId = requestId,
@@ -3583,7 +3586,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         }
       }
       runCatching {
-        dao.logRequestAndPrune(
+        logRequest(
           RequestLogEntity(
             timestamp = System.currentTimeMillis(),
             requestId = requestId,
@@ -4688,7 +4691,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
     _last20TabletResults.value = (listOf(record) + _last20TabletResults.value).take(20)
 
     runCatching {
-      dao.logRequestAndPrune(
+      logRequest(
         RequestLogEntity(
           timestamp = now,
           requestId = ticket?.takeIf { it.isNotBlank() } ?: TextAudioTagProcessor.generateRequestId(),
@@ -4708,6 +4711,11 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         )
       )
     }
+  }
+
+  private suspend fun logRequest(log: RequestLogEntity) {
+    dao.logRequestAndPrune(log)
+    viewModelScope.launch { phoneUsageReporter.sendPending() }
   }
 
   /**

@@ -168,6 +168,9 @@ interface RiviaDao {
     insertRequestLog(log)
   }
 
+  @Query("SELECT * FROM request_logs WHERE timestamp > :after ORDER BY timestamp ASC LIMIT :limit")
+  suspend fun getRequestLogsAfter(after: Long, limit: Int): List<RequestLogEntity>
+
   // Default Run Settings (Lab defaults)
   @Query("SELECT * FROM default_settings WHERE id = 1 LIMIT 1")
   fun observeDefaultSettings(): Flow<DefaultSettingsEntity?>
