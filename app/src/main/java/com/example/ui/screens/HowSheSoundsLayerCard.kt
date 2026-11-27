@@ -16,6 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,12 +37,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.network.StyleResult
 import com.example.network.StyleSnapshot
 import com.example.network.TabletStyleClient
 import com.example.ui.theme.RiviaBorder
 import com.example.ui.theme.RiviaMint as RiviaTeal
 import com.example.ui.theme.RiviaMutedText as RiviaSecondaryText
+import com.example.ui.theme.RiviaOnAccent
 import com.example.ui.theme.RiviaSurface2 as RiviaPanelSurface
 import com.example.ui.theme.RiviaTextPrimary
 import com.example.viewmodel.RiviaViewModel
@@ -229,6 +233,133 @@ private fun StyleReadout(shows: String, snap: StyleSnapshot) {
   }
 }
 
+// Old layers cleanup (Nov 27). The old Persona, Style and Hard rules cards came off the Layers screen on Nov 21, but
+// their files still go into her instructions on every Rivia reply. This box shows, read-only, what those files add
+// today for the mode you're in, and warns if a hidden phone edit or a switched-off old layer is changing that. The one
+// thing you can change here is H7's spoken sentence limit. All of this lives on the phone, not the tablet, so Layer 8's
+// switch doesn't turn it off. Nothing here is a Gemini tool.
+private fun oldLayerName(key: String): String =
+  when (key) {
+    "persona" -> "Persona"
+    "style" -> "Style"
+    "engine" -> "Engine"
+    "hard_rules" -> "Hard rules"
+    else -> key
+  }
+
+@Composable
+private fun PhoneFixedRulesBox(viewModel: RiviaViewModel) {
+  val bundle by viewModel.loadedLayersBundle.collectAsStateWithLifecycle()
+  val spokenMax by viewModel.spokenMaxSentences.collectAsStateWithLifecycle()
+  val metas by viewModel.layerCardMetas.collectAsStateWithLifecycle()
+
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    shape = RoundedCornerShape(10.dp),
+    border = BorderStroke(1.dp, RiviaBorder),
+    modifier = Modifier.fillMaxWidth().testTag("style_phone_fixed_rules"),
+  ) {
+    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+      Text(
+        "Fixed rules (on the phone)",
+        style = MaterialTheme.typography.labelLarge,
+        color = RiviaTextPrimary,
+        fontWeight = FontWeight.SemiBold,
+      )
+      Text(
+        "These come from the app, not the tablet, and go into her instructions on every Rivia reply. " +
+          "Layer 8's switch doesn't turn them off.",
+        style = MaterialTheme.typography.bodySmall,
+        color = RiviaSecondaryText,
+      )
+
+      val b = bundle
+      if (b == null) {
+        TrustHint("The app's rule files didn't load, so nothing to show.", error = true)
+      } else {
+        val edited = b.draftKeys.filter { it != "tests" }.sorted().map { oldLayerName(it) }
+        if (edited.isNotEmpty()) {
+          TrustHint(
+            "Edited on this phone, not the built-in version: ${edited.joinToString(", ")}.",
+            error = true,
+          )
+        }
+        val off =
+          metas.values
+            .filter { !it.enabled && it.layerKey != "tests" && it.layerKey != "engine" }
+            .map { oldLayerName(it.layerKey) }
+            .sorted()
+        if (off.isNotEmpty()) {
+          TrustHint("Switched off on this phone: ${off.joinToString(", ")}.", error = true)
+        }
+
+        for (rule in b.hardRules.rules.filter { it.active }.sortedBy { it.priority }) {
+          val where =
+            when {
+              "text" in rule.channels && "voice" in rule.channels -> "typed and voice"
+              "voice" in rule.channels -> "voice only"
+              "text" in rule.channels -> "typed only"
+              else -> "no replies"
+            }
+          val prompt = rule.prompt?.trim().orEmpty()
+          val how =
+            when {
+              prompt.isEmpty() -> "checked by the app's code"
+              rule.enforced_by == "code" -> "told to her and checked by code"
+              else -> "told to her"
+            }
+          val line =
+            if (prompt.isNotEmpty()) prompt.replace("{spoken_max_sentences}", spokenMax.toString())
+            else rule.effect.substringBefore(". ").trim().trimEnd('.') + "."
+          TrustHint("• ${rule.id} ${rule.name} ($where, $how): $line")
+        }
+
+        val voiceStyle = b.style.voice.trim()
+        if (voiceStyle.isNotEmpty()) TrustHint("• Voice style (voice only, told to her): $voiceStyle")
+        val typedStyle = b.style.text.trim()
+        if (typedStyle.isNotEmpty()) TrustHint("• Typed style (typed only, told to her): $typedStyle")
+        val persona = b.persona.text.trim()
+        if (persona.isNotEmpty()) TrustHint("• Persona (typed and voice, told to her): $persona")
+
+        val h7 = b.hardRules.rules.firstOrNull { it.id == "H7" && it.active }
+        if (h7 != null) {
+          val ceiling = (h7.ceiling ?: 4).coerceAtLeast(1)
+          Text(
+            "Spoken sentence limit (Live voice, default ${h7.default ?: 2})",
+            style = MaterialTheme.typography.labelMedium,
+            color = RiviaTextPrimary,
+          )
+          Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (n in 1..ceiling) {
+              val isSelected = spokenMax == n
+              FilterChip(
+                selected = isSelected,
+                onClick = { viewModel.setSpokenMaxSentences(n) },
+                colors =
+                  FilterChipDefaults.filterChipColors(
+                    containerColor = RiviaPanelSurface,
+                    labelColor = RiviaTextPrimary,
+                    selectedContainerColor = RiviaTeal,
+                    selectedLabelColor = RiviaOnAccent,
+                  ),
+                border = BorderStroke(width = 1.dp, color = if (isSelected) RiviaTeal else RiviaBorder),
+                label = {
+                  Text(
+                    n.toString(),
+                    color = if (isSelected) RiviaOnAccent else RiviaTextPrimary,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                  )
+                },
+                modifier = Modifier.testTag("style_spoken_max_$n"),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 @Composable
 internal fun HowSheSoundsLayerCard(expanded: Boolean, onToggleExpanded: () -> Unit, viewModel: RiviaViewModel) {
   val scope = rememberCoroutineScope()
@@ -323,6 +454,8 @@ internal fun HowSheSoundsLayerCard(expanded: Boolean, onToggleExpanded: () -> Un
               }
             }
           }
+
+          PhoneFixedRulesBox(viewModel)
         }
       }
     }
