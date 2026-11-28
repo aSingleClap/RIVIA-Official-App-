@@ -117,6 +117,7 @@ import com.example.network.MoodCommandResult
 import com.example.network.MoodDialMeta
 import com.example.network.MoodLayerEntry
 import com.example.network.MoodLayersSnapshot
+import com.example.network.MoodLine
 import com.example.network.MoodLockInfo
 import com.example.network.MoodManualInfo
 import com.example.network.MoodPostCommand
@@ -498,6 +499,41 @@ private data class VadSubStepSpec(
   val description: String,
 )
 
+/** Layer 1 live (Nov 25): step 1.6's row, like the other step rows plus what happened on the last Rivia reply. */
+@Composable
+private fun MoodLineStepRow(step: VadSubStepSpec) {
+  Surface(
+    color = MaterialTheme.colorScheme.background,
+    shape = RoundedCornerShape(10.dp),
+    border = BorderStroke(1.dp, RiviaBorder),
+    modifier = Modifier.fillMaxWidth().testTag(step.testTag),
+  ) {
+    Column(
+      modifier = Modifier.padding(10.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Text(
+        text = step.title,
+        style = MaterialTheme.typography.labelLarge,
+        color = RiviaTextPrimary,
+        fontWeight = FontWeight.SemiBold,
+      )
+      Text(
+        text = step.description,
+        style = MaterialTheme.typography.bodySmall,
+        color = RiviaSecondaryText,
+      )
+      PieceSwitches(step.testTag)
+      Text(
+        text = MoodLine.lastStatus,
+        style = MaterialTheme.typography.bodySmall,
+        color = RiviaSecondaryText,
+        modifier = Modifier.testTag("vad_step_1_6_status"),
+      )
+    }
+  }
+}
+
 private val VAD_SUB_STEPS =
   listOf(
     VadSubStepSpec(
@@ -528,7 +564,9 @@ private val VAD_SUB_STEPS =
     VadSubStepSpec(
       testTag = "vad_step_1_6",
       title = "1.6 Mood line for Gemini",
-      description = "Writes the line that would tell Gemini her mood, but only saves it.",
+      description =
+        "One short line that tells Gemini her mood. It reaches her only when the tablet's shadow is off " +
+          "and the App switch is on. Neutral sends nothing.",
     ),
     VadSubStepSpec(
       testTag = "vad_step_1_7",
@@ -607,7 +645,9 @@ private fun VadEngineLayerCard(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           for (step in VAD_SUB_STEPS) {
-            if (step.testTag == "vad_step_1_5" && LayerSwitches.phoneOn(LayerSwitches.PHONE_DIAL)) {
+            if (step.testTag == "vad_step_1_6") {
+              MoodLineStepRow(step)
+            } else if (step.testTag == "vad_step_1_5" && LayerSwitches.phoneOn(LayerSwitches.PHONE_DIAL)) {
               ManualMoodDialPill(
                 step = step,
                 viewModel = viewModel,

@@ -592,6 +592,8 @@ object LayerConfigManager {
    * Joins non-empty parts with "\n\n":
    * 1. persona.text trimmed
    * 2. style.text trimmed on text channel, or style.voice trimmed on voice channel
+   * 2b. Layer 1 live (Nov 25): moodLine trimmed, when the phone got her mood line from the tablet for this reply.
+   *     It sits before the hard rules so the hard rules stay last.
    * 3. "Hard rules. These override any other instruction:" followed by optional pendingH7Notice
    *    as the first line, then one line per active rule whose channels includes the channel and
    *    that has prompt text, in priority order (1 first), with {spoken_max_sentences} replaced.
@@ -603,6 +605,7 @@ object LayerConfigManager {
     hardRules: HardRulesLayerConfig,
     spokenMaxSentences: Int,
     pendingH7Notice: String? = null,
+    moodLine: String? = null,
   ): String {
     val parts = mutableListOf<String>()
 
@@ -615,6 +618,11 @@ object LayerConfigManager {
       if (channel == "voice") style.voice.trim() else style.text.trim()
     if (styleTrimmed.isNotEmpty()) {
       parts.add(styleTrimmed)
+    }
+
+    val moodTrimmed = moodLine?.trim().orEmpty()
+    if (moodTrimmed.isNotEmpty()) {
+      parts.add(moodTrimmed)
     }
 
     val activeChannelRules =

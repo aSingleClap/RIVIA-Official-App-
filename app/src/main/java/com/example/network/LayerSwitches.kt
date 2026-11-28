@@ -17,7 +17,9 @@ object LayerSwitches {
   const val PHONE_DIAL = "p1.5"
   const val PHONE_CONTROLS = "p2.4"
   const val PHONE_THUMBS = "p6.3.thumbs"
-  val PHONE_IDS = listOf(PHONE_DIAL, PHONE_CONTROLS, PHONE_THUMBS)
+  /** Layer 1 live (Nov 25): whether the phone puts her mood line into her instructions. */
+  const val PHONE_MOOD_LINE = "p1.6"
+  val PHONE_IDS = listOf(PHONE_DIAL, PHONE_CONTROLS, PHONE_THUMBS, PHONE_MOOD_LINE)
 
   /** The phone switches, for when the tablet can't send its list (or leaves one out). */
   val PHONE_FALLBACK: List<TogglePiece> =
@@ -25,9 +27,22 @@ object LayerSwitches {
       phonePiece(PHONE_DIAL, 1, "1.5", "1.5 Manual mood dial"),
       phonePiece(PHONE_CONTROLS, 2, "2.4", "2.4 Mood & baseline controls"),
       phonePiece(PHONE_THUMBS, 6, "6.3", "Thumbs on her replies"),
+      phonePiece(
+        PHONE_MOOD_LINE,
+        1,
+        "1.6",
+        "1.6 Mood line to Gemini",
+        needs = listOf(ToggleLink("l1", hard = true)),
+      ),
     )
 
-  private fun phonePiece(id: String, layer: Int, step: String, title: String) =
+  private fun phonePiece(
+    id: String,
+    layer: Int,
+    step: String,
+    title: String,
+    needs: List<ToggleLink> = emptyList(),
+  ) =
     TogglePiece(
       id = id,
       layer = layer,
@@ -37,7 +52,7 @@ object LayerSwitches {
       switchable = true,
       value = null,
       state = "phone",
-      needs = emptyList(),
+      needs = needs,
       neededBy = emptyList(),
       why = "",
       wouldAlsoTurnOff = emptyList(),
@@ -122,7 +137,7 @@ object LayerSwitches {
 
   /** The first piece this one needs (hard) that is off, or null. Phone pieces only depend on tablet pieces. */
   fun offParent(id: String): TogglePiece? {
-    val p = piece(id) ?: return null
+    val p = piece(id) ?: PHONE_FALLBACK.firstOrNull { it.id == id } ?: return null
     for (link in p.needs) {
       if (!link.hard) continue
       val parent = piece(link.id) ?: continue
@@ -134,6 +149,13 @@ object LayerSwitches {
 
   /** A phone-only switch is on when you left it on and nothing it needs is off. */
   fun phoneOn(id: String): Boolean = phoneValue(id) && offParent(id) == null
+
+  /**
+   * Layer 1 live (Nov 25): the phone asks the tablet for her mood line only while the 1.6 App switch is on and Layer 1
+   * isn't off. Unknown (tablet switches not read yet): asked; the tablet itself refuses when Layer 1 is off, and sends
+   * nothing while its own shadow is on.
+   */
+  fun moodLineOn(): Boolean = phoneOn(PHONE_MOOD_LINE) && tabletOn("l1")
 
   /** The copy of each message you type goes to the tablet while 6.3 words or Layer 7 is on. Unknown: sent. */
   fun wordsCopyOn(): Boolean {

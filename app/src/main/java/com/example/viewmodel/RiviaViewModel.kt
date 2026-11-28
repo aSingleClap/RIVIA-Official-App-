@@ -47,6 +47,7 @@ import com.example.network.ElevenLabsVoice
 import com.example.network.GeminiInteractionsClient
 import com.example.network.GeminiStreamEvent
 import com.example.network.GoogleRiviaAuthHelper
+import com.example.network.MoodLine
 import com.example.network.MoodResult
 import com.example.network.PhoneUsageReporter
 import com.example.network.TabletCallOutcome
@@ -2619,6 +2620,21 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       return
     }
 
+    // Layer 1 live (Nov 25): ask the tablet for her mood line now, while the rest of the turn gets ready.
+    // MoodLine.forTurn never throws and gives up after 1.5 s; "" means no line.
+    val moodLineDeferred =
+      if (isRivia) {
+        viewModelScope.async {
+          MoodLine.forTurn(
+            context = getApplication<Application>(),
+            serverUrl = keyRepository.getTabletServerUrl(),
+            appToken = keyRepository.getTabletAppToken(),
+          )
+        }
+      } else {
+        null
+      }
+
     _isStreaming.value = true
     val currentJob = kotlin.coroutines.coroutineContext[Job]
     activeTurnCompletionJob = currentJob
@@ -2763,6 +2779,9 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       }
     val includeTabletTools = !tabletToolsForTurn.isNullOrEmpty()
 
+    // Layer 1 live: the same line for every request in this reply ("" = none).
+    val moodLineForTurn = moodLineDeferred?.await().orEmpty()
+
     val customBodyBuilder: ((JSONArray, String?, Boolean) -> JSONObject)? =
       if (isRivia && bundle != null) {
         { inputSteps, prevId, stream ->
@@ -2774,6 +2793,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
               hardRules = effectiveHardRulesForTurn ?: bundle.hardRules,
               spokenMaxSentences = _spokenMaxSentences.value,
               pendingH7Notice = pendingH7NoticeToSend,
+              moodLine = moodLineForTurn,
             )
           geminiClient.buildRiviaRequestBodyJson(
             engine = effectiveEngineForTurn ?: bundle.engine,
@@ -4905,6 +4925,16 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
       if (metasSnap["engine"]?.enabled == false) bundle.bundledEngine
       else bundle.engine
 
+    // Layer 1 live: show the mood sentence she would get right now. record = false keeps the 1.6 row's
+    // "Last reply" status about real replies only.
+    val previewMoodLine =
+      MoodLine.forTurn(
+        context = getApplication<Application>(),
+        serverUrl = keyRepository.getTabletServerUrl(),
+        appToken = keyRepository.getTabletAppToken(),
+        record = false,
+      )
+
     val sysInstruction =
       LayerConfigManager.assembleSystemInstruction(
         channel = channelChoice,
@@ -4913,6 +4943,7 @@ class RiviaViewModel(application: Application) : AndroidViewModel(application) {
         hardRules = effectiveHardRules,
         spokenMaxSentences = _spokenMaxSentences.value,
         pendingH7Notice = pendingH7,
+        moodLine = previewMoodLine,
       )
 
     return geminiClient.buildRiviaRedactedPreview(
